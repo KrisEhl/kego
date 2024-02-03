@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "mlframework"
+version = "0.1.0"
+description = ""
+authors = ["kristian ehlert"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = {version = "^2.2.0+cu121", source = "torch-121"}
+torchvision = {version = "^0.17.0+cu121", source = "torch-121"}
+torchaudio = {version = "^2.2.0+cu121", source = "torch-121"}
+ipykernel = "^6.29.0"
+matplotlib = "^3.8.2"
+
+
+[[tool.poetry.source]]
+name = "torch-121"
+url = "https://download.pytorch.org/whl/cu121"
+priority = "supplemental"
+
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^3.6.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
