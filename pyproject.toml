@@ -6,31 +6,21 @@ authors = ["kristian ehlert"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
-torch = {version = "^2.2.0+cu121", source = "torch-121", optional=true}
-torchvision = {version = "^0.17.0+cu121", source = "torch-121", optional=true}
-torchaudio = {version = "^2.2.0+cu121", source = "torch-121", optional=true}
+python = ">=3.10,<3.12"
 ipykernel = "^6.29.0"
 matplotlib = "^3.8.2"
 kaggle = "^1.6.6"
-transformers = {extras = ["torch"], version = "^4.37.2"}
 numpy = "^1.26.4"
-datasets = "^2.17.0"
 pandas = "^2.2.0"
 plotly = "^5.19.0"
-albumentations = "^1.4.0"
-
-[tool.poetry.extras]
-torch-cuda121 = ["torch", "torchvision", "torchaudio"]
-
-[[tool.poetry.source]]
-name = "torch-121"
-url = "https://download.pytorch.org/whl/cu121"
-priority = "supplemental"
 
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.6.0"
+
+
+[tool.poetry.group.leash.dependencies]
+rdkit = "^2023.9.6"
 
 [build-system]
 requires = ["poetry-core"]

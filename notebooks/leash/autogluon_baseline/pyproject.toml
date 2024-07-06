@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "autogluon-baseline"
+version = "0.1.0"
+description = ""
+authors = ["Kristian Ehlert <kristian.ehlert@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10,<3.12"
+mlframework = {path = "../../..", develop=true}
+autogluon = "1.1.0"
+ray = "2.10.0"
+duckdb = "^0.10.2"
+rdkit = "^2023.9.6"
+polars = "^0.20.23"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
