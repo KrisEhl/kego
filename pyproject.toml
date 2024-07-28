@@ -16,14 +16,19 @@ plotly = "^5.19.0"
 albumentations = "^1.4.0"
 seqeval = {version = "^1.2.2", optional = true}
 evaluate = {version = "^0.4.1", optional = true}
-accelerate = {version = "^0.27.2", optional = true}
 arckit = {path = "../code/arckit", develop = true, optional = true}
+tinygrad = {version = "^0.9.1", optional = true}
+rigging = {extras = ["all"], version = "^2.0.2", optional = true}
+bitsandbytes = {version = "^0.43.2", optional = true}
 
 
 [tool.poetry.extras]
 torch-cuda121 = ["torch", "torchvision", "torchaudio"]
 pii = ["seqeval", "evaluate", "accelerate"]
 arc = ["arckit"]
+grad = ["tinygrad"]
+rig = ["rigging", "bitsandbytes"]
+
 
 [[tool.poetry.source]]
 name = "torch-121"
