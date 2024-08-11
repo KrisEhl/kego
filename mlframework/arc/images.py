@@ -15,6 +15,11 @@ def show_grid(grid):
         print(sub_grid)
 
 
+def get_solution(task: arckit.data.Task, train_solutions):
+    solution = train_solutions[task.id]
+    return task, solution
+
+
 def show_task(task: arckit.data.Task, train_solutions):
     drawing = arckit.vis.draw_task(task, include_test=True)
     solution = train_solutions[task.id]
