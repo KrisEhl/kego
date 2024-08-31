@@ -31,7 +31,8 @@ def score(
         naive_sigma: (float) standard deviation from the train set.
         sigma_true: (float) essentially sets the scale of the outputs.
     """
-
+    solution = solution.copy()
+    submission = submission.copy()
     del solution[row_id_column_name]
     del submission[row_id_column_name]
 
