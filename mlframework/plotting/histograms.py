@@ -1,6 +1,7 @@
 import logging
 import pathlib
 from collections.abc import Sequence
+from typing import Literal
 
 import matplotlib.container
 import numpy as np
@@ -38,6 +39,7 @@ def plot_histogram_2d(
     annotate: bool = False,
     annotate_round_to_base: int | None = None,
     annotate_color: str = "gray",
+    annotate_line: Literal["unity"] | None = None,
     vmin: float | None = None,
     vmax: float | None = None,
     facet_column: str | None = None,
@@ -282,7 +284,7 @@ def plot_histogram_2d(
             bottom=0.1,
         )
     else:
-        fig, axes = mlframework.utils.figures.create_figure_axes(
+        fig, axes = mlframework.plotting.utils_plotting.create_figure_axes(
             figure=figure, axes=axes
         )
     results_dic = {}
@@ -347,10 +349,22 @@ def plot_histogram_2d(
                 results_dic["axes_histograms_11"] = axes_grid[1, 1]
             if not no_marginal_plots:
                 break
+            add_annotation_line(style=annotate_line, axes=axes)
         if not no_marginal_plots:
             break
     mlframework.plotting.figures.save_figure(fig, filename)
     return results_dic
+
+
+def add_annotation_line(
+    style: Literal["unity"] | None, axes, alpha: float = 0.4, plot_style: str = "--k"
+):
+    if style is None:
+        return
+    if style == "unity":
+        xlim = axes.get_xlim()
+        ylim = axes.get_ylim()
+        axes.plot(xlim, ylim, plot_style, label="unity", alpha=alpha)
 
 
 def _get_label(label: str | None) -> str:
@@ -1095,7 +1109,7 @@ def plot_circular_histogram(
     Axes of plot
     """
 
-    figure, axes = mlframework.utils.figures.create_figure_axes(
+    figure, axes = mlframework.plotting.utils_plotting.create_figure_axes(
         figure=figure,
         axes=axes,
         figure_size=figure_size,
