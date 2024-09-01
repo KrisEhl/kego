@@ -5,3 +5,5 @@ __pycache__/
 *.xml
 data/*
 *.dcm
+.env
+.idea

@@ -3487,7 +3487,7 @@ six = ">=1.5"
 name = "python-dotenv"
 version = "1.0.1"
 description = "Read key-value pairs from a .env file and set them as environment variables"
-optional = true
+optional = false
 python-versions = ">=3.8"
 files = [
     {file = "python-dotenv-1.0.1.tar.gz", hash = "sha256:e324ee90a023d808f1959c46bcbc04446a10ced277783dc6ee09987c37ec10ca"},
@@ -5702,4 +5702,4 @@ torch-cuda121 = []
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "ffe81579b6b1d8b2584f658ea6686b53b10a39f1adb932407195c2db89d3d3c2"
+content-hash = "9fb6f9612c8a33ce6457426cdf94ad7dfae5df3fe20e66802455b70559689612"

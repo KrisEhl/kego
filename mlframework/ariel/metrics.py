@@ -69,3 +69,15 @@ def score(
 
     submit_score = (GLL_pred - GLL_mean) / (GLL_true - GLL_mean)
     return float(np.clip(submit_score, 0.0, 1.0))
+
+
+def compute_metrics(solution, submission_values, submission_sigma):
+    submission = np.concat((submission_values, submission_sigma), axis=1)
+    return score(
+        solution=solution,
+        submission=submission,
+        row_id_column_name="planet_id",
+        naive_mean=np.mean(submission_values),
+        naive_sigma=np.std(submission_values),
+        sigma_true=np.std(solution),
+    )
