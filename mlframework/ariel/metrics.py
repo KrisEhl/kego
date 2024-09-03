@@ -11,7 +11,7 @@ class ParticipantVisibleError(Exception):
 def score(
     solution: pd.DataFrame,
     submission: pd.DataFrame,
-    row_id_column_name: str,
+    row_id_column_name: str | None,
     naive_mean: float,
     naive_sigma: float,
     sigma_true: float,
@@ -33,8 +33,9 @@ def score(
     """
     solution = solution.copy()
     submission = submission.copy()
-    del solution[row_id_column_name]
-    del submission[row_id_column_name]
+    if row_id_column_name is not None:
+        del solution[row_id_column_name]
+        del submission[row_id_column_name]
 
     if submission.min().min() < 0:
         raise ParticipantVisibleError("Negative values in the submission")
