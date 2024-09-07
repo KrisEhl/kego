@@ -9,6 +9,7 @@ import pandas as pd
 
 import mlframework.checks
 import mlframework.constants
+import mlframework.lists
 import mlframework.plotting.axes_utils
 import mlframework.plotting.colormesh
 import mlframework.plotting.figures
@@ -614,18 +615,18 @@ def _prepare_parameters(
     tuple[int, int],
     tuple[float, float],
 ]:
-    log = mlframework.checks.to_nlength_tuple(log)  # type: ignore
-    n_bins = mlframework.checks.to_nlength_tuple(n_bins)  # type: ignore
-    n_bins_linear = mlframework.checks.to_nlength_tuple(n_bins_linear)  # type: ignore
-    xlim = mlframework.checks.to_nlength_tuple(xlim)  # type: ignore
-    ylim = mlframework.checks.to_nlength_tuple(ylim)  # type: ignore
+    log = mlframework.lists.to_nlength_tuple(log)  # type: ignore
+    n_bins = mlframework.lists.to_nlength_tuple(n_bins)  # type: ignore
+    n_bins_linear = mlframework.lists.to_nlength_tuple(n_bins_linear)  # type: ignore
+    xlim = mlframework.lists.to_nlength_tuple(xlim)  # type: ignore
+    ylim = mlframework.lists.to_nlength_tuple(ylim)  # type: ignore
     n_bins = tuple(
         [i + 1 if i is not None else i for i in n_bins]  # type: ignore
     )  # using bin edges later, where n_edges = n_bins + 1
     n_bins_linear = tuple(
         [i + 1 if i is not None else i for i in n_bins_linear]  # type: ignore
     )  # using bin edges later, where n_edges = n_bins + 1
-    linear_thresh = mlframework.checks.to_nlength_tuple(linear_thresh)  # type: ignore
+    linear_thresh = mlframework.lists.to_nlength_tuple(linear_thresh)  # type: ignore
     return xlim, ylim, log, n_bins, n_bins_linear, linear_thresh  # type: ignore
 
 
@@ -732,9 +733,9 @@ def plot_histogram(
     -------
     Axes of bar plot
     """
-    _log = mlframework.checks.to_nlength_tuple(log, 2)
-    _xlim = mlframework.checks.to_nlength_tuple(xlim, 2)
-    _ylim = mlframework.checks.to_nlength_tuple(ylim, 2)
+    _log = mlframework.lists.to_nlength_tuple(log, 2)
+    _xlim = mlframework.lists.to_nlength_tuple(xlim, 2)
+    _ylim = mlframework.lists.to_nlength_tuple(ylim, 2)
 
     values: np.ndarray
     if df is not None and isinstance(key_or_values, str):
@@ -870,9 +871,9 @@ def plot_bar(
     -------
     Bar plot object
     """
-    _log = mlframework.checks.to_nlength_tuple(log)
-    _xlim = mlframework.checks.to_nlength_tuple(xlim)
-    _ylim = mlframework.checks.to_nlength_tuple(ylim)
+    _log = mlframework.lists.to_nlength_tuple(log)
+    _xlim = mlframework.lists.to_nlength_tuple(xlim)
+    _ylim = mlframework.lists.to_nlength_tuple(ylim)
 
     if vertical:
         plot = axes.barh(
@@ -1072,70 +1073,6 @@ def _get_bin_edges_symlog(
             )
         )
     return bins
-
-
-def plot_circular_histogram(
-    angles: np.ndarray,
-    n_bins: int = 12,
-    density: bool = False,
-    figure: mlframework.constants.TYPE_MATPLOTLIB_FIGURES | None = None,
-    axes: mlframework.constants.TYPE_MATPLOTLIB_AXES | None = None,
-    figure_size: tuple[float, float] | None = None,
-    font_size: float = mlframework.constants.DEFAULT_FONTSIZE_SMALL,
-) -> mlframework.constants.TYPE_MATPLOTLIB_AXES:
-    """
-    Circular histogram of angles, e.g. wind directions.
-    Plotting using matplotlib.pyplot
-
-    Parameters:
-    ----------
-    angles:
-        List of angles to be binned
-    n_bins:
-        Number of bins if `bin_edges` is None.
-    density:
-        Whether to normalize histogram with total sum
-    figure:
-        Matplotlib figure
-    axes:
-        Matplotlib axes
-    figure_size:
-        Size of figure (height, width)
-    font_size:
-        Size of font
-
-    Returns
-    -------
-    Axes of plot
-    """
-
-    figure, axes = mlframework.plotting.utils_plotting.create_figure_axes(
-        figure=figure,
-        axes=axes,
-        figure_size=figure_size,
-        projection="polar",
-        aspect="equal",
-    )
-    assigned_sector_centers, _ = mlframework.utils.ergaleiothiki.degrees2sector(
-        angles, n_bins
-    )
-    bin_centers, hist = np.unique(assigned_sector_centers, return_counts=True)
-    if density:
-        hist = hist / np.sum(hist)
-    bin_centers_radians = np.deg2rad(bin_centers)
-    width_bars = np.diff(bin_centers_radians)[0]
-    plot_bar(
-        bin_centers_radians,
-        hist,
-        width_bars,
-        axes=axes,
-        log="false",
-        font_size=font_size,
-    )
-
-    axes.set_theta_zero_location("N")
-    axes.set_theta_direction(-1)
-    return axes
 
 
 def _find_axis_limits(

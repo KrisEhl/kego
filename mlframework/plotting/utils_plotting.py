@@ -10,6 +10,7 @@ from matplotlib import pyplot as plt
 
 import mlframework.checks
 import mlframework.constants
+import mlframework.lists
 
 
 def set_x_log(
@@ -361,8 +362,8 @@ def create_axes_grid(
         axes_colorbar, dtype=object
     )
     if unravel:
-        axes = mlframework.checks.flatten_list(axes)
-        axes_colorbar = mlframework.checks.flatten_list(axes_colorbar)
+        axes = mlframework.lists.flatten_list(axes)
+        axes_colorbar = mlframework.lists.flatten_list(axes_colorbar)
         if n_columns * n_rows == 1:
             axes = axes[0]
             axes_colorbar = axes_colorbar[0]

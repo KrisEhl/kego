@@ -17,3 +17,8 @@ def save_figure(
         if folder:
             os.makedirs(folder, exist_ok=True)
         fig.savefig(filename, bbox_inches="tight", dpi=dpi)
+
+
+def plot_legend(axes):
+    axes.legend()
+    return axes

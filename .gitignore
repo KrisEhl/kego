@@ -14,3 +14,6 @@ data/*
 
 # cache
 __pycache__/
+
+# outputs
+notebooks/ariel/outputs_adc24_intro
