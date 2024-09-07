@@ -1,9 +1,16 @@
-__pycache__/
+# data
 *.txt
 *.json
 *.csv
 *.xml
 data/*
+*.npy
 *.dcm
+*.pickle
+
+# settings
 .env
 .idea
+
+# cache
+__pycache__/
