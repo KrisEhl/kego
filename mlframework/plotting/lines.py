@@ -9,12 +9,15 @@ from mlframework.plotting.utils_plotting import create_axes_grid
 
 
 def plot_lines(
-    xs,
-    ys,
+    xs: np.ndarray,
+    ys: np.ndarray,
     labels: None | list[np.ndarray] = None,
     nx_max=4,
     filename: str | None = None,
 ):
+    assert len(np.shape(xs)) != 2, f"xs needs to be of shape 2 but is {xs.shape=}!"
+    assert len(np.shape(ys)) != 2, f"xs needs to be of shape 2 but is {ys.shape=}!"
+
     n_plots = np.shape(xs)[0]
     labels = to_nlength_tuple(labels, n_plots)
     if n_plots >= nx_max:
@@ -25,6 +28,17 @@ def plot_lines(
         itertools.product(range(n_rows), range(n_columns))
     ):
         axes = axes_grid[i_row, i_column]
-        axes.plot(xs[i_plot], ys[i_plot], label=labels[i_plot])
+        plot_line(x=xs[i_plot], y=ys[i_plot], label=labels[i_plot])
         plot_legend(axes=axes)
+    save_figure(fig=figure, filename=filename)
+
+
+def plot_line(
+    x: np.ndarray,
+    y: np.ndarray,
+    label: str | None = None,
+    filename: str | None = None,
+):
+    figure, axes, _ = create_axes_grid(n_columns=1, n_rows=1, unravel=True)
+    axes.plot(x, y, label=label)
     save_figure(fig=figure, filename=filename)
