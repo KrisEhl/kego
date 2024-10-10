@@ -5,4 +5,4 @@ import mlframework.plotting.figures
 import mlframework.plotting.histograms
 import mlframework.plotting.lines
 import mlframework.plotting.timeseries
-import mlframework.plotting.utils_plotting
+import mlframework.plotting.value_counts

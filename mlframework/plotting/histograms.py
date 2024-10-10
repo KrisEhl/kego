@@ -983,6 +983,10 @@ def get_bin_edges(
         raise ValueError(f"{vmin=} > {vmax=}")
     if vmin <= 0 and log == "log":
         raise ValueError(f"For {log=}, cannot have {vmin=} <= 0")
+    if vmin == vmax:
+        vmin -= vmax / 2
+        vmax += vmax / 2
+        n_bins = 2
     if log == "symlog":
         if symlog_linear_threshold is None:
             abs_max = abs(vmax)
