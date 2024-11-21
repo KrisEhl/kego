@@ -8,6 +8,9 @@ re-install-all:
 install-pii:
 	poetry install -E "torch-cuda121 pii"
 
+install-czii:
+	poetry install -E "czii"
+
 ariel-build-features:
 	poetry run python mlframework/ariel/features.py
 
