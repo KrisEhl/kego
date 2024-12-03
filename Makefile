@@ -13,9 +13,6 @@ install-pii:
 install-torch:
 	poetry install -E "torch pii"
 
-install-czii:
-	poetry install -E "czii"
-
 install-czii-monai:
 	poetry install -E "torch czii monai"
 
