@@ -1,12 +1,23 @@
 install-all:
 	poetry install --all-extras
 
-re-install-all:
+remove-environment:
 	rm -rf .venv
+
+re-install-all: remove-environment
 	$(MAKE) install-all
 
 install-pii:
-	poetry install -E "torch-cuda121 pii"
+	poetry install -E "torch pii"
+
+install-torch:
+	poetry install -E "torch pii"
+
+install-czii:
+	poetry install -E "czii"
+
+install-czii-monai:
+	poetry install -E "torch czii monai"
 
 install-czii:
 	poetry install -E "czii"
