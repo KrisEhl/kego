@@ -16,6 +16,7 @@ mlruns/
 
 # cache
 __pycache__/
+*.egg-info/
 
 # outputs
 notebooks/ariel/outputs_adc24_intro
