@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "ipykernel>=6.29.0",
     "kaggle>=1.6.6",
+    "lifelines>=0.30.0",
     "matplotlib>=3.8.2",
     "numpy>=1.26.4",
     "pandas>=2.2.0",
