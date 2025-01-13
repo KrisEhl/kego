@@ -1,7 +1,7 @@
 [project]
 name = "kego"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.1"
+description = "Helpers for quick ML analysis of kaggle competitions."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=1.26.4",
     "pandas>=2.2.0",
     "python-dotenv>=1.0.1",
+    "scikit-learn>=1.6.1",
     "tqdm>=4.66.4",
 ]
 
