@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "mlframework"
+name = "kego"
 version = "0.1.0"
 description = ""
 authors = ["kristian ehlert"]

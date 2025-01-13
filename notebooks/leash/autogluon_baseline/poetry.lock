@@ -2614,7 +2614,7 @@ window-ops = "*"
 dev = ["black", "dask[complete]", "datasetsforecast", "fugue[ray]", "lightgbm", "lightgbm-ray", "matplotlib", "mypy", "nbdev", "numba", "pandas", "pyspark", "ruff", "scikit-learn", "utilsforecast", "utilsforecast (>=0.0.6)", "window-ops", "xgboost", "xgboost-ray"]
 
 [[package]]
-name = "mlframework"
+name = "kego"
 version = "0.1.0"
 description = ""
 optional = false

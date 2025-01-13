@@ -7,7 +7,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10,<3.12"
-mlframework = {path = "../../..", develop=true}
+kego = {path = "../../..", develop=true}
 autogluon = "1.1.0"
 ray = "2.10.0"
 duckdb = "^0.10.2"

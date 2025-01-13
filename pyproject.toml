@@ -1,5 +1,5 @@
 [project]
-name = "mlframework"
+name = "kego"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["mlframework"]
+py-modules = ["kego"]
 
 [dependency-groups]
 dev = ["pre-commit>=3.6.0"]

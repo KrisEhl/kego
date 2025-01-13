@@ -1,4 +1,4 @@
-## MLframework
+## kego
 
 ## Setup
 To make VScode see poetry kernels use:

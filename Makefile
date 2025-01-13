@@ -20,7 +20,7 @@ install-czii:
 	poetry install -E "czii"
 
 ariel-build-features:
-	poetry run python mlframework/ariel/features.py
+	poetry run python kego/ariel/features.py
 
 download-competition-data:
 	echo ${KAGGLE_COMPETITION}
