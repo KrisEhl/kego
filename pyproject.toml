@@ -1,6 +1,6 @@
 [project]
 name = "kego"
-version = "0.4.1"
+version = "0.4.2"
 description = "Helpers for quick ML analysis of kaggle competitions."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -8,11 +8,11 @@ dependencies = [
     "ipykernel>=5.5.6",
     "kaggle>=1.6.6",
     "lifelines>=0.30.0",
-    "matplotlib>=3.8.2",
     "numpy>=1.26.4",
     "pandas>=2.2.0",
     "python-dotenv>=1.0.1",
-    "scikit-learn>=1.6.1",
+    "scikit-learn>=1.5.0",
+    "matplotlib>=3.7.0",
     "tqdm>=4.66.4",
 ]
 
