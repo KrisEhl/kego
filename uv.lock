@@ -559,7 +559,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/66/e3/c775e2213bac0ac1f
 
 [[package]]
 name = "kego"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "ipykernel" },
