@@ -6,8 +6,7 @@ import numpy as np
 
 import kego.plotting.utils_plotting
 from kego.lists import is_listlike, to_nlength_tuple
-from kego.plotting.figures import plot_legend, save_figure
-from kego.plotting.utils_plotting import create_axes_grid
+from kego.plotting.figures import create_axes_grid, plot_legend, save_figure
 
 
 def plot_lines(

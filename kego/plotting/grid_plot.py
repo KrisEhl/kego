@@ -6,7 +6,8 @@ from kego.constants import DEFAULT_COLORMAP
 from kego.lists import to_nlength_tuple
 from kego.plotting.axes_utils import set_axes
 from kego.plotting.colormesh import _plot_colormesh
-from kego.plotting.utils_plotting import create_axes_grid, get_norm
+from kego.plotting.figures import create_axes_grid
+from kego.plotting.utils_plotting import get_norm
 
 
 def grid_plot(
