@@ -24,8 +24,10 @@ def score(
     0.75
     """
     # added --
-    solution = solution.copy()
-    submission = submission.copy()
+    if isinstance(solution, pd.DataFrame):
+        solution = solution.copy()
+    if isinstance(submission, pd.DataFrame):
+        submission = submission.copy()
     # -- added
     del solution[row_id_column_name]
     del submission[row_id_column_name]
@@ -53,3 +55,20 @@ def score(
         )
         metric_list.append(c_index_race)
     return float(np.mean(metric_list) - np.sqrt(np.var(metric_list)))
+
+
+def metric(y_true, y_predict) -> float:
+    solution = pd.DataFrame(
+        {
+            "efs": y_true["efs"],
+            "efs_time": np.array(y_predict),
+            "race_group": y_true["race_group"],
+        }
+    )
+    solution["id"] = np.arange(solution.shape[0])
+
+    submission = pd.DataFrame({"prediction": y_true["efs_time"]})
+    submission["id"] = np.arange(solution.shape[0])
+    print(submission.isna().sum(axis=0))
+    print(solution.isna().sum(axis=0))
+    return score(solution=solution, submission=submission, row_id_column_name="id")
