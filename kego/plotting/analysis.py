@@ -4,7 +4,7 @@ from typing import Mapping, Optional, Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 
-import kego.plotting.axes_utils
+import kego.plotting.axes
 import kego.plotting.figures
 import kego.plotting.utils_plotting
 
@@ -209,7 +209,7 @@ def plot_confusion_matrix(
         linewidth=0,
         rasterized=True,
     )
-    kego.plotting.axes_utils.plot_colorbar(
+    kego.plotting.axes.plot_colorbar(
         mesh, cax=ax_colorbar, label=colorbar_label, font_size=font_size
     )
     kego.plotting.utils_plotting.annotate_values(
@@ -221,13 +221,13 @@ def plot_confusion_matrix(
         round_to_base=overplot_round_base,
         font_size=font_size,
     )
-    kego.plotting.axes_utils.set_axis_tick_labels(
+    kego.plotting.axes.set_axis_tick_labels(
         axes=axes, values=[0.25, 0.75], labels=tick_labels_x, axis="x"
     )
-    kego.plotting.axes_utils.set_axis_tick_labels(
+    kego.plotting.axes.set_axis_tick_labels(
         axes=axes, values=[0.25, 0.75], labels=tick_labels_y, axis="y"
     )
-    kego.plotting.axes_utils.set_axes(
+    kego.plotting.axes.set_axes(
         axes,
         xlim=[0, 1],
         ylim=[0, 1],
@@ -288,7 +288,7 @@ def plot_roc(
     )
 
     axes.plot([0, 1], [0, 1], color="navy", lw=lw, linestyle="--")
-    kego.plotting.axes_utils.set_axes(
+    kego.plotting.axes.set_axes(
         axes,
         xlim=[0, 1],
         ylim=[0, 1],

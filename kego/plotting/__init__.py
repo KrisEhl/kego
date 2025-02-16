@@ -1,5 +1,5 @@
 import kego.plotting.analysis
-import kego.plotting.axes_utils
+import kego.plotting.axes
 import kego.plotting.colormesh
 import kego.plotting.figures
 import kego.plotting.histograms

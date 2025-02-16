@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-import kego.plotting.axes_utils
+import kego.plotting.axes
 import kego.plotting.utils_plotting
 
 
@@ -36,7 +36,7 @@ def set_axes_timeseries(
     """
     if label_x is None:
         label_x = "time"
-    kego.plotting.axes_utils.set_axes(
+    kego.plotting.axes.set_axes(
         ax,
         xlim=xlim,
         ylim=ylim,

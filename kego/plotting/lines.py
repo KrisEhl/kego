@@ -4,6 +4,7 @@ from typing import Sequence
 
 import numpy as np
 
+import kego.plotting.axes
 import kego.plotting.utils_plotting
 from kego.lists import is_listlike, to_nlength_tuple
 from kego.plotting.figures import create_axes_grid, plot_legend, save_figure
@@ -30,7 +31,7 @@ def plot_lines(
         itertools.product(range(n_rows), range(n_columns))
     ):
         axes = axes_grid[i_row, i_column]
-        plot_line(x=xs[i_plot], y=ys[i_plot], label=labels[i_plot], axes=axes)
+        plot_line(x=xs[i_plot], y=ys[i_plot], label=labels[i_plot], axes=axes, log=log)
         plot_legend(axes=axes)
     save_figure(fig=figure, filename=filename)
 
@@ -61,13 +62,13 @@ def plot_line(
     _xlim = to_nlength_tuple(xlim)
     _ylim = to_nlength_tuple(ylim)
     axes.plot(x, y, label=label)
-    kego.plotting.axes_utils.set_x_log(
+    kego.plotting.axes.set_x_log(
         axes, _log[0], axis_symlog_linear_threshold=symlog_linear_threshold
     )
-    kego.plotting.axes_utils.set_y_log(
+    kego.plotting.axes.set_y_log(
         axes, _log[1], axis_symlog_linear_threshold=symlog_linear_threshold
     )
-    kego.plotting.axes_utils.set_axis_tick_labels(
+    kego.plotting.axes.set_axis_tick_labels(
         axes,
         replace_x_labels_at,
         replace_x_labels_with,
@@ -75,7 +76,7 @@ def plot_line(
         rotation=rotation_x_labels,
         font_size=font_size,
     )
-    kego.plotting.axes_utils.set_axis_tick_labels(
+    kego.plotting.axes.set_axis_tick_labels(
         axes,
         replace_y_labels_at,
         replace_y_labels_with,
@@ -83,8 +84,8 @@ def plot_line(
         rotation=rotation_y_labels,
         font_size=font_size,
     )
-    kego.plotting.axes_utils.set_axes_label(axes, label_x, "x", font_size=font_size)
-    kego.plotting.axes_utils.set_axes_label(axes, label_y, "y", font_size=font_size)
+    kego.plotting.axes.set_axes_label(axes, label_x, "x", font_size=font_size)
+    kego.plotting.axes.set_axes_label(axes, label_y, "y", font_size=font_size)
     axes.set_ylim(_ylim)
     axes.set_xlim(_xlim)
     save_figure(fig=figure, filename=filename)
