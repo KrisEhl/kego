@@ -61,13 +61,13 @@ def plot_line(
     _xlim = to_nlength_tuple(xlim)
     _ylim = to_nlength_tuple(ylim)
     axes.plot(x, y, label=label)
-    kego.plotting.utils_plotting.set_x_log(
+    kego.plotting.axes_utils.set_x_log(
         axes, _log[0], axis_symlog_linear_threshold=symlog_linear_threshold
     )
-    kego.plotting.utils_plotting.set_y_log(
+    kego.plotting.axes_utils.set_y_log(
         axes, _log[1], axis_symlog_linear_threshold=symlog_linear_threshold
     )
-    kego.plotting.utils_plotting.set_axis_tick_labels(
+    kego.plotting.axes_utils.set_axis_tick_labels(
         axes,
         replace_x_labels_at,
         replace_x_labels_with,
@@ -75,7 +75,7 @@ def plot_line(
         rotation=rotation_x_labels,
         font_size=font_size,
     )
-    kego.plotting.utils_plotting.set_axis_tick_labels(
+    kego.plotting.axes_utils.set_axis_tick_labels(
         axes,
         replace_y_labels_at,
         replace_y_labels_with,
@@ -83,8 +83,8 @@ def plot_line(
         rotation=rotation_y_labels,
         font_size=font_size,
     )
-    kego.plotting.utils_plotting.set_axes_label(axes, label_x, "x", font_size=font_size)
-    kego.plotting.utils_plotting.set_axes_label(axes, label_y, "y", font_size=font_size)
+    kego.plotting.axes_utils.set_axes_label(axes, label_x, "x", font_size=font_size)
+    kego.plotting.axes_utils.set_axes_label(axes, label_y, "y", font_size=font_size)
     axes.set_ylim(_ylim)
     axes.set_xlim(_xlim)
     save_figure(fig=figure, filename=filename)

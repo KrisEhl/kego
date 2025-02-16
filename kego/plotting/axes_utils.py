@@ -1,8 +1,10 @@
 import typing as t
 from collections.abc import Sequence
+from typing import Optional
 
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib import pyplot as plt
 
 import kego.constants

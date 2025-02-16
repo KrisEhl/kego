@@ -12,7 +12,7 @@ def plot_value_counts(
     figure_size: tuple | None = None,
 ):
     for column in df.columns:
-        figure, axes, _ = kego.plotting.utils_plotting.create_axes_grid(
+        figure, axes, _ = kego.plotting.figures.create_axes_grid(
             n_columns=1, n_rows=1, unravel=True, figure_size=figure_size
         )
         value_counts = df[column].value_counts()

@@ -185,7 +185,7 @@ def plot_confusion_matrix(
         figure_size = (6, 6)
     cm = sklearn.metrics.confusion_matrix(truth, prediction, normalize=normalize)
     if axes is None:
-        fig, axes, ax_colorbar = kego.plotting.utils_plotting.create_axes_grid(
+        fig, axes, ax_colorbar = kego.plotting.figures.create_axes_grid(
             1,
             1,
             figure_size=figure_size,
@@ -209,7 +209,7 @@ def plot_confusion_matrix(
         linewidth=0,
         rasterized=True,
     )
-    kego.plotting.utils_plotting.plot_colorbar(
+    kego.plotting.axes_utils.plot_colorbar(
         mesh, cax=ax_colorbar, label=colorbar_label, font_size=font_size
     )
     kego.plotting.utils_plotting.annotate_values(
@@ -221,10 +221,10 @@ def plot_confusion_matrix(
         round_to_base=overplot_round_base,
         font_size=font_size,
     )
-    kego.plotting.utils_plotting.set_axis_tick_labels(
+    kego.plotting.axes_utils.set_axis_tick_labels(
         axes=axes, values=[0.25, 0.75], labels=tick_labels_x, axis="x"
     )
-    kego.plotting.utils_plotting.set_axis_tick_labels(
+    kego.plotting.axes_utils.set_axis_tick_labels(
         axes=axes, values=[0.25, 0.75], labels=tick_labels_y, axis="y"
     )
     kego.plotting.axes_utils.set_axes(
@@ -276,7 +276,7 @@ def plot_roc(
         truth, prediction_probabilities, drop_intermediate=False
     )
     roc_auc = sklearn.metrics.auc(false_positive_rate, true_positive_rate)
-    fig, axes = kego.plotting.utils_plotting.create_figure_axes(
+    fig, axes = kego.plotting.figures.create_figure_axes(
         figure=fig, axes=axes, figure_size=figure_size, font_size=font_size
     )
     lw = 2

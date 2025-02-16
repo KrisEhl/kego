@@ -268,7 +268,7 @@ def plot_histogram_2d(
             fig,
             axes_grid,
             axes_colorbar_grid,
-        ) = kego.plotting.utils_plotting.create_axes_grid(
+        ) = kego.plotting.figures.create_axes_grid(
             n_columns=n_columns,
             n_rows=n_rows,
             figure_size=figure_size,
@@ -285,9 +285,7 @@ def plot_histogram_2d(
             bottom=0.1,
         )
     else:
-        fig, axes = kego.plotting.utils_plotting.create_figure_axes(
-            figure=figure, axes=axes
-        )
+        fig, axes = kego.plotting.figures.create_figure_axes(figure=figure, axes=axes)
     results_dic = {}
     for i_row in range(n_rows):
         for i_column in range(n_columns):
@@ -523,22 +521,22 @@ def _plot_histogram_2d(
             round_to_base=annotate_round_to_base,
             font_size=font_size,
         )
-    kego.plotting.utils_plotting.plot_colorbar(
+    kego.plotting.axes_utils.plot_colorbar(
         plot, cax=axes_colorbar, label=label_colorbar, font_size=font_size
     )
 
     xlim, ylim = _find_axis_limits(xlim, ylim, bin_edges_x, bin_edges_y)
 
-    kego.plotting.utils_plotting.set_x_log(
+    kego.plotting.axes_utils.set_x_log(
         axes, log[0], axis_symlog_linear_threshold=linear_thresh[0]
     )
-    kego.plotting.utils_plotting.set_y_log(
+    kego.plotting.axes_utils.set_y_log(
         axes, log[1], axis_symlog_linear_threshold=linear_thresh[1]
     )
     kego.plotting.axes_utils.set_x_lim(axes, xlim)
     kego.plotting.axes_utils.set_y_lim(axes, ylim)
 
-    kego.plotting.utils_plotting.set_title(axes, title, font_size=font_size)
+    kego.plotting.axes_utils.set_title(axes, title, font_size=font_size)
 
     if marginal_x == "histogram" and axes_marginal is not None:
         plot_histogram(
@@ -559,7 +557,7 @@ def _plot_histogram_2d(
             tight_layout=False,
         )
         if not marginal_x_show_xticks:
-            kego.plotting.utils_plotting.remove_tick_labels(axes_marginal[0][0], "x")
+            kego.plotting.axes_utils.remove_tick_labels(axes_marginal[0][0], "x")
     if marginal_y == "histogram" and axes_marginal is not None:
         plot_histogram(
             y_values,
@@ -581,15 +579,11 @@ def _plot_histogram_2d(
             rotation_x_labels=270,
         )
         if not marginal_y_show_yticks:
-            kego.plotting.utils_plotting.remove_tick_labels(axes_marginal[1][1], "y")
-    kego.plotting.utils_plotting.set_axis_tick_labels(
-        axes, font_size=font_size, axis="x"
-    )
-    kego.plotting.utils_plotting.set_axis_tick_labels(
-        axes, font_size=font_size, axis="y"
-    )
-    kego.plotting.utils_plotting.set_axes_label(axes, label_x, "x", font_size=font_size)
-    kego.plotting.utils_plotting.set_axes_label(axes, label_y, "y", font_size=font_size)
+            kego.plotting.axes_utils.remove_tick_labels(axes_marginal[1][1], "y")
+    kego.plotting.axes_utils.set_axis_tick_labels(axes, font_size=font_size, axis="x")
+    kego.plotting.axes_utils.set_axis_tick_labels(axes, font_size=font_size, axis="y")
+    kego.plotting.axes_utils.set_axes_label(axes, label_x, "x", font_size=font_size)
+    kego.plotting.axes_utils.set_axes_label(axes, label_y, "y", font_size=font_size)
     return axes, H
 
 
@@ -742,9 +736,7 @@ def plot_histogram(
     else:
         values = np.array(key_or_values)
     values = flatten_array(values)
-    figure, axes = kego.plotting.utils_plotting.create_figure_axes(
-        figure=figure, axes=axes
-    )
+    figure, axes = kego.plotting.figures.create_figure_axes(figure=figure, axes=axes)
 
     if bin_edges is None:
         bin_edges, symlog_linear_threshold = get_bin_edges(
@@ -786,7 +778,7 @@ def plot_histogram(
 
     if tight_layout:
         figure.tight_layout()
-    kego.plotting.utils_plotting.set_title(axes, title, font_size=font_size)
+    kego.plotting.axes_utils.set_title(axes, title, font_size=font_size)
     kego.plotting.figures.save_figure(figure, filename)
     return axes
 
@@ -887,13 +879,13 @@ def plot_bar(
             color=color,
         )
 
-    kego.plotting.utils_plotting.set_x_log(
+    kego.plotting.axes_utils.set_x_log(
         axes, _log[0], axis_symlog_linear_threshold=symlog_linear_threshold
     )
-    kego.plotting.utils_plotting.set_y_log(
+    kego.plotting.axes_utils.set_y_log(
         axes, _log[1], axis_symlog_linear_threshold=symlog_linear_threshold
     )
-    kego.plotting.utils_plotting.set_axis_tick_labels(
+    kego.plotting.axes_utils.set_axis_tick_labels(
         axes,
         replace_x_labels_at,
         replace_x_labels_with,
@@ -901,7 +893,7 @@ def plot_bar(
         rotation=rotation_x_labels,
         font_size=font_size,
     )
-    kego.plotting.utils_plotting.set_axis_tick_labels(
+    kego.plotting.axes_utils.set_axis_tick_labels(
         axes,
         replace_y_labels_at,
         replace_y_labels_with,
@@ -909,8 +901,8 @@ def plot_bar(
         rotation=rotation_y_labels,
         font_size=font_size,
     )
-    kego.plotting.utils_plotting.set_axes_label(axes, label_x, "x", font_size=font_size)
-    kego.plotting.utils_plotting.set_axes_label(axes, label_y, "y", font_size=font_size)
+    kego.plotting.axes_utils.set_axes_label(axes, label_x, "x", font_size=font_size)
+    kego.plotting.axes_utils.set_axes_label(axes, label_y, "y", font_size=font_size)
     axes.set_ylim(_ylim)
     axes.set_xlim(_xlim)
     return plot
