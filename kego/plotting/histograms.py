@@ -658,6 +658,7 @@ def plot_histogram(
     rotation_x_labels: int = 0,
     rotation_y_labels: int = 0,
     title: str = "",
+    **kwargs_bar,
 ) -> kego.constants.TYPE_MATPLOTLIB_AXES:
     """
     plots 1d histogram
@@ -772,6 +773,7 @@ def plot_histogram(
         rotation_x_labels=rotation_x_labels,
         rotation_y_labels=rotation_y_labels,
         font_size=font_size,
+        **kwargs_bar,
     )
     if horizontal_line is not None:
         axes.axhline(horizontal_line)
@@ -804,6 +806,7 @@ def plot_bar(
     replace_y_labels_with: Sequence | None = None,
     rotation_x_labels: int = 0,
     rotation_y_labels: int = 0,
+    **kwargs_bar,
 ) -> matplotlib.container.BarContainer:
     """
     plots 1d bar plot
@@ -868,6 +871,7 @@ def plot_bar(
             edgecolor="black",
             alpha=alpha,
             color=color,
+            **kwargs_bar,
         )
     else:
         plot = axes.bar(
@@ -877,6 +881,7 @@ def plot_bar(
             edgecolor="black",
             alpha=alpha,
             color=color,
+            **kwargs_bar,
         )
 
     kego.plotting.axes.set_x_log(

@@ -19,3 +19,10 @@ def info_gpus():
 
 def empty_gpu():
     torch.cuda.empty_cache()
+
+
+def using_device():
+    if len(available_gpus()):
+        return "cuda"
+    else:
+        return "cpu"

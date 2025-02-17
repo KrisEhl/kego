@@ -1,3 +1,12 @@
+import logging
+from typing import Literal
+
+import numpy as np
+from sklearn.model_selection import KFold
+
+logger = logging.getLogger(__name__)
+
+
 def train_model(
     model,
     X_train,
@@ -16,3 +25,45 @@ def train_model(
         model = feature_selector(model, feature_space)
     model = model.fit(X_train, y_train)
     return model
+
+
+def train_model_split(
+    model,
+    train,
+    test,
+    features: list[str],
+    target: str,
+    kwargs_model: dict = {},
+    folds_n=10,
+):
+    FOLDS = 10
+    kf = KFold(n_splits=folds_n, shuffle=True, random_state=42)
+
+    oof_xgb = np.zeros(len(train))
+    pred_xgb = np.zeros(len(test))
+
+    for i, (train_index, test_index) in enumerate(kf.split(train)):
+
+        logger.info("#" * 25)
+        logger.info(f"### Fold {i+1}")
+        logger.info("#" * 25)
+        x_train = train.loc[train_index, features].copy()
+        y_train = train.loc[train_index, target]
+        x_valid = train.loc[test_index, features].copy()
+        y_valid = train.loc[test_index, target]
+        x_test = test[features].copy()
+
+        model_trained = model(
+            **kwargs_model
+            # early_stopping_rounds=25,
+        )
+        model_trained.fit(x_train, y_train, eval_set=[(x_valid, y_valid)], verbose=500)
+
+        # INFER OOF
+        oof_xgb[test_index] = model_trained.predict(x_valid)
+        # INFER TEST
+        pred_xgb += model_trained.predict(x_test)
+
+    # COMPUTE AVERAGE TEST PREDS
+    pred_xgb /= FOLDS
+    return model_trained, oof_xgb
