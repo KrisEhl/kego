@@ -2,6 +2,7 @@ import logging
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import KFold
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,9 @@ def train_model(
 
 def train_model_split(
     model,
-    train,
-    test,
+    train: pd.DataFrame,
+    test: pd.DataFrame,
+    holdout: pd.DataFrame,
     features: list[str],
     target: str,
     kwargs_model: dict = {},
@@ -41,6 +43,7 @@ def train_model_split(
 
     oof_xgb = np.zeros(len(train))
     pred_xgb = np.zeros(len(test))
+    holdout_xgb = np.zeros(len(holdout))
 
     for i, (train_index, test_index) in enumerate(kf.split(train)):
 
@@ -52,6 +55,7 @@ def train_model_split(
         x_valid = train.loc[test_index, features].copy()
         y_valid = train.loc[test_index, target]
         x_test = test[features].copy()
+        x_holdout = holdout[features].copy()
 
         model_trained = model(
             **kwargs_model
@@ -63,7 +67,9 @@ def train_model_split(
         oof_xgb[test_index] = model_trained.predict(x_valid)
         # INFER TEST
         pred_xgb += model_trained.predict(x_test)
+        holdout_xgb += model_trained.predict(x_holdout)
 
     # COMPUTE AVERAGE TEST PREDS
     pred_xgb /= FOLDS
-    return model_trained, oof_xgb
+    holdout_xgb /= FOLDS
+    return model_trained, oof_xgb, holdout_xgb
