@@ -1,5 +1,6 @@
 install:
 	uv sync
+	uv run pre-commit install
 
 remove-environment:
 	rm -rf .venv
