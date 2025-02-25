@@ -1,6 +1,6 @@
 [project]
 name = "kego"
-version = "0.4.2"
+version = "0.5.0"
 description = "Helpers for quick ML analysis of kaggle competitions."
 readme = "README.md"
 requires-python = ">=3.10"
