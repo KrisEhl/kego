@@ -8,7 +8,8 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10,<3.12"
 kego = {path = "../../..", develop=true}
-autogluon = "1.1.0"
+autogluon = "^=1.2"
+lifelines = "^=0.30.0"
 ray = "2.10.0"
 duckdb = "^0.10.2"
 rdkit = "^2023.9.6"
