@@ -12,7 +12,7 @@ download-competition-data:
 	echo ${KAGGLE_COMPETITION}
 	KAGGLE_COMPETITION='$(KAGGLE_COMPETITION)'
 	mkdir -p data/$${KAGGLE_COMPETITION%%-*}
-	uv run kaggle competitions download -c ${KAGGLE_COMPETITION} -p data/$${KAGGLE_COMPETITION%%-*}/
+	uv tool run kaggle competitions download -c ${KAGGLE_COMPETITION} -p data/$${KAGGLE_COMPETITION%%-*}/
 	unzip data/$${KAGGLE_COMPETITION%%-*}/${KAGGLE_COMPETITION}.zip -d data/$${KAGGLE_COMPETITION%%-*}/${KAGGLE_COMPETITION}
 
 publish:
