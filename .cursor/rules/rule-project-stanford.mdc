@@ -1,0 +1,16 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+
+# Stanford RNA Challenge
+- The aim of the challenge is to predict of the 3D sequence of RNA sequences.
+- We need to make predictions for the x,y,z position of every nuclei.
+
+# Plan
+- We first will generate a simple baseline model.
+- Then iterate on more advanced models.
+
+# Code conventions
+- Follow best practice according to google's coding conventions.

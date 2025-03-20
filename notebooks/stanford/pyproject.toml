@@ -6,6 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
     "ipykernel>=6.29.5",
     "kego",
+    "polars>=1.25.2",
+    "pre-commit>=4.2.0",
+    "torch>=2.6.0",
+    "wandb>=0.19.8",
 ]
 
 [tool.uv.sources]
