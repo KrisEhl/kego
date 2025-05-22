@@ -9,6 +9,7 @@ data/*
 *.pickle
 output/
 mlruns/
+*.kml
 
 # settings
 .env

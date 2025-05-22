@@ -1,0 +1,17 @@
+[project]
+name = "openaitoz"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "contextily>=1.6.2",
+    "geopandas>=1.0.1",
+    "ipykernel>=6.29.5",
+    "kego",
+    "matplotlib>=3.10.3",
+    "polars>=1.25.2",
+    "pre-commit>=4.2.0",
+]
+
+[tool.uv.sources]
+kego = { path = "../../", editable = true }
