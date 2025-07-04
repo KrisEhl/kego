@@ -10,7 +10,7 @@ from kego.plotting.figures import create_axes_grid
 from kego.plotting.utils_plotting import get_norm
 
 
-def grid_plot(
+def plot_grid_plot(
     data_as_dict: dict,
     xs: list | None = None,
     ys: list | None = None,

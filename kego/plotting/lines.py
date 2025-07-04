@@ -7,7 +7,12 @@ import numpy as np
 import kego.plotting.axes
 import kego.plotting.utils_plotting
 from kego.lists import is_listlike, to_nlength_tuple
-from kego.plotting.figures import create_axes_grid, plot_legend, save_figure
+from kego.plotting.figures import (
+    create_axes_grid,
+    create_figure_axes,
+    plot_legend,
+    save_figure,
+)
 
 
 def plot_lines(
@@ -37,12 +42,14 @@ def plot_lines(
 
 
 def plot_line(
-    x: np.ndarray,
-    y: np.ndarray,
+    x: np.ndarray | None = None,
+    y: np.ndarray | None = None,
     xlim: tuple[float | None, float | None] | None = None,
     ylim: tuple[float | None, float | None] | None = None,
     log: str | tuple[str, str] = "false",
     label: str | None = None,
+    color: str | None = None,
+    linewidth: float | None = None,
     replace_x_labels_at: Sequence | None = None,
     replace_x_labels_with: Sequence | None = None,
     replace_y_labels_at: Sequence | None = None,
@@ -51,17 +58,21 @@ def plot_line(
     rotation_y_labels: int = 0,
     filename: str | None = None,
     axes=None,
+    figure=None,
     font_size: int = 12,
     symlog_linear_threshold: float | None = None,
     label_x: str | None = None,
     label_y: str | None = None,
 ):
-    if axes is None:
-        figure, axes, _ = create_axes_grid(n_columns=1, n_rows=1, unravel=True)
+    if x is None:
+        x = np.arange(len(y))
+    if y is None:
+        y = np.arange(len(x))
+    figure, axes = create_figure_axes(figure=figure, axes=axes, font_size=font_size)
     _log = to_nlength_tuple(log)
     _xlim = to_nlength_tuple(xlim)
     _ylim = to_nlength_tuple(ylim)
-    axes.plot(x, y, label=label)
+    axes.plot(x, y, label=label, color=color, linewidth=linewidth)
     kego.plotting.axes.set_x_log(
         axes, _log[0], axis_symlog_linear_threshold=symlog_linear_threshold
     )

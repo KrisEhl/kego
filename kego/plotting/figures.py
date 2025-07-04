@@ -120,6 +120,7 @@ def _create_figure(figure_size):
 def create_axes_grid(
     n_columns: int,
     n_rows: int,
+    title: str | None = None,
     figure_size: tuple[float, float] | None = None,
     widths_along_x: list[float] | None = None,
     heights_along_y: list[float] | None = None,
@@ -181,6 +182,8 @@ def create_axes_grid(
             (j, i) for i in range(n_columns) for j in range(n_rows)
         ]
     fig = _create_figure(figure_size)
+    if title is not None:
+        fig.suptitle(title)
     kego.checks.all_same_type([n_columns, n_rows], int)
     kego.checks.all_same_type(
         [

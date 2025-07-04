@@ -1,5 +1,5 @@
 import typing as t
-from typing import Optional
+from typing import Literal, Optional
 
 import matplotlib.colors
 import matplotlib.figure
@@ -138,7 +138,7 @@ def to_list(x, n=2):
 
 
 def get_norm(
-    norm: str | None = None,
+    norm: Literal["log", "symlog", "linear"] | None = None,
     vmin: float | None = None,
     vmax: float | None = None,
     norm_symlog_linear_threshold: float | None = None,

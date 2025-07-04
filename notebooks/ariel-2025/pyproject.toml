@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
+    "altair>=5.5.0",
     "ipykernel>=6.29.5",
     "kego",
     "polars>=1.25.2",
