@@ -64,9 +64,11 @@ def plot_line(
     label_x: str | None = None,
     label_y: str | None = None,
 ):
-    if x is None:
+    if x is None and y is None:
+        raise ValueError(f"{x=} and {y=} cannot both be None!")
+    if x is None and y is not None:
         x = np.arange(len(y))
-    if y is None:
+    if y is None and x is not None:
         y = np.arange(len(x))
     figure, axes = create_figure_axes(figure=figure, axes=axes, font_size=font_size)
     _log = to_nlength_tuple(log)

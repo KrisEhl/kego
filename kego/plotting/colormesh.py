@@ -29,7 +29,7 @@ def _plot_colormesh(
     if convert_zeros_to_nan:
         matrix[matrix == 0] = np.nan
         logger.debug("Convert zeros to np.nan in matrix.")
-    args = (xx, yy, matrix)
+    args: tuple = (xx, yy, matrix)
     if xx is None and yy is None:
         args = (matrix,)
     plot = axes.pcolormesh(
