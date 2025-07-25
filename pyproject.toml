@@ -20,4 +20,7 @@ build-backend = "hatchling.build"
 
 
 [dependency-groups]
-dev = ["pre-commit>=3.6.0"]
+dev = [
+    "ipykernel>=6.30.0",
+    "pre-commit>=3.6.0",
+]
