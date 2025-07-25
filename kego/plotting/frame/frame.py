@@ -16,12 +16,12 @@ from .scaffold import Scaffold
 
 def _extract_values_and_lables_from_data_input(
     data: TYPE_PLOT_INPUT, df: pl.DataFrame | None = None
-) -> tuple[np.ndarray, str]:
-    match type(data):
-        case str:
-            if df is None:
-                raise ValueError(f"Need to provide df to use string inputs ({data})!")
-            return df[data].to_numpy(), data  # type: ignore
+) -> tuple[np.ndarray | None, str | None]:
+    if isinstance(data, str):
+        if df is None:
+            raise ValueError(f"Need to provide df to use string inputs ({data})!")
+        return df[data].to_numpy(), data
+    return None, None
 
 
 class Frame:

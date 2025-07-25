@@ -32,14 +32,16 @@ def _extend_grid(
 
 
 def _from_xy_to_i(xy: tuple[int, int], ny: int) -> int:
-    """Convert tuple index, e.g. (1,2), to wrapped index, i.e. 1 + 2 * 3 (assuming nx=2, ny=3)"""
+    """Convert tuple index, (1,2), to wrapped index, 1 + 2 * 3 (assuming nx=2, ny=3)"""
     x, y = xy
     return x + y * ny
 
 
-def _from_i_to_xy(i: int, nx: int, ny: int):
-    """Convert tuple index, e.g. (1,2), to wrapped index, i.e. 1 + 2 * 3 (assuming nx=2, ny=3)"""
-    return (i % ny,)
+def _from_i_to_xy(i: int, nx: int) -> tuple[int, int]:
+    """Convert wrapped index, 1 + 2 * 3, to tuple index, (1,2) (assuming nx=2, ny=3)"""
+    y = i // nx
+    x = i % nx
+    return x, y
 
 
 class Grid:
@@ -90,7 +92,9 @@ class Grid:
         elif isinstance(xy, int):
             return self.flatten()[xy]
 
-    def __setitem__(self, xy: tuple[int, int], value) -> None:
+    def __setitem__(self, xy: tuple[int, int] | int, value) -> None:
+        if isinstance(xy, int):
+            xy = _from_i_to_xy(i=xy, nx=self.nx)
         x, y = xy
         self.extend_grid(x=x + 1, y=y + 1)
         self.grid[y][x] = value
@@ -109,7 +113,7 @@ class Grid:
         return iter(self.grid)
 
     @property
-    def empty_entries_i(self):
+    def _empty_entries_i(self):
         return [i for i in range(len(self.flatten())) if self[i] is None]
 
 
@@ -118,11 +122,7 @@ class Scaffold:
     entries: Grid
 
     def __str__(self) -> str:
-        return (
-            f"<Scaffold {self.nx},{self.ny}>\n[\n "
-            + "\n ".join([str(x).center(12) for x in self.entries])
-            + "\n]"
-        )
+        return str(self.entries)
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -137,35 +137,34 @@ class Scaffold:
 
     @property
     def empty_entries(self):
-        return self.entries.empty_entries_i
-
-    @property
-    def next_empty_entry(self):
-        empty_entries = self.empty_entries
-        if not len(empty_entries):
-            self.entries.extend_grid(x=self.ny + 1)
-        return empty_entries[0]
+        return self.entries._empty_entries_i
 
     def set(self, confif_plot: ConfigPlot, x: int | None = None, y: int | None = None):
         if x is None and y is None:
-            self.set_in_next_empty(config_plot=confif_plot)
+            self._set_in_next_empty(config_plot=confif_plot)
         elif x is not None and y is not None:
-            self.set_in_specific(x=x, y=y, config_plot=confif_plot)
+            self._set_in_specific(x=x, y=y, config_plot=confif_plot)
+        else:
+            raise ValueError(f"Need to specify [{x=} and {y=}] or [{confif_plot=}]")
 
-    def set_in_next_empty(self, config_plot: ConfigPlot):
+    @property
+    def _next_empty_entry(self):
+        empty_entries = self.empty_entries
+        if not len(empty_entries):
+            self.entries.extend_grid(y=self.ny + 1)
+        return self.empty_entries[0]
+
+    def _set_in_next_empty(self, config_plot: ConfigPlot):
         # NOTE: should these entries be treated differently than "set specific" and be moved when specific requires their spot?
-        self.next_empty_entry
+        i = self._next_empty_entry
+        self.entries[i] = config_plot
+        return self
 
-    def set_in_specific(self, x: int, y: int, config_plot: ConfigPlot):
-        # self.extend_grid(x=x + 1, y=y + 1)
-        entry_current = self.entries[y][x]
-        if entry_current is not None:
-            logger.debug(
-                f"Location {x=} and {y} already taken ({entry_current})! Will be overwritten by {config_plot}."
-            )
-        self.entries[y][x] = config_plot
+    def _set_in_specific(self, x: int, y: int, config_plot: ConfigPlot):
+        # NOTE: should entries always be extended?
+        self.entries[x, y] = config_plot
         return self
 
     @classmethod
     def from_nx_ny(cls, nx, ny):
-        return cls(scaffold_entries=[[None for _ in range(nx)] for _ in range(ny)])
+        return cls(entries=Grid(nx=nx, ny=ny))
