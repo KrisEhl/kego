@@ -4,7 +4,7 @@ from typing import Literal
 
 from ...checks import all_same_type
 from ...lists import flatten_list
-from .config_plot import ConfigPlot
+from .config_plot import ConfigPlotStyle
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +60,17 @@ class Grid:
                 raise TypeError(f"{grid=} should be of type list[list]!")
             self.grid = grid
 
-    def transpose(self):
-        return Grid(grid=[list(row) for row in zip(*self.grid)])
+    @property
+    def nx(self):
+        return len(self.grid[0])
+
+    @property
+    def ny(self):
+        return len(self.grid)
+
+    @property
+    def _empty_entries_i(self):
+        return [i for i in range(len(self.flatten())) if self[i] is None]
 
     def __str__(self) -> str:
         return (
@@ -72,14 +81,6 @@ class Grid:
 
     def __repr__(self) -> str:
         return self.__str__()
-
-    @property
-    def nx(self):
-        return len(self.grid[0])
-
-    @property
-    def ny(self):
-        return len(self.grid)
 
     def __getitem__(self, xy: tuple[int, int] | int):
         if isinstance(xy, tuple):
@@ -99,6 +100,9 @@ class Grid:
         self.extend_grid(x=x + 1, y=y + 1)
         self.grid[y][x] = value
 
+    def transpose(self):
+        return Grid(grid=[list(row) for row in zip(*self.grid)])
+
     def flatten(self) -> list:
         return flatten_list(self.grid)
 
@@ -112,20 +116,10 @@ class Grid:
     def __iter__(self):
         return iter(self.grid)
 
-    @property
-    def _empty_entries_i(self):
-        return [i for i in range(len(self.flatten())) if self[i] is None]
-
 
 @dataclass
 class Scaffold:
     entries: Grid
-
-    def __str__(self) -> str:
-        return str(self.entries)
-
-    def __repr__(self) -> str:
-        return self.__str__()
 
     @property
     def nx(self):
@@ -139,7 +133,19 @@ class Scaffold:
     def empty_entries(self):
         return self.entries._empty_entries_i
 
-    def set(self, confif_plot: ConfigPlot, x: int | None = None, y: int | None = None):
+    @classmethod
+    def from_nx_ny(cls, nx, ny):
+        return cls(entries=Grid(nx=nx, ny=ny))
+
+    def __str__(self) -> str:
+        return str(self.entries)
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    def set(
+        self, confif_plot: ConfigPlotStyle, x: int | None = None, y: int | None = None
+    ):
         if x is None and y is None:
             self._set_in_next_empty(config_plot=confif_plot)
         elif x is not None and y is not None:
@@ -154,17 +160,13 @@ class Scaffold:
             self.entries.extend_grid(y=self.ny + 1)
         return self.empty_entries[0]
 
-    def _set_in_next_empty(self, config_plot: ConfigPlot):
+    def _set_in_next_empty(self, config_plot: ConfigPlotStyle):
         # NOTE: should these entries be treated differently than "set specific" and be moved when specific requires their spot?
         i = self._next_empty_entry
         self.entries[i] = config_plot
         return self
 
-    def _set_in_specific(self, x: int, y: int, config_plot: ConfigPlot):
+    def _set_in_specific(self, x: int, y: int, config_plot: ConfigPlotStyle):
         # NOTE: should entries always be extended?
         self.entries[x, y] = config_plot
         return self
-
-    @classmethod
-    def from_nx_ny(cls, nx, ny):
-        return cls(entries=Grid(nx=nx, ny=ny))
