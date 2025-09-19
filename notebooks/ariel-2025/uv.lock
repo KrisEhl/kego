@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -525,6 +525,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas" },
+    { name = "polars" },
     { name = "scikit-learn" },
     { name = "tqdm" },
 ]
@@ -535,12 +536,16 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.7.0" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "pandas", specifier = ">=2.2.0" },
+    { name = "polars", specifier = ">=1.31.0" },
     { name = "scikit-learn", specifier = ">=1.5.0" },
     { name = "tqdm", specifier = ">=4.66.4" },
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pre-commit", specifier = ">=3.6.0" }]
+dev = [
+    { name = "ipykernel", specifier = ">=6.30.0" },
+    { name = "pre-commit", specifier = ">=3.6.0" },
+]
 
 [[package]]
 name = "kiwisolver"
