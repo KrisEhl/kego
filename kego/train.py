@@ -38,7 +38,6 @@ def train_model_split(
     kwargs_model: dict = {},
     folds_n=10,
 ):
-    FOLDS = 10
     kf = KFold(n_splits=folds_n, shuffle=True, random_state=42)
 
     oof_xgb = np.zeros(len(train))
@@ -70,6 +69,6 @@ def train_model_split(
         holdout_xgb += model_trained.predict(x_holdout)
 
     # COMPUTE AVERAGE TEST PREDS
-    pred_xgb /= FOLDS
-    holdout_xgb /= FOLDS
+    pred_xgb /= folds_n
+    holdout_xgb /= folds_n
     return model_trained, oof_xgb, holdout_xgb
