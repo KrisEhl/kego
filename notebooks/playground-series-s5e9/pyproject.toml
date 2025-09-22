@@ -8,6 +8,7 @@ dependencies = [
     "kego",
     "pyarrow>=20.0.0",
     "scikit-learn>=1.6.1",
+    "seaborn>=0.13.2",
 ]
 
 [tool.black]
@@ -18,14 +19,5 @@ kego = { workspace = true, editable = true }
 
 [dependency-groups]
 dev = [
-    "altair>=5.5.0",
-    "ipykernel>=6.30.0",
-    "jupyter-server>=2.17.0",
-    "jupyterlab-lsp>=5.2.0",
     "pre-commit>=4.1.0",
-    "python-lsp-server[all]>=1.13.1",
-    "uv>=0.8.19",
-    "uvicorn>=0.36.0",
-    "vegafusion[embed]>=2.0.2",
-    "vl-convert-python>=1.8.0",
 ]

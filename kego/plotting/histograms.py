@@ -382,7 +382,7 @@ def _get_values_and_axis_label_from_dataframe(
                 label = key_or_values
             if label == "off":
                 label = None
-            values = df[key_or_values].values
+            values = df[key_or_values].to_numpy()
         else:
             raise ValueError(
                 f"{df=}, if {key_or_values=} given as string, dataset required"
@@ -729,7 +729,7 @@ def plot_histogram(
     if df is not None and isinstance(key_or_values, str):
         if label_x is None:
             label_x = key_or_values
-        values = df[key_or_values].values
+        values = df[key_or_values].to_numpy()
     elif isinstance(key_or_values, str):
         raise ValueError(
             f"Need to specify {df=} when specifying key name {key_or_values=}."
