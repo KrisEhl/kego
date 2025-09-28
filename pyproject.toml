@@ -28,5 +28,5 @@ dev = [
 [tool.uv.workspace]
 members = [
     "notebooks/playground-series-s5e9",
-    ".",
+    ".", "notebooks/nfl-big-data-bowl-2026-prediction",
 ]

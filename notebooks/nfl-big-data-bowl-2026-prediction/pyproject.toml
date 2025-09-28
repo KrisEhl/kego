@@ -1,15 +1,14 @@
 [project]
-name = "playground-series-s5e9"
+name = "nfl-big-data-bowl-2026-prediction"
 version = "0.1.0"
-description = "Add your description here"
+description = "nfl-big-data-bowl-2026-prediction"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "ipykernel>=6.29.5",
-    "kego",
-    "pyarrow>=20.0.0",
-    "scikit-learn>=1.6.1",
-    "seaborn>=0.13.2",
+        "ipykernel>=6.30.0",
+        "kego",
 ]
+
 
 [tool.black]
 line-length = 79

@@ -650,6 +650,8 @@ def plot_histogram(
     axes: kego.constants.TYPE_MATPLOTLIB_AXES | None = None,
     filename: str | pathlib.Path | None = None,
     font_size: float = kego.constants.DEFAULT_FONTSIZE_LARGE,
+    replace_x_labels_at: Sequence | None = None,
+    replace_x_labels_with: Sequence | None = None,
     vertical: bool = False,
     alpha: float = 1,
     color: str | None = None,
@@ -739,22 +741,33 @@ def plot_histogram(
     values = flatten_array(values)
     figure, axes = kego.plotting.figures.create_figure_axes(figure=figure, axes=axes)
 
-    if bin_edges is None:
-        bin_edges, symlog_linear_threshold = get_bin_edges(
-            data=values,
-            n_bins=n_bins,
-            n_bins_linear=n_bins_linear,
-            symlog_linear_threshold=symlog_linear_threshold,
-            log=_log[0],
-            return_symlog_linear_threshold=True,
-            vmin=_xlim[0],
-            vmax=_xlim[1],
-        )
-    (
-        hist,
-        bin_edges,
-    ) = np.histogram(values, bins=bin_edges)
-    bin_centers = bin_edges[:-1] + np.diff(bin_edges) / 2.0
+    print(f"{values[0]=}")
+    print(f"{type(values[0])=}")
+    if kego.checks.any_of_type(values, str):
+        replace_x_labels_with, hist = np.unique(values, return_counts=True)
+        bin_edges = np.arange(len(hist) + 1)
+        bin_centers = bin_edges[:-1] + np.diff(bin_edges) / 2.0
+        replace_x_labels_at = bin_centers
+        print(f"{replace_x_labels_with.shape=}")
+        print(f"{hist.shape=}")
+        print(f"{replace_x_labels_at.shape=}")
+    else:
+        if bin_edges is None:
+            bin_edges, symlog_linear_threshold = get_bin_edges(
+                data=values,
+                n_bins=n_bins,
+                n_bins_linear=n_bins_linear,
+                symlog_linear_threshold=symlog_linear_threshold,
+                log=_log[0],
+                return_symlog_linear_threshold=True,
+                vmin=_xlim[0],
+                vmax=_xlim[1],
+            )
+        (
+            hist,
+            bin_edges,
+        ) = np.histogram(values, bins=bin_edges)
+        bin_centers = bin_edges[:-1] + np.diff(bin_edges) / 2.0
 
     _ = plot_bar(
         bin_centers,
@@ -773,6 +786,8 @@ def plot_histogram(
         rotation_x_labels=rotation_x_labels,
         rotation_y_labels=rotation_y_labels,
         font_size=font_size,
+        replace_x_labels_at=replace_x_labels_at,
+        replace_x_labels_with=replace_x_labels_with,
         **kwargs_bar,
     )
     if horizontal_line is not None:

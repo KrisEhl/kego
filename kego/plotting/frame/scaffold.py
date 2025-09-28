@@ -2,9 +2,9 @@ import logging
 from dataclasses import dataclass
 from typing import Literal
 
-from ...checks import all_same_type
+from ...checks import any_of_type
 from ...lists import flatten_list
-from .config_plot import ConfigPlotStyle
+from .config_plot import ConfigFrame
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ class Grid:
         self,
         nx: int | None = None,
         ny: int | None = None,
-        grid: None | list[list] = None,
+        grid: None | list[list[ConfigFrame]] = None,
     ) -> None:
         if nx is not None and ny is not None:
             self.grid = [[None for _ in range(nx)] for _ in range(ny)]
@@ -130,6 +130,10 @@ class Scaffold:
         return self.entries.ny
 
     @property
+    def ntot(self):
+        return self.nx * self.ny
+
+    @property
     def empty_entries(self):
         return self.entries._empty_entries_i
 
@@ -144,14 +148,14 @@ class Scaffold:
         return self.__str__()
 
     def set(
-        self, confif_plot: ConfigPlotStyle, x: int | None = None, y: int | None = None
+        self, config_frame: ConfigFrame, ix: int | None = None, iy: int | None = None
     ):
-        if x is None and y is None:
-            self._set_in_next_empty(config_plot=confif_plot)
-        elif x is not None and y is not None:
-            self._set_in_specific(x=x, y=y, config_plot=confif_plot)
+        if ix is None and iy is None:
+            self._set_in_next_empty(config_plot=config_frame)
+        elif ix is not None and iy is not None:
+            self._set_in_specific(x=ix, y=iy, config_plot=config_frame)
         else:
-            raise ValueError(f"Need to specify [{x=} and {y=}] or [{confif_plot=}]")
+            raise ValueError(f"Need to specify [{ix=} and {iy=}] or [{config_frame=}]")
 
     @property
     def _next_empty_entry(self):
@@ -160,13 +164,13 @@ class Scaffold:
             self.entries.extend_grid(y=self.ny + 1)
         return self.empty_entries[0]
 
-    def _set_in_next_empty(self, config_plot: ConfigPlotStyle):
+    def _set_in_next_empty(self, config_frame: ConfigFrame):
         # NOTE: should these entries be treated differently than "set specific" and be moved when specific requires their spot?
         i = self._next_empty_entry
-        self.entries[i] = config_plot
+        self.entries[i] = config_frame
         return self
 
-    def _set_in_specific(self, x: int, y: int, config_plot: ConfigPlotStyle):
+    def _set_in_specific(self, x: int, y: int, config_frame: ConfigFrame):
         # NOTE: should entries always be extended?
-        self.entries[x, y] = config_plot
+        self.entries[x, y] = config_frame
         return self

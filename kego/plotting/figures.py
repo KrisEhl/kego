@@ -141,7 +141,7 @@ def create_axes_grid(
     unravel: bool = False,
 ) -> tuple[plt.figure, np.ndarray, np.ndarray]:
     """
-    Create figure with grid of axes. Units are scaled to normalized figure size (max value: 1)
+    Create figure with grid of axes (fig, axes, axes_colorbar). Units are scaled to normalized figure size (max value: 1)
     unless specified otherwise.
     See also https://docs.google.com/presentation/d/1Ec-000rszefjCsv_sgUO62eGyT0-YbYzbk1aLQkU2gM/edit?usp=sharing
     Parameters:

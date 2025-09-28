@@ -60,10 +60,12 @@ def assert_same_type_as(
         )
 
 
+def any_of_type(variable_list: Iterable, type_: type):
+    return any([isinstance(var, type_) for var in variable_list])
+
+
 def all_same_type(variable_list: Iterable, type_: type):
-    for var in variable_list:
-        if not isinstance(var, type_):
-            raise ValueError(f"{var} not of type {type_.__name__}!")
+    return all([isinstance(var, type_) for var in variable_list])
 
 
 def assert_shape(
