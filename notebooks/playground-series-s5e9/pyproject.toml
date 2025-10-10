@@ -15,7 +15,7 @@ dependencies = [
 line-length = 79
 
 [tool.uv.sources]
-kego = { workspace = true}
+kego = { workspace = true }
 
 [dependency-groups]
 dev = [
