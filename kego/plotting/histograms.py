@@ -741,16 +741,11 @@ def plot_histogram(
     values = flatten_array(values)
     figure, axes = kego.plotting.figures.create_figure_axes(figure=figure, axes=axes)
 
-    print(f"{values[0]=}")
-    print(f"{type(values[0])=}")
     if kego.checks.any_of_type(values, str):
         replace_x_labels_with, hist = np.unique(values, return_counts=True)
         bin_edges = np.arange(len(hist) + 1)
         bin_centers = bin_edges[:-1] + np.diff(bin_edges) / 2.0
         replace_x_labels_at = bin_centers
-        print(f"{replace_x_labels_with.shape=}")
-        print(f"{hist.shape=}")
-        print(f"{replace_x_labels_at.shape=}")
     else:
         if bin_edges is None:
             bin_edges, symlog_linear_threshold = get_bin_edges(
