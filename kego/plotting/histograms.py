@@ -650,15 +650,15 @@ def plot_histogram(
     axes: kego.constants.TYPE_MATPLOTLIB_AXES | None = None,
     filename: str | pathlib.Path | None = None,
     font_size: float = kego.constants.DEFAULT_FONTSIZE_LARGE,
-    replace_x_labels_at: Sequence | None = None,
-    replace_x_labels_with: Sequence | None = None,
+    replace_x_labels_at: np.ndarray | None = None,
+    replace_x_labels_with: np.ndarray | None = None,
     vertical: bool = False,
     alpha: float = 1,
     color: str | None = None,
     horizontal_line: int | None = None,
     tight_layout: bool = True,
-    rotation_x_labels: int = 0,
-    rotation_y_labels: int = 0,
+    rotation_x_labels: int | Literal["default"] = "default",
+    rotation_y_labels: int | Literal["default"] = "default",
     title: str = "",
     **kwargs_bar,
 ) -> kego.constants.TYPE_MATPLOTLIB_AXES:
@@ -741,28 +741,51 @@ def plot_histogram(
     values = flatten_array(values)
     figure, axes = kego.plotting.figures.create_figure_axes(figure=figure, axes=axes)
 
+    hist = None
     if kego.checks.any_of_type(values, str):
-        replace_x_labels_with, hist = np.unique(values, return_counts=True)
-        bin_edges = np.arange(len(hist) + 1)
-        bin_centers = bin_edges[:-1] + np.diff(bin_edges) / 2.0
-        replace_x_labels_at = bin_centers
-    else:
-        if bin_edges is None:
-            bin_edges, symlog_linear_threshold = get_bin_edges(
-                data=values,
-                n_bins=n_bins,
-                n_bins_linear=n_bins_linear,
-                symlog_linear_threshold=symlog_linear_threshold,
-                log=_log[0],
-                return_symlog_linear_threshold=True,
-                vmin=_xlim[0],
-                vmax=_xlim[1],
+        MAX_LABEL_LENGTH = 10
+        MAX_UNIQUE_VALUES = 100
+        labels, counts = np.unique(values, return_counts=True)
+        if len(labels) < MAX_UNIQUE_VALUES:
+            replace_x_labels_with, hist = labels, counts
+            replace_x_labels_with = np.array(
+                [
+                    (
+                        label[:MAX_LABEL_LENGTH] + "..."
+                        if len(label) > MAX_LABEL_LENGTH
+                        else label
+                    )
+                    for label in replace_x_labels_with
+                ]
             )
+            bin_edges = np.arange(len(hist) + 1)
+            bin_centers = bin_edges[:-1] + np.diff(bin_edges) / 2.0
+            replace_x_labels_at = bin_centers
+            if rotation_x_labels == "default":
+                rotation_x_labels = 90
+        else:
+            values = counts
+            if label_x == key_or_values:
+                label_x = f"Occurence of unique {label_x}"
+            elif label_x is None:
+                label_x = f"Occurence of unqiue values"
+    if bin_edges is None:
+        bin_edges, symlog_linear_threshold = get_bin_edges(
+            data=values,
+            n_bins=n_bins,
+            n_bins_linear=n_bins_linear,
+            symlog_linear_threshold=symlog_linear_threshold,
+            log=_log[0],
+            return_symlog_linear_threshold=True,
+            vmin=_xlim[0],
+            vmax=_xlim[1],
+        )
+    if hist is None:
         (
             hist,
             bin_edges,
         ) = np.histogram(values, bins=bin_edges)
-        bin_centers = bin_edges[:-1] + np.diff(bin_edges) / 2.0
+    bin_centers = bin_edges[:-1] + np.diff(bin_edges) / 2.0
 
     _ = plot_bar(
         bin_centers,
@@ -814,8 +837,8 @@ def plot_bar(
     replace_x_labels_with: Sequence | None = None,
     replace_y_labels_at: Sequence | None = None,
     replace_y_labels_with: Sequence | None = None,
-    rotation_x_labels: int = 0,
-    rotation_y_labels: int = 0,
+    rotation_x_labels: int | Literal["default"] = "default",
+    rotation_y_labels: int | Literal["default"] = "default",
     **kwargs_bar,
 ) -> matplotlib.container.BarContainer:
     """
@@ -869,6 +892,10 @@ def plot_bar(
     -------
     Bar plot object
     """
+    if rotation_x_labels == "default":
+        rotation_x_labels = 0
+    if rotation_y_labels == "default":
+        rotation_y_labels = 0
     _log = kego.lists.to_nlength_tuple(log)
     _xlim = kego.lists.to_nlength_tuple(xlim)
     _ylim = kego.lists.to_nlength_tuple(ylim)

@@ -1,0 +1,11 @@
+sync-venv:
+	uv venv
+	uv pip install -e .
+
+debug-jupyter filepath_notebook:
+	#!/usr/bin/env bash
+	_filepath_notebook={{filepath_notebook}}
+	filepath_script="${_filepath_notebook%.ipynb}.py"
+	echo "Converting ${_filepath_notebook} to notebook ${filepath_script}"
+	uv run jupyter nbconvert --to python ${_filepath_notebook}
+	uv run ipython ${filepath_script}
