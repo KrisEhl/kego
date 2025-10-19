@@ -12,8 +12,11 @@ debug-jupyter filepath_notebook:
 
 
 train-test:
-	uv run python protein_func_torch_polars.py train --train train.csv --outdir torch_model/ --epochs 10 --val_frac 0.2 --workers 8 --weights ia.csv
+	uv run python protein_func_torch_polars.py train --train train.csv --outdir torch_model/ --epochs 80 --val_frac 0.2 --workers 8 --weights ia.csv
 
 
 predict-test:
-	uv run python protein_func_torch_polars.py predict --input test.csv --model torch_model/ --output submission.csv
+	uv run python protein_func_torch_polars.py predict --input test.csv --model torch_model/ --output submission.tsv
+
+submit message:
+	uv run kaggle competitions submit -c cafa-6-protein-function-prediction -f submission.tsv -m {{message}}
