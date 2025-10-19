@@ -25,3 +25,6 @@ __pycache__/
 
 # outputs
 notebooks/ariel/outputs_adc24_intro
+
+# debug
+.*.py
