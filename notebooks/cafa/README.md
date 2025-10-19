@@ -58,3 +58,11 @@ VFCNKASIRIPWTKLKTHPICLSLDKVIMEMSTCEEPRSPNGPSPIATASGQSEYGFAEK
 
 #### Labels
 Labels for training sequences are contained in `train_terms.tsv`.
+Columns are `<UniProt><GO term ID><ontology>` (tab seperated).
+
+#### Taxonomy
+Taxonomy specifically list of proteins and the species they belong to (specifically their taxonomic identifier).
+File `train_taxonomy.tsv` contains columns `<UniProt><taxonID>`
+
+#### Information accretion
+`IA.tsv` contains accretion (weights) for each GO term used for weighted precision and recall.

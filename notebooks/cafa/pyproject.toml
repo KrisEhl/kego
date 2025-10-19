@@ -5,11 +5,13 @@ description = "cafa"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-        "biopython>=1.85",
-        "ipykernel>=6.30.0",
-        "kego",
-        "nbconvert>=7.16.6",
-        "obonet>=1.1.1",
+    "biopython>=1.85",
+    "ipykernel>=6.30.0",
+    "kego",
+    "nbconvert>=7.16.6",
+    "obonet>=1.1.1",
+    "torch>=2.9.0",
+    "torchvision>=0.24.0",
 ]
 
 
@@ -17,9 +19,14 @@ dependencies = [
 line-length = 79
 
 [tool.uv.sources]
-kego = { workspace = true}
+kego = { workspace = true }
+torch = [{ index = "pytorch-cu130" }]
+torchvision = [{ index = "pytorch-cu130" }]
 
 [dependency-groups]
-dev = [
-    "pre-commit>=4.1.0",
-]
+dev = ["pre-commit>=4.1.0"]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
