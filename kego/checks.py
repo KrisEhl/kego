@@ -32,8 +32,8 @@ def chunks(sequence: Sequence, n: int) -> Iterator:
 
 def _assert_same_type(variable, type_from_variable):
     """Check if `variable` shares type with `type_from_variable`"""
-    if isinstance(variable, collections.abc.Iterable):
-        if not isinstance(type_from_variable, collections.abc.Iterable):
+    if isinstance(variable, Iterable):
+        if not isinstance(type_from_variable, Iterable):
             raise TypeError(
                 f"Variable {variable=} is iterable but type is not {type_from_variable=}"
             )

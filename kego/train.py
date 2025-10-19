@@ -43,7 +43,7 @@ def train_model_split(
     oof_xgb = np.zeros(len(train))
     pred_xgb = np.zeros(len(test))
     holdout_xgb = np.zeros(len(holdout))
-
+    model_trained = None
     for i, (train_index, test_index) in enumerate(kf.split(train)):
 
         logger.info("#" * 25)

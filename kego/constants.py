@@ -3,6 +3,7 @@ from typing import Literal, TypeAlias
 
 import matplotlib.axes
 import matplotlib.figure
+import matplotlib.colorbar
 import pandas as pd
 
 TIME_TYPE_PANDAS = pd.Timestamp

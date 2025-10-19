@@ -1,0 +1,22 @@
+[project]
+name = "cafa"
+version = "0.1.0"
+description = "cafa"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+        "ipykernel>=6.30.0",
+        "kego",
+]
+
+
+[tool.black]
+line-length = 79
+
+[tool.uv.sources]
+kego = { workspace = true}
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.1.0",
+]
