@@ -9,3 +9,11 @@ debug-jupyter filepath_notebook:
 	echo "Converting ${_filepath_notebook} to notebook ${filepath_script}"
 	uv run jupyter nbconvert --output ${filepath_script} --to python ${_filepath_notebook}
 	uv run ipython ${filepath_script}
+
+
+train-test:
+	uv run python protein_func_torch_polars.py train --train train.csv --outdir torch_model/ --epochs 10 --val_frac 0.2 --workers 8 --weights ia.csv
+
+
+predict-test:
+	uv run python protein_func_torch_polars.py predict --input test.csv --model torch_model/ --output submission.csv
