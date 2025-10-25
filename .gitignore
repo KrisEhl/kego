@@ -14,6 +14,7 @@ mlruns/
 *.pkg
 *.zip
 *.tif
+model_data/
 
 # settings
 .env

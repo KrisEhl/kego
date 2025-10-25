@@ -7,11 +7,13 @@ requires-python = ">=3.10"
 dependencies = [
     "biopython>=1.85",
     "ipykernel>=6.30.0",
+    "ipywidgets>=8.1.7",
     "kego",
     "nbconvert>=7.16.6",
     "obonet>=1.1.1",
     "torch>=2.9.0",
     "torchvision>=0.24.0",
+    "transformers>=4.57.1",
 ]
 
 
@@ -20,8 +22,8 @@ line-length = 79
 
 [tool.uv.sources]
 kego = { workspace = true }
-torch = [{ index = "pytorch-cu130" }]
-torchvision = [{ index = "pytorch-cu130" }]
+torch = [{ index = "pytorch-cu130" , marker = "sys_platform == 'linux'"}, { index = "pytorch-cpu" , marker = "sys_platform != 'linux'"}]
+torchvision = [{ index = "pytorch-cu130" , marker = "sys_platform == 'linux'"}, { index = "pytorch-cpu" , marker = "sys_platform != 'linux'"}]
 
 [dependency-groups]
 dev = ["pre-commit>=4.1.0"]
@@ -29,4 +31,9 @@ dev = ["pre-commit>=4.1.0"]
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
