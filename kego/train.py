@@ -36,6 +36,7 @@ def train_model_split(
     features: list[str],
     target: str,
     kwargs_model: dict = {},
+    kwargs_fit: dict = {},
     folds_n=10,
     use_probability: bool = True,
 ):
@@ -58,7 +59,7 @@ def train_model_split(
         x_holdout = holdout[features].copy()
 
         model_trained = model(**kwargs_model)
-        model_trained.fit(x_train, y_train, eval_set=[(x_valid, y_valid)], verbose=500)
+        model_trained.fit(x_train, y_train, eval_set=[(x_valid, y_valid)], **kwargs_fit)
 
         if use_probability:
             predict = lambda x: model_trained.predict_proba(x)[:, 1]

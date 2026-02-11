@@ -7,7 +7,9 @@ dependencies = [
     "ipykernel>=6.29.5",
     "kego",
     "pre-commit>=4.2.0",
+    "catboost>=1.2.0",
     "kaggle>=1.8.0",
+    "lightgbm>=4.0.0",
     "xgboost>=2.0.0",
 ]
 
