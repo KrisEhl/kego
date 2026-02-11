@@ -16,6 +16,16 @@ mlruns/
 *.tif
 model_data/
 
+# images
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# OS
+.DS_Store
+
 # settings
 .env
 .idea

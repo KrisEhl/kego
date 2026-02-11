@@ -37,6 +37,7 @@ def train_model_split(
     target: str,
     kwargs_model: dict = {},
     folds_n=10,
+    use_probability: bool = True,
 ):
     kf = KFold(n_splits=folds_n, shuffle=True, random_state=42)
 
@@ -56,19 +57,21 @@ def train_model_split(
         x_test = test[features].copy()
         x_holdout = holdout[features].copy()
 
-        model_trained = model(
-            **kwargs_model
-            # early_stopping_rounds=25,
-        )
+        model_trained = model(**kwargs_model)
         model_trained.fit(x_train, y_train, eval_set=[(x_valid, y_valid)], verbose=500)
 
+        if use_probability:
+            predict = lambda x: model_trained.predict_proba(x)[:, 1]
+        else:
+            predict = model_trained.predict
+
         # INFER OOF
-        oof_xgb[test_index] = model_trained.predict(x_valid)
+        oof_xgb[test_index] = predict(x_valid)
         # INFER TEST
-        pred_xgb += model_trained.predict(x_test)
-        holdout_xgb += model_trained.predict(x_holdout)
+        pred_xgb += predict(x_test)
+        holdout_xgb += predict(x_holdout)
 
     # COMPUTE AVERAGE TEST PREDS
     pred_xgb /= folds_n
     holdout_xgb /= folds_n
-    return model_trained, oof_xgb, holdout_xgb
+    return model_trained, oof_xgb, holdout_xgb, pred_xgb
