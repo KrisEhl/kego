@@ -91,9 +91,18 @@ def main():
     train_full = pd.read_csv(DATA_DIR / "train.csv")
     test = pd.read_csv(DATA_DIR / "test.csv")
     sample_submission = pd.read_csv(DATA_DIR / "sample_submission.csv")
+    original = pd.read_csv(DATA_DIR / "Heart_Disease_Prediction.csv")
 
     # Map target to 0/1
     train_full[TARGET] = train_full[TARGET].map({"Presence": 1, "Absence": 0})
+    original[TARGET] = original[TARGET].map({"Presence": 1, "Absence": 0})
+
+    # Combine synthetic + original data
+    original["id"] = -1  # placeholder, excluded from features
+    train_full = pd.concat([train_full, original], ignore_index=True)
+    logger.info(
+        f"Combined train: {len(train_full)} rows " f"(+{len(original)} original)"
+    )
 
     # Split into train (80%) and holdout (20%)
     train, holdout, _ = split_dataset(
