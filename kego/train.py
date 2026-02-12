@@ -40,8 +40,9 @@ def train_model_split(
     folds_n=10,
     use_probability: bool = True,
     use_eval_set: bool = True,
+    kfold_seed: int = 42,
 ):
-    kf = KFold(n_splits=folds_n, shuffle=True, random_state=42)
+    kf = KFold(n_splits=folds_n, shuffle=True, random_state=kfold_seed)
 
     oof_xgb = np.zeros(len(train))
     pred_xgb = np.zeros(len(test))

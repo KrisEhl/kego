@@ -146,6 +146,7 @@ def get_models(n_features: int) -> dict:
         "logistic_regression": {
             "model": ScaledLogisticRegression,
             "kwargs": {"max_iter": 1000, "C": 1.0, "random_state": 42},
+            "seed_key": "random_state",
             "use_eval_set": False,
         },
         "random_forest": {
@@ -157,6 +158,7 @@ def get_models(n_features: int) -> dict:
                 "random_state": 42,
                 "n_jobs": -1,
             },
+            "seed_key": "random_state",
             "use_eval_set": False,
         },
         "extra_trees": {
@@ -168,6 +170,7 @@ def get_models(n_features: int) -> dict:
                 "random_state": 42,
                 "n_jobs": -1,
             },
+            "seed_key": "random_state",
             "use_eval_set": False,
         },
         # === Tier 2: existing deps, new configs ===
@@ -187,6 +190,7 @@ def get_models(n_features: int) -> dict:
                 "reg_lambda": 5.0,
                 "random_state": 42,
             },
+            "seed_key": "random_state",
             "kwargs_fit": {"verbose": 500},
         },
         "xgboost_reg": {
@@ -205,6 +209,7 @@ def get_models(n_features: int) -> dict:
                 "reg_lambda": 10.0,
                 "random_state": 99,
             },
+            "seed_key": "random_state",
             "kwargs_fit": {"verbose": 500},
         },
         "lightgbm": {
@@ -223,6 +228,7 @@ def get_models(n_features: int) -> dict:
                 "random_state": 123,
                 "verbosity": -1,
             },
+            "seed_key": "random_state",
             "kwargs_fit": {
                 "callbacks": [
                     __import__("lightgbm").early_stopping(80),
@@ -246,6 +252,7 @@ def get_models(n_features: int) -> dict:
                 "random_state": 55,
                 "verbosity": -1,
             },
+            "seed_key": "random_state",
             "kwargs_fit": {
                 "callbacks": [
                     __import__("lightgbm").log_evaluation(500),
@@ -267,6 +274,7 @@ def get_models(n_features: int) -> dict:
                 "random_seed": 77,
                 "verbose": 500,
             },
+            "seed_key": "random_seed",
         },
         # === Tier 3+4: Neural models (slow on CPU, uncomment with GPU) ===
         # "realmlp": {
@@ -299,8 +307,11 @@ def get_models(n_features: int) -> dict:
     }
 
 
+SEEDS = [42, 123, 777]
+
+
 def _train_ensemble(train, holdout, test, features, models, tag=""):
-    """Train all models and return ensemble predictions."""
+    """Train all models with multiple seeds and return ensemble predictions."""
     train_labels = train[TARGET].values
     holdout_labels = holdout[TARGET].values
     all_oof_preds = {}
@@ -308,31 +319,55 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
     all_test_preds = {}
 
     for name, config in models.items():
-        logger.info(f"\n{'='*50}")
-        logger.info(f"{tag}Training {name}")
-        logger.info(f"{'='*50}")
+        seed_key = config.get("seed_key", "random_state")
+        seed_oof = np.zeros(len(train))
+        seed_holdout = np.zeros(len(holdout))
+        seed_test = np.zeros(len(test))
 
-        _, oof_preds, holdout_preds, test_preds = train_model_split(
-            model=config["model"],
-            train=train,
-            test=test,
-            holdout=holdout,
-            features=features,
-            target=TARGET,
-            kwargs_model=config.get("kwargs", {}),
-            kwargs_fit=config.get("kwargs_fit", {}),
-            folds_n=10,
-            use_probability=True,
-            use_eval_set=config.get("use_eval_set", True),
+        for si, seed in enumerate(SEEDS):
+            logger.info(f"\n{'='*50}")
+            logger.info(f"{tag}Training {name} (seed {seed}, {si+1}/{len(SEEDS)})")
+            logger.info(f"{'='*50}")
+
+            kwargs = config.get("kwargs", {}).copy()
+            kwargs[seed_key] = seed
+
+            _, oof_preds, holdout_preds, test_preds = train_model_split(
+                model=config["model"],
+                train=train,
+                test=test,
+                holdout=holdout,
+                features=features,
+                target=TARGET,
+                kwargs_model=kwargs,
+                kwargs_fit=config.get("kwargs_fit", {}),
+                folds_n=10,
+                use_probability=True,
+                use_eval_set=config.get("use_eval_set", True),
+                kfold_seed=seed,
+            )
+
+            seed_oof += oof_preds
+            seed_holdout += holdout_preds
+            seed_test += test_preds
+
+            auc = roc_auc_score(holdout_labels, holdout_preds)
+            logger.info(f"{name} seed={seed} — Holdout AUC: {auc:.4f}")
+
+        # Average across seeds
+        seed_oof /= len(SEEDS)
+        seed_holdout /= len(SEEDS)
+        seed_test /= len(SEEDS)
+
+        auc = roc_auc_score(holdout_labels, seed_holdout)
+        acc = accuracy_score(holdout_labels, (seed_holdout >= 0.5).astype(int))
+        logger.info(
+            f"{name} (avg {len(SEEDS)} seeds) — Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
         )
 
-        auc = roc_auc_score(holdout_labels, holdout_preds)
-        acc = accuracy_score(holdout_labels, (holdout_preds >= 0.5).astype(int))
-        logger.info(f"{name} — Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}")
-
-        all_oof_preds[name] = oof_preds
-        all_holdout_preds[name] = holdout_preds
-        all_test_preds[name] = test_preds
+        all_oof_preds[name] = seed_oof
+        all_holdout_preds[name] = seed_holdout
+        all_test_preds[name] = seed_test
 
     # Build stacking matrices
     model_names = list(models.keys())
@@ -412,65 +447,10 @@ def main():
     n_features = len(features)
     models = get_models(n_features)
 
-    # === Round 1: Train on original data ===
-    logger.info("\n" + "#" * 60)
-    logger.info("### ROUND 1: Training on original data")
-    logger.info("#" * 60)
-    test_preds_r1, method_r1, auc_r1 = _train_ensemble(
-        train, holdout, test, features, models, tag="[R1] "
+    # Train ensemble with multi-seed averaging
+    best_test, best_method, best_auc = _train_ensemble(
+        train, holdout, test, features, models
     )
-
-    # === Pseudo-labeling: add high-confidence test predictions ===
-    THRESHOLD_HIGH = 0.95
-    THRESHOLD_LOW = 0.05
-    confident_mask = (test_preds_r1 >= THRESHOLD_HIGH) | (
-        test_preds_r1 <= THRESHOLD_LOW
-    )
-    n_pseudo = confident_mask.sum()
-    pseudo_labels = (test_preds_r1[confident_mask] >= 0.5).astype(int)
-
-    logger.info(f"\n{'='*60}")
-    logger.info(f"Pseudo-labeling: {n_pseudo} confident samples from test set")
-    logger.info(f"  Threshold: <{THRESHOLD_LOW} or >{THRESHOLD_HIGH}")
-    logger.info(
-        f"  Class distribution: "
-        f"{(pseudo_labels == 1).sum()} positive, "
-        f"{(pseudo_labels == 0).sum()} negative"
-    )
-    logger.info(f"{'='*60}")
-
-    # Build pseudo-labeled DataFrame
-    pseudo_df = test[confident_mask].copy()
-    pseudo_df[TARGET] = pseudo_labels
-    pseudo_df["id"] = -2  # marker for pseudo-labeled rows
-
-    # Augment training data
-    train_augmented = pd.concat([train, pseudo_df], ignore_index=True)
-    train_augmented = train_augmented.reset_index(drop=True)
-    logger.info(
-        f"Augmented train: {len(train_augmented)} rows " f"(+{n_pseudo} pseudo-labeled)"
-    )
-
-    # === Round 2: Retrain with pseudo-labeled data ===
-    logger.info("\n" + "#" * 60)
-    logger.info("### ROUND 2: Training with pseudo-labeled data")
-    logger.info("#" * 60)
-    test_preds_r2, method_r2, auc_r2 = _train_ensemble(
-        train_augmented, holdout, test, features, models, tag="[R2] "
-    )
-
-    # Pick best round
-    if auc_r2 >= auc_r1:
-        best_test = test_preds_r2
-        logger.info(
-            f"\nPseudo-labeling improved: {auc_r1:.4f} -> {auc_r2:.4f} (+{auc_r2-auc_r1:.4f})"
-        )
-    else:
-        best_test = test_preds_r1
-        logger.info(
-            f"\nPseudo-labeling did not improve: {auc_r1:.4f} -> {auc_r2:.4f}. "
-            f"Using round 1 predictions."
-        )
 
     # Generate submission
     submission = sample_submission.copy()
