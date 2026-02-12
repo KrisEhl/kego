@@ -436,6 +436,7 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
         is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
         for seed in SEEDS:
             opts = {"num_gpus": 0.25, "num_cpus": 1} if is_gpu else {"num_cpus": 4}
+            opts["scheduling_strategy"] = "SPREAD"
             future = _train_single_model.options(**opts).remote(
                 train_ref,
                 test_ref,
