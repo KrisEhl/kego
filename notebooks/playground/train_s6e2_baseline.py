@@ -440,7 +440,7 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
             elif is_gpu:
                 opts = {"num_gpus": 0.25, "num_cpus": 1}
             else:
-                opts = {"num_cpus": 4}
+                opts = {"num_cpus": 4, "scheduling_strategy": "SPREAD"}
             future = _train_single_model.options(**opts).remote(
                 train_ref,
                 test_ref,
