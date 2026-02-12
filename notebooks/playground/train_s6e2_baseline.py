@@ -1,3 +1,4 @@
+import argparse
 import logging
 import sys
 from pathlib import Path
@@ -419,7 +420,7 @@ def _train_single_model(
     return model_name, seed, oof, holdout_pred, test_pred
 
 
-def _train_ensemble(train, holdout, test, features, models, tag=""):
+def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
     """Train all models with multiple seeds via Ray and return ensemble predictions."""
     # Share data via Ray object store (stored once, shared across all tasks)
     train_ref = ray.put(train)
@@ -450,6 +451,7 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
                 model_name,
                 config,
                 seed,
+                folds_n,
             )
             futures.append(future)
             task_info.append(f"{model_name} seed={seed} ({'GPU' if is_gpu else 'CPU'})")
@@ -546,6 +548,12 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--debug", action="store_true", help="Quick run with small sample"
+    )
+    args = parser.parse_args()
+
     ray.init()
 
     # Load data
@@ -561,6 +569,13 @@ def main():
     # Combine synthetic + original data
     original["id"] = -1  # placeholder, excluded from features
     train_full = pd.concat([train_full, original], ignore_index=True)
+
+    if args.debug:
+        train_full = train_full.sample(n=2000, random_state=42).reset_index(drop=True)
+        test = test.head(500).reset_index(drop=True)
+        sample_submission = sample_submission.head(500).reset_index(drop=True)
+        logger.info(f"DEBUG MODE: train={len(train_full)}, test={len(test)}")
+
     logger.info(
         f"Combined train: {len(train_full)} rows " f"(+{len(original)} original)"
     )
@@ -586,8 +601,9 @@ def main():
     models = get_models(n_features)
 
     # Train ensemble with multi-seed averaging via Ray
+    folds_n = 2 if args.debug else 10
     best_test, best_method, best_auc = _train_ensemble(
-        train, holdout, test, features, models
+        train, holdout, test, features, models, folds_n=folds_n
     )
 
     # Generate submission
