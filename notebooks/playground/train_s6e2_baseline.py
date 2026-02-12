@@ -399,6 +399,9 @@ def _train_single_model(
     train, test, holdout, features, target, model_name, model_config, seed, folds_n=10
 ):
     """Train one model with one seed on a Ray worker."""
+    log = logging.getLogger(f"ray.{model_name}.seed{seed}")
+    log.info(f"Starting {model_name} seed={seed}")
+
     kwargs = model_config["kwargs"].copy()
     seed_key = model_config.get("seed_key", "random_state")
     kwargs[seed_key] = seed
@@ -417,6 +420,7 @@ def _train_single_model(
         use_eval_set=model_config.get("use_eval_set", True),
         kfold_seed=seed,
     )
+    log.info(f"Finished {model_name} seed={seed}")
     return model_name, seed, oof, holdout_pred, test_pred
 
 
@@ -436,7 +440,7 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
     for model_name, config in models.items():
         is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
         for seed in SEEDS:
-            opts = {"num_gpus": 1, "num_cpus": 1} if is_gpu else {"num_cpus": 4}
+            opts = {"num_gpus": 0.25, "num_cpus": 1} if is_gpu else {"num_cpus": 4}
             future = _train_single_model.options(**opts).remote(
                 train_ref,
                 test_ref,
