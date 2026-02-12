@@ -436,8 +436,10 @@ def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
     for model_name, config in models.items():
         is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
         for seed in SEEDS:
-            if is_gpu:
+            if model_name.startswith("catboost"):
                 opts = {"num_gpus": 0.5, "num_cpus": 1}
+            elif is_gpu:
+                opts = {"num_gpus": 0.25, "num_cpus": 1}
             else:
                 opts = {"num_cpus": 4, "scheduling_strategy": "SPREAD"}
             future = _train_single_model.options(**opts).remote(
