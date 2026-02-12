@@ -299,40 +299,8 @@ def get_models(n_features: int) -> dict:
     }
 
 
-def main():
-    # Load data
-    train_full = pd.read_csv(DATA_DIR / "train.csv")
-    test = pd.read_csv(DATA_DIR / "test.csv")
-    sample_submission = pd.read_csv(DATA_DIR / "sample_submission.csv")
-    original = pd.read_csv(DATA_DIR / "Heart_Disease_Prediction.csv")
-
-    # Map target to 0/1
-    train_full[TARGET] = train_full[TARGET].map({"Presence": 1, "Absence": 0})
-    original[TARGET] = original[TARGET].map({"Presence": 1, "Absence": 0})
-
-    # Combine synthetic + original data
-    original["id"] = -1  # placeholder, excluded from features
-    train_full = pd.concat([train_full, original], ignore_index=True)
-    logger.info(
-        f"Combined train: {len(train_full)} rows " f"(+{len(original)} original)"
-    )
-
-    # Split into train (80%) and holdout (20%)
-    train, holdout, _ = split_dataset(
-        train_full,
-        train_size=0.8,
-        validate_size=0.2,
-        stratify_column=TARGET,
-    )
-    train = train.reset_index(drop=True)
-    holdout = holdout.reset_index(drop=True)
-
-    # Features = all columns except id and target
-    features = [c for c in train.columns if c not in ["id", TARGET]]
-    n_features = len(features)
-
-    models = get_models(n_features)
-
+def _train_ensemble(train, holdout, test, features, models, tag=""):
+    """Train all models and return ensemble predictions."""
     train_labels = train[TARGET].values
     holdout_labels = holdout[TARGET].values
     all_oof_preds = {}
@@ -341,7 +309,7 @@ def main():
 
     for name, config in models.items():
         logger.info(f"\n{'='*50}")
-        logger.info(f"Training {name}")
+        logger.info(f"{tag}Training {name}")
         logger.info(f"{'='*50}")
 
         _, oof_preds, holdout_preds, test_preds = train_model_split(
@@ -377,7 +345,7 @@ def main():
     avg_test = np.mean(test_matrix, axis=1)
     auc = roc_auc_score(holdout_labels, avg_holdout)
     logger.info(f"\n{'='*50}")
-    logger.info(f"Simple Average — Holdout AUC: {auc:.4f}")
+    logger.info(f"{tag}Simple Average — Holdout AUC: {auc:.4f}")
 
     # --- Ridge stacking ---
     ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
@@ -385,7 +353,7 @@ def main():
     ridge_holdout = ridge.predict(holdout_matrix)
     ridge_test = ridge.predict(test_matrix)
     auc = roc_auc_score(holdout_labels, ridge_holdout)
-    logger.info(f"Ridge (alpha={ridge.alpha_:.2f}) — Holdout AUC: {auc:.4f}")
+    logger.info(f"{tag}Ridge (alpha={ridge.alpha_:.2f}) — Holdout AUC: {auc:.4f}")
     logger.info(f"  Weights: {dict(zip(model_names, ridge.coef_))}")
 
     # --- Hill Climbing ---
@@ -393,7 +361,7 @@ def main():
     hc_holdout = holdout_matrix @ best_weights
     hc_test = test_matrix @ best_weights
     auc = roc_auc_score(holdout_labels, hc_holdout)
-    logger.info(f"Hill Climbing — Holdout AUC: {auc:.4f}")
+    logger.info(f"{tag}Hill Climbing — Holdout AUC: {auc:.4f}")
     logger.info(f"  Weights: {dict(zip(model_names, best_weights))}")
     logger.info(f"{'='*50}")
 
@@ -406,7 +374,103 @@ def main():
     best_name = max(results, key=lambda k: roc_auc_score(holdout_labels, results[k][0]))
     best_holdout, best_test = results[best_name]
     auc = roc_auc_score(holdout_labels, best_holdout)
-    logger.info(f"Best method: {best_name} (AUC: {auc:.4f})")
+    logger.info(f"{tag}Best method: {best_name} (AUC: {auc:.4f})")
+
+    return best_test, best_name, auc
+
+
+def main():
+    # Load data
+    train_full = pd.read_csv(DATA_DIR / "train.csv")
+    test = pd.read_csv(DATA_DIR / "test.csv")
+    sample_submission = pd.read_csv(DATA_DIR / "sample_submission.csv")
+    original = pd.read_csv(DATA_DIR / "Heart_Disease_Prediction.csv")
+
+    # Map target to 0/1
+    train_full[TARGET] = train_full[TARGET].map({"Presence": 1, "Absence": 0})
+    original[TARGET] = original[TARGET].map({"Presence": 1, "Absence": 0})
+
+    # Combine synthetic + original data
+    original["id"] = -1  # placeholder, excluded from features
+    train_full = pd.concat([train_full, original], ignore_index=True)
+    logger.info(
+        f"Combined train: {len(train_full)} rows " f"(+{len(original)} original)"
+    )
+
+    # Split into train (80%) and holdout (20%)
+    train, holdout, _ = split_dataset(
+        train_full,
+        train_size=0.8,
+        validate_size=0.2,
+        stratify_column=TARGET,
+    )
+    train = train.reset_index(drop=True)
+    holdout = holdout.reset_index(drop=True)
+
+    # Features = all columns except id and target
+    features = [c for c in train.columns if c not in ["id", TARGET]]
+    n_features = len(features)
+    models = get_models(n_features)
+
+    # === Round 1: Train on original data ===
+    logger.info("\n" + "#" * 60)
+    logger.info("### ROUND 1: Training on original data")
+    logger.info("#" * 60)
+    test_preds_r1, method_r1, auc_r1 = _train_ensemble(
+        train, holdout, test, features, models, tag="[R1] "
+    )
+
+    # === Pseudo-labeling: add high-confidence test predictions ===
+    THRESHOLD_HIGH = 0.95
+    THRESHOLD_LOW = 0.05
+    confident_mask = (test_preds_r1 >= THRESHOLD_HIGH) | (
+        test_preds_r1 <= THRESHOLD_LOW
+    )
+    n_pseudo = confident_mask.sum()
+    pseudo_labels = (test_preds_r1[confident_mask] >= 0.5).astype(int)
+
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Pseudo-labeling: {n_pseudo} confident samples from test set")
+    logger.info(f"  Threshold: <{THRESHOLD_LOW} or >{THRESHOLD_HIGH}")
+    logger.info(
+        f"  Class distribution: "
+        f"{(pseudo_labels == 1).sum()} positive, "
+        f"{(pseudo_labels == 0).sum()} negative"
+    )
+    logger.info(f"{'='*60}")
+
+    # Build pseudo-labeled DataFrame
+    pseudo_df = test[confident_mask].copy()
+    pseudo_df[TARGET] = pseudo_labels
+    pseudo_df["id"] = -2  # marker for pseudo-labeled rows
+
+    # Augment training data
+    train_augmented = pd.concat([train, pseudo_df], ignore_index=True)
+    train_augmented = train_augmented.reset_index(drop=True)
+    logger.info(
+        f"Augmented train: {len(train_augmented)} rows " f"(+{n_pseudo} pseudo-labeled)"
+    )
+
+    # === Round 2: Retrain with pseudo-labeled data ===
+    logger.info("\n" + "#" * 60)
+    logger.info("### ROUND 2: Training with pseudo-labeled data")
+    logger.info("#" * 60)
+    test_preds_r2, method_r2, auc_r2 = _train_ensemble(
+        train_augmented, holdout, test, features, models, tag="[R2] "
+    )
+
+    # Pick best round
+    if auc_r2 >= auc_r1:
+        best_test = test_preds_r2
+        logger.info(
+            f"\nPseudo-labeling improved: {auc_r1:.4f} -> {auc_r2:.4f} (+{auc_r2-auc_r1:.4f})"
+        )
+    else:
+        best_test = test_preds_r1
+        logger.info(
+            f"\nPseudo-labeling did not improve: {auc_r1:.4f} -> {auc_r2:.4f}. "
+            f"Using round 1 predictions."
+        )
 
     # Generate submission
     submission = sample_submission.copy()
