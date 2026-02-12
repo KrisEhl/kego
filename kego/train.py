@@ -39,6 +39,7 @@ def train_model_split(
     kwargs_fit: dict = {},
     folds_n=10,
     use_probability: bool = True,
+    use_eval_set: bool = True,
 ):
     kf = KFold(n_splits=folds_n, shuffle=True, random_state=42)
 
@@ -59,7 +60,12 @@ def train_model_split(
         x_holdout = holdout[features].copy()
 
         model_trained = model(**kwargs_model)
-        model_trained.fit(x_train, y_train, eval_set=[(x_valid, y_valid)], **kwargs_fit)
+        if use_eval_set:
+            model_trained.fit(
+                x_train, y_train, eval_set=[(x_valid, y_valid)], **kwargs_fit
+            )
+        else:
+            model_trained.fit(x_train, y_train, **kwargs_fit)
 
         if use_probability:
             predict = lambda x: model_trained.predict_proba(x)[:, 1]

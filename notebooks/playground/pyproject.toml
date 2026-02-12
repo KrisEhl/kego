@@ -11,6 +11,10 @@ dependencies = [
     "kaggle>=1.8.0",
     "lightgbm>=4.0.0",
     "xgboost>=2.0.0",
+    "pytabkit>=1.0.0",
+    "torch>=2.0.0",
+    "rtdl-revisiting-models>=0.0.2",
+    "skorch>=0.15.0",
 ]
 
 [tool.uv.sources]
