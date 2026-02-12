@@ -325,6 +325,7 @@ def get_models(n_features: int) -> dict:
                 "eval_metric": "AUC",
                 "early_stopping_rounds": 100,
                 "task_type": "GPU",
+                "gpu_ram_part": 0.5,
                 "subsample": 0.8,
                 "bootstrap_type": "Bernoulli",
                 "l2_leaf_reg": 3.0,
@@ -343,6 +344,7 @@ def get_models(n_features: int) -> dict:
                 "eval_metric": "AUC",
                 "early_stopping_rounds": 100,
                 "task_type": "GPU",
+                "gpu_ram_part": 0.5,
                 "subsample": 0.7,
                 "bootstrap_type": "Bernoulli",
                 "l2_leaf_reg": 5.0,
@@ -361,6 +363,7 @@ def get_models(n_features: int) -> dict:
                 "eval_metric": "AUC",
                 "early_stopping_rounds": 50,
                 "task_type": "GPU",
+                "gpu_ram_part": 0.5,
                 "subsample": 0.9,
                 "bootstrap_type": "Bernoulli",
                 "l2_leaf_reg": 1.0,
@@ -441,7 +444,7 @@ def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
             elif is_gpu:
                 opts = {"num_gpus": 0.25, "num_cpus": 1}
             else:
-                opts = {"num_cpus": 4, "scheduling_strategy": "SPREAD"}
+                opts = {"num_cpus": 2, "scheduling_strategy": "SPREAD"}
             future = _train_single_model.options(**opts).remote(
                 train_ref,
                 test_ref,
