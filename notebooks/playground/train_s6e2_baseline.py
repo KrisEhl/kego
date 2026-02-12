@@ -13,6 +13,8 @@ from rtdl_revisiting_models import FTTransformer, ResNet
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, RidgeCV
 from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from skorch import NeuralNetBinaryClassifier
 from xgboost import XGBClassifier
 
@@ -27,6 +29,23 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = project_root / "data" / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
+
+
+class ScaledLogisticRegression:
+    """LogisticRegression with StandardScaler preprocessing."""
+
+    def __init__(self, **kwargs):
+        self.pipe = make_pipeline(StandardScaler(), LogisticRegression(**kwargs))
+
+    def fit(self, X, y, **kwargs):
+        self.pipe.fit(X, y)
+        return self
+
+    def predict_proba(self, X):
+        return self.pipe.predict_proba(X)
+
+    def predict(self, X):
+        return self.pipe.predict(X)
 
 
 class FTTransformerWrapper(nn.Module):
@@ -125,7 +144,7 @@ def get_models(n_features: int) -> dict:
     return {
         # === Tier 1: sklearn built-ins ===
         "logistic_regression": {
-            "model": LogisticRegression,
+            "model": ScaledLogisticRegression,
             "kwargs": {"max_iter": 1000, "C": 1.0, "random_state": 42},
             "use_eval_set": False,
         },
