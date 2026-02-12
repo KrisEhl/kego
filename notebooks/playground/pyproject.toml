@@ -15,6 +15,7 @@ dependencies = [
     "torch>=2.0.0",
     "rtdl-revisiting-models>=0.0.2",
     "skorch>=0.15.0",
+    "ray[default]>=2.9.0",
 ]
 
 [tool.uv.sources]
