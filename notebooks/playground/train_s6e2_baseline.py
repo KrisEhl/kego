@@ -436,10 +436,8 @@ def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
     for model_name, config in models.items():
         is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
         for seed in SEEDS:
-            if model_name.startswith("catboost"):
-                opts = {"num_gpus": 0.5, "num_cpus": 1}  # CatBoost needs more VRAM
-            elif is_gpu:
-                opts = {"num_gpus": 0.25, "num_cpus": 1}
+            if is_gpu:
+                opts = {"num_gpus": 0.5, "num_cpus": 1}
             else:
                 opts = {"num_cpus": 4, "scheduling_strategy": "SPREAD"}
             future = _train_single_model.options(**opts).remote(
@@ -468,8 +466,20 @@ def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
     completed = 0
 
     while remaining:
-        done, remaining = ray.wait(remaining, num_returns=1)
-        model_name, seed, oof, holdout_pred, test_pred = ray.get(done[0])
+        done, remaining = ray.wait(remaining, num_returns=1, timeout=600)
+        if not done:
+            logger.warning(
+                f"ray.wait timed out after 600s. "
+                f"{completed}/{len(futures)} completed, "
+                f"{len(remaining)} remaining."
+            )
+            continue
+        try:
+            model_name, seed, oof, holdout_pred, test_pred = ray.get(done[0])
+        except Exception as e:
+            completed += 1
+            logger.error(f"[{completed}/{len(futures)}] Task failed: {e}")
+            continue
         completed += 1
 
         if model_name not in all_oof_preds:
