@@ -27,7 +27,7 @@ DATA_DIR = project_root / "data" / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 
 SEEDS = [42, 123, 777]
-GPU_MODEL_PREFIXES = {"xgboost", "lightgbm", "catboost"}
+GPU_MODEL_PREFIXES = {"xgboost", "catboost"}
 
 
 class ScaledLogisticRegression:
@@ -227,7 +227,6 @@ def get_models(n_features: int) -> dict:
                 "num_leaves": 15,
                 "learning_rate": 0.08,
                 "metric": "auc",
-                "device": "gpu",
                 "subsample": 0.9,
                 "colsample_bytree": 0.9,
                 "min_child_weight": 3,
@@ -253,7 +252,6 @@ def get_models(n_features: int) -> dict:
                 "num_leaves": 31,
                 "learning_rate": 0.05,
                 "metric": "auc",
-                "device": "gpu",
                 "subsample": 0.8,
                 "colsample_bytree": 0.8,
                 "reg_alpha": 0.1,
@@ -276,7 +274,6 @@ def get_models(n_features: int) -> dict:
                 "num_leaves": 63,
                 "learning_rate": 0.02,
                 "metric": "auc",
-                "device": "gpu",
                 "subsample": 0.7,
                 "colsample_bytree": 0.7,
                 "min_child_weight": 5,
@@ -301,7 +298,6 @@ def get_models(n_features: int) -> dict:
                 "num_leaves": 7,
                 "learning_rate": 0.1,
                 "metric": "auc",
-                "device": "gpu",
                 "subsample": 0.9,
                 "colsample_bytree": 0.9,
                 "min_child_weight": 10,
@@ -399,8 +395,7 @@ def _train_single_model(
     train, test, holdout, features, target, model_name, model_config, seed, folds_n=10
 ):
     """Train one model with one seed on a Ray worker."""
-    log = logging.getLogger(f"ray.{model_name}.seed{seed}")
-    log.info(f"Starting {model_name} seed={seed}")
+    print(f"[{model_name}] Starting seed={seed}", flush=True)
 
     kwargs = model_config["kwargs"].copy()
     seed_key = model_config.get("seed_key", "random_state")
@@ -420,7 +415,7 @@ def _train_single_model(
         use_eval_set=model_config.get("use_eval_set", True),
         kfold_seed=seed,
     )
-    log.info(f"Finished {model_name} seed={seed}")
+    print(f"[{model_name}] Finished seed={seed}", flush=True)
     return model_name, seed, oof, holdout_pred, test_pred
 
 
@@ -458,15 +453,18 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
     for info in task_info:
         logger.info(f"  - {info}")
 
-    # Collect results
-    results = ray.get(futures)
-
-    # Aggregate predictions by model (average over seeds)
+    # Collect results incrementally as they complete
     all_oof_preds = {}
     all_holdout_preds = {}
     all_test_preds = {}
+    remaining = list(futures)
+    completed = 0
 
-    for model_name, seed, oof, holdout_pred, test_pred in results:
+    while remaining:
+        done, remaining = ray.wait(remaining, num_returns=1)
+        model_name, seed, oof, holdout_pred, test_pred = ray.get(done[0])
+        completed += 1
+
         if model_name not in all_oof_preds:
             all_oof_preds[model_name] = np.zeros(len(train))
             all_holdout_preds[model_name] = np.zeros(len(holdout))
@@ -477,7 +475,10 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
         all_test_preds[model_name] += test_pred
 
         auc = roc_auc_score(holdout_labels, holdout_pred)
-        logger.info(f"{model_name} seed={seed} — Holdout AUC: {auc:.4f}")
+        logger.info(
+            f"[{completed}/{len(futures)}] {model_name} seed={seed} "
+            f"— Holdout AUC: {auc:.4f}"
+        )
 
     # Average across seeds and log per-model results
     for name in all_oof_preds:
