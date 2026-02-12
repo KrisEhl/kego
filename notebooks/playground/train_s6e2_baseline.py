@@ -435,7 +435,12 @@ def _train_ensemble(train, holdout, test, features, models, tag=""):
     for model_name, config in models.items():
         is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
         for seed in SEEDS:
-            opts = {"num_gpus": 0.25, "num_cpus": 1} if is_gpu else {"num_cpus": 4}
+            if model_name.startswith("catboost"):
+                opts = {"num_gpus": 0.5, "num_cpus": 1}  # CatBoost needs more VRAM
+            elif is_gpu:
+                opts = {"num_gpus": 0.25, "num_cpus": 1}
+            else:
+                opts = {"num_cpus": 4}
             opts["scheduling_strategy"] = "SPREAD"
             future = _train_single_model.options(**opts).remote(
                 train_ref,
