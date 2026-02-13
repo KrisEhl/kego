@@ -15,13 +15,23 @@
 set -euo pipefail
 
 WORKER_IP="${1:?Usage: $0 <worker-ip> [head-ip]}"
-HEAD_IP="${2:-192.168.178.32}"
-HEAD_PORT="6379"
+export RAY_API_SERVER_IP="${2:-192.168.178.32}"
+export RAY_API_SERVER_PORT="6379"
 PYTHON_VERSION="3.13"
 PROJECT_DIR="/home/kristian/projects/network-training"
 SSH_USER="kristian"
 
-echo "=== Setting up Ray worker at ${WORKER_IP} (head: ${HEAD_IP}:${HEAD_PORT}) ==="
+echo "=== Setting up Ray worker at ${WORKER_IP} (head: ${RAY_API_SERVER_IP}:${RAY_API_SERVER_PORT}) ==="
+
+# --- 0. Verify head node is running the Ray cluster ---
+echo "Checking Ray cluster on head ${RAY_API_SERVER_IP}..."
+if ! curl -sf --connect-timeout 5 "http://${RAY_API_SERVER_IP}:8265/api/version" >/dev/null 2>&1; then
+    echo "ERROR: Ray cluster is not running on ${RAY_API_SERVER_IP}:8265"
+    echo "Start the head node first:"
+    echo "  ssh ${SSH_USER}@${RAY_API_SERVER_IP} 'cd ${PROJECT_DIR} && .venv/bin/ray start --head --port=${RAY_API_SERVER_PORT} --dashboard-host=0.0.0.0'"
+    exit 1
+fi
+echo "Ray cluster is running on ${RAY_API_SERVER_IP}:8265"
 
 ssh "${SSH_USER}@${WORKER_IP}" bash -s <<'REMOTE_SCRIPT'
 set -euo pipefail
@@ -110,7 +120,7 @@ cd "${PROJECT_DIR}"
 if [ ! -f "\$HOME/.kaggle/kaggle.json" ]; then
     echo "[6a] Copying Kaggle credentials from head..."
     mkdir -p "\$HOME/.kaggle"
-    scp "${SSH_USER}@${HEAD_IP}:\$HOME/.kaggle/kaggle.json" "\$HOME/.kaggle/kaggle.json"
+    scp "${SSH_USER}@${RAY_API_SERVER_IP}:\$HOME/.kaggle/kaggle.json" "\$HOME/.kaggle/kaggle.json"
     chmod 600 "\$HOME/.kaggle/kaggle.json"
 fi
 
@@ -131,7 +141,7 @@ fi
 # Copy external data (Heart_Disease_Prediction.csv) from head node
 if [ ! -f "\${DATA_PATH}/Heart_Disease_Prediction.csv" ]; then
     echo "[6c] Copying Heart_Disease_Prediction.csv from head..."
-    scp "${SSH_USER}@${HEAD_IP}:${DATA_DIR}/playground/${KAGGLE_COMPETITION}/Heart_Disease_Prediction.csv" \
+    scp "${SSH_USER}@${RAY_API_SERVER_IP}:${DATA_DIR}/playground/${KAGGLE_COMPETITION}/Heart_Disease_Prediction.csv" \
         "\${DATA_PATH}/Heart_Disease_Prediction.csv"
 else
     echo "[6c] Heart_Disease_Prediction.csv already exists, skipping"
@@ -149,14 +159,16 @@ echo "=== Starting Ray worker on ${WORKER_IP} ==="
 ssh "${SSH_USER}@${WORKER_IP}" bash -s <<REMOTE_START
 set -euo pipefail
 export PATH="\$HOME/.local/bin:\$PATH"
+export RAY_API_SERVER_IP="${RAY_API_SERVER_IP}"
+export RAY_API_SERVER_PORT="${RAY_API_SERVER_PORT}"
 cd "${PROJECT_DIR}"
 
 # Stop any existing Ray processes
 .venv/bin/ray stop --force 2>/dev/null || true
 
 # Start worker connected to head
-.venv/bin/ray start --address="${HEAD_IP}:${HEAD_PORT}"
-echo "=== Ray worker started and connected to ${HEAD_IP}:${HEAD_PORT} ==="
+RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="\${RAY_API_SERVER_IP}:\${RAY_API_SERVER_PORT}"
+echo "=== Ray worker started and connected to \${RAY_API_SERVER_IP}:\${RAY_API_SERVER_PORT} ==="
 REMOTE_START
 
-echo "=== Done! Check cluster status at http://${HEAD_IP}:8265 ==="
+echo "=== Done! Check cluster status at http://${RAY_API_SERVER_IP}:8265 ==="
