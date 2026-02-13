@@ -28,7 +28,7 @@ echo "Checking Ray cluster on head ${RAY_API_SERVER_IP}..."
 if ! curl -sf --connect-timeout 5 "http://${RAY_API_SERVER_IP}:8265/api/version" >/dev/null 2>&1; then
     echo "ERROR: Ray cluster is not running on ${RAY_API_SERVER_IP}:8265"
     echo "Start the head node first:"
-    echo "  ssh ${SSH_USER}@${RAY_API_SERVER_IP} 'cd ${PROJECT_DIR} && .venv/bin/ray start --head --port=${RAY_API_SERVER_PORT} --dashboard-host=0.0.0.0'"
+    echo "  ssh ${SSH_USER}@${RAY_API_SERVER_IP} 'cd ${PROJECT_DIR} && RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --head --port=${RAY_API_SERVER_PORT} --node-ip-address ${RAY_API_SERVER_IP} --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=\$(expr \$(nproc --all) - 2)'"
     exit 1
 fi
 echo "Ray cluster is running on ${RAY_API_SERVER_IP}:8265"
