@@ -62,28 +62,13 @@ else
     git -C "${PROJECT_DIR}" pull
 fi
 
-# --- 4. Sync cluster workspace member ---
-echo "[4/8] Setting up cluster venv..."
+# --- 4. Sync cluster workspace member (includes all ML deps) ---
+echo "[4/7] Setting up cluster venv..."
 cd "${PROJECT_DIR}/cluster"
 uv sync
 
-# --- 5. Install ML dependencies ---
-echo "[5/8] Installing ML packages..."
-uv pip install \
-    kego==0.6.0 \
-    catboost \
-    lightgbm \
-    xgboost \
-    scikit-learn \
-    pandas \
-    numpy \
-    torch \
-    pytabkit \
-    rtdl-revisiting-models \
-    skorch
-
-# --- 6. Verify GPU access and imports ---
-echo "[6/8] Verifying installation..."
+# --- 5. Verify GPU access and imports ---
+echo "[5/7] Verifying installation..."
 uv run python <<'PYCHECK'
 import ray; print(f'  ray {ray.__version__}')
 import torch; print(f'  torch {torch.__version__}, CUDA: {torch.cuda.is_available()}')
@@ -98,8 +83,8 @@ import skorch; print(f'  skorch {skorch.__version__}')
 PYCHECK
 echo "=== Dependencies verified ==="
 
-# --- 7. Download Kaggle competition data + copy external data from head ---
-echo "[7/8] Setting up competition data..."
+# --- 6. Download Kaggle competition data + copy external data from head ---
+echo "[6/7] Setting up competition data..."
 DATA_DIR="${PROJECT_DIR}/data"
 COMP_PREFIX="${KAGGLE_COMPETITION%%-*}"
 DATA_PATH="${DATA_DIR}/${COMP_PREFIX}/${KAGGLE_COMPETITION}"
@@ -135,8 +120,8 @@ fi
 echo "=== Data setup complete ==="
 ls -lh "${DATA_PATH}/"
 
-# --- 8. Start Ray worker ---
-echo "[8/8] Starting Ray worker..."
+# --- 7. Start Ray worker ---
+echo "[7/7] Starting Ray worker..."
 cd "${PROJECT_DIR}/cluster"
 
 # Stop any existing Ray processes

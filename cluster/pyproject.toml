@@ -5,4 +5,18 @@ description = "Ray cluster worker environment"
 requires-python = ">=3.12"
 dependencies = [
     "ray[default]>=2.53.0",
+    "kego",
+    "catboost",
+    "lightgbm",
+    "xgboost",
+    "scikit-learn",
+    "pandas",
+    "numpy",
+    "torch",
+    "pytabkit",
+    "rtdl-revisiting-models",
+    "skorch",
 ]
+
+[tool.uv.sources]
+kego = { workspace = true }

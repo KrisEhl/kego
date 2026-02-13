@@ -410,11 +410,37 @@ name = "cluster"
 version = "0.1.0"
 source = { virtual = "cluster" }
 dependencies = [
+    { name = "catboost" },
+    { name = "kego" },
+    { name = "lightgbm" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pytabkit" },
     { name = "ray", extra = ["default"] },
+    { name = "rtdl-revisiting-models" },
+    { name = "scikit-learn" },
+    { name = "skorch" },
+    { name = "torch", version = "2.9.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (platform_python_implementation != 'PyPy' and sys_platform == 'darwin')" },
+    { name = "torch", version = "2.9.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.13' and platform_python_implementation == 'PyPy' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "torch", version = "2.9.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform == 'linux'" },
+    { name = "xgboost" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ray", extras = ["default"], specifier = ">=2.53.0" }]
+requires-dist = [
+    { name = "catboost" },
+    { name = "kego", editable = "." },
+    { name = "lightgbm" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pytabkit" },
+    { name = "ray", extras = ["default"], specifier = ">=2.53.0" },
+    { name = "rtdl-revisiting-models" },
+    { name = "scikit-learn" },
+    { name = "skorch" },
+    { name = "torch" },
+    { name = "xgboost" },
+]
 
 [[package]]
 name = "colorama"
