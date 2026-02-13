@@ -32,4 +32,5 @@ register-head:
 	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --head --port=${RAY_API_SERVER_PORT} --node-ip-address ${RAY_API_SERVER_IP} --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=$(expr $(nproc --all) - 2)
 
 register-worker:
-	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="${RAY_API_SERVER_IP}:${RAY_API_SERVER_PORT}"
+	$(eval NODE_IP := $(shell if grep -qi microsoft /proc/version 2>/dev/null; then ip -4 addr show | grep -oP '192\.168\.\d+\.\d+'; fi))
+	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="${RAY_API_SERVER_IP}:${RAY_API_SERVER_PORT}" $(if $(NODE_IP),--node-ip-address=$(NODE_IP))
