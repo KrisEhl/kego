@@ -27,3 +27,6 @@ publish:
 	rm -rf dist
 	uv build
 	uv publish
+
+register-worker:
+	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="${RAY_API_SERVER_IP}:${RAY_API_SERVER_PORT}"
