@@ -86,11 +86,11 @@ import ray; print(f'  ray {ray.__version__}')
 import torch; print(f'  torch {torch.__version__}, CUDA: {torch.cuda.is_available()}')
 if torch.cuda.is_available():
     print(f'  GPU: {torch.cuda.get_device_name(0)}')
-    print(f'  VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB')
+    print(f'  VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
 import xgboost; print(f'  xgboost {xgboost.__version__}')
 import catboost; print(f'  catboost {catboost.__version__}')
 import lightgbm; print(f'  lightgbm {lightgbm.__version__}')
-import pytabkit; print(f'  pytabkit {pytabkit.__version__}')
+import pytabkit;
 import skorch; print(f'  skorch {skorch.__version__}')
 "
 echo "=== Dependencies installed ==="
@@ -104,7 +104,7 @@ export PATH="\$HOME/.local/bin:\$PATH"
 cd "${PROJECT_DIR}"
 
 # Stop any existing Ray processes
-.venv/bin/ray stop 2>/dev/null || true
+.venv/bin/ray stop --force 2>/dev/null || true
 
 # Start worker connected to head
 .venv/bin/ray start --address="${HEAD_IP}:${HEAD_PORT}"
