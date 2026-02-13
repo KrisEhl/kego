@@ -6,14 +6,20 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import ray
+import torch
+import torch.nn as nn
 import xgboost as xgb
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
+from pytabkit import RealMLP_TD_Classifier
+from rtdl_revisiting_models import FTTransformer, ResNet
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, RidgeCV
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from skorch import NeuralNetBinaryClassifier
+from skorch.callbacks import EarlyStopping
 from xgboost import XGBClassifier
 
 project_root = Path(__file__).resolve().parents[2]
@@ -29,7 +35,8 @@ DATA_DIR = project_root / "data" / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 
 SEEDS = [42, 123, 777]
-GPU_MODEL_PREFIXES = {"xgboost", "catboost"}
+GPU_MODEL_PREFIXES = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
+NEURAL_MODEL_PREFIXES = {"realmlp", "resnet", "ft_transformer"}
 
 
 class ScaledLogisticRegression:
@@ -58,6 +65,239 @@ class GPUXGBClassifier(XGBClassifier):
         return np.column_stack([1 - preds, preds])
 
     def predict(self, X, **kwargs):
+        proba = self.predict_proba(X)
+        return (proba[:, 1] >= 0.5).astype(int)
+
+
+class ScaledRealMLP:
+    """RealMLP_TD_Classifier with StandardScaler preprocessing."""
+
+    def __init__(self, random_state=42, **kwargs):
+        self.random_state = random_state
+        self.kwargs = kwargs
+
+    def fit(self, X, y, **kwargs):
+        self.scaler = StandardScaler()
+        X_np = self.scaler.fit_transform(X.values if isinstance(X, pd.DataFrame) else X)
+        y_np = y.values if hasattr(y, "values") else y
+        self.model = RealMLP_TD_Classifier(
+            random_state=self.random_state, **self.kwargs
+        )
+        self.model.fit(X_np, y_np)
+        return self
+
+    def predict_proba(self, X):
+        X_np = self.scaler.transform(X.values if isinstance(X, pd.DataFrame) else X)
+        return self.model.predict_proba(X_np)
+
+    def predict(self, X):
+        X_np = self.scaler.transform(X.values if isinstance(X, pd.DataFrame) else X)
+        return self.model.predict(X_np)
+
+
+class ResNetModule(nn.Module):
+    """Wraps rtdl ResNet for skorch compatibility."""
+
+    def __init__(
+        self,
+        d_in=1,
+        d_out=1,
+        n_blocks=3,
+        d_block=192,
+        d_hidden_multiplier=2.0,
+        dropout1=0.15,
+        dropout2=0.0,
+    ):
+        super().__init__()
+        self.net = ResNet(
+            d_in=d_in,
+            d_out=d_out,
+            n_blocks=n_blocks,
+            d_block=d_block,
+            d_hidden_multiplier=d_hidden_multiplier,
+            dropout1=dropout1,
+            dropout2=dropout2,
+        )
+
+    def forward(self, X):
+        return self.net(X).squeeze(-1)
+
+
+class SkorchResNet:
+    """ResNet with StandardScaler, wrapped via skorch for sklearn API."""
+
+    def __init__(
+        self,
+        d_block=192,
+        n_blocks=3,
+        d_hidden_multiplier=2.0,
+        dropout1=0.15,
+        dropout2=0.0,
+        lr=1e-3,
+        max_epochs=200,
+        patience=20,
+        batch_size=256,
+        random_state=42,
+    ):
+        self.d_block = d_block
+        self.n_blocks = n_blocks
+        self.d_hidden_multiplier = d_hidden_multiplier
+        self.dropout1 = dropout1
+        self.dropout2 = dropout2
+        self.lr = lr
+        self.max_epochs = max_epochs
+        self.patience = patience
+        self.batch_size = batch_size
+        self.random_state = random_state
+
+    def fit(self, X, y, **kwargs):
+        torch.manual_seed(self.random_state)
+        self.scaler = StandardScaler()
+        X_np = self.scaler.fit_transform(
+            X.values if isinstance(X, pd.DataFrame) else X
+        ).astype(np.float32)
+        y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
+        d_in = X_np.shape[1]
+
+        self.net = NeuralNetBinaryClassifier(
+            ResNetModule,
+            module__d_in=d_in,
+            module__d_out=1,
+            module__n_blocks=self.n_blocks,
+            module__d_block=self.d_block,
+            module__d_hidden_multiplier=self.d_hidden_multiplier,
+            module__dropout1=self.dropout1,
+            module__dropout2=self.dropout2,
+            criterion=nn.BCEWithLogitsLoss,
+            optimizer=torch.optim.AdamW,
+            lr=self.lr,
+            max_epochs=self.max_epochs,
+            batch_size=self.batch_size,
+            device="cuda",
+            callbacks=[
+                EarlyStopping(patience=self.patience, monitor="valid_loss"),
+            ],
+            verbose=0,
+        )
+        self.net.fit(X_np, y_np)
+        return self
+
+    def predict_proba(self, X):
+        X_np = self.scaler.transform(
+            X.values if isinstance(X, pd.DataFrame) else X
+        ).astype(np.float32)
+        return self.net.predict_proba(X_np)
+
+    def predict(self, X):
+        proba = self.predict_proba(X)
+        return (proba[:, 1] >= 0.5).astype(int)
+
+
+class FTTransformerModule(nn.Module):
+    """Wraps rtdl FTTransformer for skorch (continuous features only)."""
+
+    def __init__(
+        self,
+        n_cont_features=1,
+        d_out=1,
+        n_blocks=3,
+        d_block=96,
+        attention_n_heads=8,
+        attention_dropout=0.2,
+        ffn_d_hidden_multiplier=4 / 3,
+        ffn_dropout=0.1,
+        residual_dropout=0.0,
+    ):
+        super().__init__()
+        self.net = FTTransformer(
+            n_cont_features=n_cont_features,
+            cat_cardinalities=[],
+            d_out=d_out,
+            n_blocks=n_blocks,
+            d_block=d_block,
+            attention_n_heads=attention_n_heads,
+            attention_dropout=attention_dropout,
+            ffn_d_hidden_multiplier=ffn_d_hidden_multiplier,
+            ffn_dropout=ffn_dropout,
+            residual_dropout=residual_dropout,
+        )
+
+    def forward(self, X):
+        return self.net(X, x_cat=None).squeeze(-1)
+
+
+class SkorchFTTransformer:
+    """FTTransformer with StandardScaler, wrapped via skorch for sklearn API."""
+
+    def __init__(
+        self,
+        n_blocks=3,
+        d_block=96,
+        attention_n_heads=8,
+        attention_dropout=0.2,
+        ffn_d_hidden_multiplier=4 / 3,
+        ffn_dropout=0.1,
+        residual_dropout=0.0,
+        lr=1e-4,
+        max_epochs=200,
+        patience=20,
+        batch_size=256,
+        random_state=42,
+    ):
+        self.n_blocks = n_blocks
+        self.d_block = d_block
+        self.attention_n_heads = attention_n_heads
+        self.attention_dropout = attention_dropout
+        self.ffn_d_hidden_multiplier = ffn_d_hidden_multiplier
+        self.ffn_dropout = ffn_dropout
+        self.residual_dropout = residual_dropout
+        self.lr = lr
+        self.max_epochs = max_epochs
+        self.patience = patience
+        self.batch_size = batch_size
+        self.random_state = random_state
+
+    def fit(self, X, y, **kwargs):
+        torch.manual_seed(self.random_state)
+        self.scaler = StandardScaler()
+        X_np = self.scaler.fit_transform(
+            X.values if isinstance(X, pd.DataFrame) else X
+        ).astype(np.float32)
+        y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
+        n_features = X_np.shape[1]
+
+        self.net = NeuralNetBinaryClassifier(
+            FTTransformerModule,
+            module__n_cont_features=n_features,
+            module__d_out=1,
+            module__n_blocks=self.n_blocks,
+            module__d_block=self.d_block,
+            module__attention_n_heads=self.attention_n_heads,
+            module__attention_dropout=self.attention_dropout,
+            module__ffn_d_hidden_multiplier=self.ffn_d_hidden_multiplier,
+            module__ffn_dropout=self.ffn_dropout,
+            module__residual_dropout=self.residual_dropout,
+            criterion=nn.BCEWithLogitsLoss,
+            optimizer=torch.optim.AdamW,
+            lr=self.lr,
+            max_epochs=self.max_epochs,
+            batch_size=self.batch_size,
+            device="cuda",
+            callbacks=[
+                EarlyStopping(patience=self.patience, monitor="valid_loss"),
+            ],
+            verbose=0,
+        )
+        self.net.fit(X_np, y_np)
+        return self
+
+    def predict_proba(self, X):
+        X_np = self.scaler.transform(
+            X.values if isinstance(X, pd.DataFrame) else X
+        ).astype(np.float32)
+        return self.net.predict_proba(X_np)
+
+    def predict(self, X):
         proba = self.predict_proba(X)
         return (proba[:, 1] >= 0.5).astype(int)
 
@@ -387,6 +627,57 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_seed",
         },
+        # === Neural models (GPU) ===
+        "realmlp": {
+            "model": ScaledRealMLP,
+            "kwargs": {
+                "n_epochs": 256,
+                "device": "cuda",
+                "hidden_sizes": [256, 256, 256],
+            },
+            "seed_key": "random_state",
+            "use_eval_set": False,
+        },
+        "realmlp_large": {
+            "model": ScaledRealMLP,
+            "kwargs": {
+                "n_epochs": 256,
+                "device": "cuda",
+                "hidden_sizes": [512, 256, 128],
+            },
+            "seed_key": "random_state",
+            "use_eval_set": False,
+        },
+        "resnet": {
+            "model": SkorchResNet,
+            "kwargs": {
+                "d_block": 192,
+                "n_blocks": 3,
+                "d_hidden_multiplier": 2.0,
+                "dropout1": 0.15,
+                "dropout2": 0.0,
+                "lr": 1e-3,
+                "max_epochs": 200,
+                "patience": 20,
+            },
+            "seed_key": "random_state",
+            "use_eval_set": False,
+        },
+        "ft_transformer": {
+            "model": SkorchFTTransformer,
+            "kwargs": {
+                "n_blocks": 3,
+                "d_block": 96,
+                "attention_n_heads": 8,
+                "attention_dropout": 0.2,
+                "ffn_dropout": 0.1,
+                "lr": 1e-4,
+                "max_epochs": 200,
+                "patience": 20,
+            },
+            "seed_key": "random_state",
+            "use_eval_set": False,
+        },
     }
 
 
@@ -452,9 +743,12 @@ def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
     task_info = []
     for model_name, config in models.items():
         is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
+        is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
         for seed in SEEDS:
             if model_name.startswith("catboost"):
                 opts = {"num_gpus": 1, "num_cpus": 1}
+            elif is_neural:
+                opts = {"num_gpus": 0.5, "num_cpus": 1}
             elif is_gpu:
                 opts = {"num_gpus": 0.25, "num_cpus": 1}
             else:
@@ -531,8 +825,9 @@ def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
             f"Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
         )
 
-    # Build stacking matrices
-    model_names = list(models.keys())
+    # Build stacking matrices (only models that succeeded)
+    model_names = [n for n in models.keys() if n in all_oof_preds]
+    logger.info(f"Models with predictions: {len(model_names)}/{len(models)}")
     oof_matrix = np.column_stack([all_oof_preds[n] for n in model_names])
     holdout_matrix = np.column_stack([all_holdout_preds[n] for n in model_names])
     test_matrix = np.column_stack([all_test_preds[n] for n in model_names])

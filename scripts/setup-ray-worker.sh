@@ -96,6 +96,54 @@ import skorch; print(f'  skorch {skorch.__version__}')
 echo "=== Dependencies installed ==="
 REMOTE_SCRIPT
 
+# --- 6. Download Kaggle competition data + copy external data from head ---
+KAGGLE_COMPETITION="playground-series-s6e2"
+DATA_DIR="${PROJECT_DIR}/data"
+
+echo "=== Setting up competition data ==="
+ssh "${SSH_USER}@${WORKER_IP}" bash -s <<REMOTE_DATA
+set -euo pipefail
+export PATH="\$HOME/.local/bin:\$PATH"
+cd "${PROJECT_DIR}"
+
+# Copy kaggle credentials from head if not present
+if [ ! -f "\$HOME/.kaggle/kaggle.json" ]; then
+    echo "[6a] Copying Kaggle credentials from head..."
+    mkdir -p "\$HOME/.kaggle"
+    scp "${SSH_USER}@${HEAD_IP}:\$HOME/.kaggle/kaggle.json" "\$HOME/.kaggle/kaggle.json"
+    chmod 600 "\$HOME/.kaggle/kaggle.json"
+fi
+
+# Download Kaggle competition data
+COMP="${KAGGLE_COMPETITION}"
+COMP_PREFIX="\${COMP%%-*}"
+DATA_PATH="${DATA_DIR}/\${COMP_PREFIX}/\${COMP}"
+if [ -d "\${DATA_PATH}" ] && [ "\$(ls -A \${DATA_PATH})" ]; then
+    echo "[6b] Kaggle data already exists at \${DATA_PATH}, skipping download"
+else
+    echo "[6b] Downloading Kaggle competition data..."
+    mkdir -p "${DATA_DIR}/\${COMP_PREFIX}"
+    uv tool run kaggle competitions download -c "\${COMP}" -p "${DATA_DIR}/\${COMP_PREFIX}/"
+    unzip -o "${DATA_DIR}/\${COMP_PREFIX}/\${COMP}.zip" -d "\${DATA_PATH}"
+    rm -f "${DATA_DIR}/\${COMP_PREFIX}/\${COMP}.zip"
+fi
+
+# Copy external data (Heart_Disease_Prediction.csv) from head node
+if [ ! -f "\${DATA_PATH}/Heart_Disease_Prediction.csv" ]; then
+    echo "[6c] Copying Heart_Disease_Prediction.csv from head..."
+    scp "${SSH_USER}@${HEAD_IP}:${DATA_DIR}/playground/${KAGGLE_COMPETITION}/Heart_Disease_Prediction.csv" \
+        "\${DATA_PATH}/Heart_Disease_Prediction.csv"
+else
+    echo "[6c] Heart_Disease_Prediction.csv already exists, skipping"
+fi
+
+# Create data symlink (script expects data at parents[2]/data/)
+ln -sf "${DATA_DIR}" "\$HOME/data" 2>/dev/null || true
+
+echo "=== Data setup complete ==="
+ls -lh "\${DATA_PATH}/"
+REMOTE_DATA
+
 # --- Start Ray worker and connect to head ---
 echo "=== Starting Ray worker on ${WORKER_IP} ==="
 ssh "${SSH_USER}@${WORKER_IP}" bash -s <<REMOTE_START
