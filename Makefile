@@ -34,3 +34,7 @@ register-head:
 register-worker:
 	$(eval NODE_IP := $(shell if grep -qi microsoft /proc/version 2>/dev/null; then ip -4 addr show | grep -oP 'inet 192\.168\.\d+\.\d+' | head -1 | grep -oP '192\.168\.\d+\.\d+'; fi))
 	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="${RAY_API_SERVER_IP}:${RAY_API_SERVER_PORT}" $(if $(NODE_IP),--node-ip-address=$(NODE_IP))
+
+restart-register-worker:
+	ray stop --force
+	$(MAKE) register-worker
