@@ -16,6 +16,7 @@ dependencies = [
     "rtdl-revisiting-models>=0.0.2",
     "skorch>=0.15.0",
     "ray[default]>=2.9.0",
+    "rtdl-num-embeddings>=0.0.12",
 ]
 
 [tool.uv.sources]

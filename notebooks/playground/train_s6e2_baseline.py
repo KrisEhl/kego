@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -12,12 +13,13 @@ import xgboost as xgb
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
 from pytabkit import RealMLP_TD_Classifier
+from rtdl_num_embeddings import PeriodicEmbeddings
 from rtdl_revisiting_models import FTTransformer, ResNet
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, RidgeCV
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import QuantileTransformer, StandardScaler
 from skorch import NeuralNetBinaryClassifier
 from skorch.callbacks import EarlyStopping
 from xgboost import XGBClassifier
@@ -31,12 +33,62 @@ from kego.train import train_model_split  # noqa: E402
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DATA_DIR = project_root / "data" / "playground" / "playground-series-s6e2"
+DATA_DIR = (
+    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
+    / "playground"
+    / "playground-series-s6e2"
+)
 TARGET = "Heart Disease"
 
-SEEDS = [42, 123, 777]
+SEEDS_FULL = [42, 123, 777]
+SEEDS_FAST = [42]
+FAST_MODELS = {
+    "logistic_regression",
+    "xgboost",
+    "lightgbm",
+    "catboost",
+    "realmlp",
+}
 GPU_MODEL_PREFIXES = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
 NEURAL_MODEL_PREFIXES = {"realmlp", "resnet", "ft_transformer"}
+CAT_FEATURES = [
+    "Sex",
+    "Chest pain type",
+    "FBS over 120",
+    "EKG results",
+    "Exercise angina",
+    "Slope of ST",
+    "Number of vessels fluro",
+    "Thallium",
+]
+TE_FEATURES = ["Thallium", "Chest pain type", "Slope of ST", "EKG results"]
+
+
+def make_te_preprocess(te_features, drop_original=False):
+    """Create a fold_preprocess callback that applies target encoding per CV fold.
+
+    Args:
+        te_features: Columns to target-encode.
+        drop_original: If True, drop the raw categorical columns after adding
+            TE versions. Use for models that can't handle categoricals natively
+            (LogReg, ResNet) to fix the ordinal fallacy.
+    """
+
+    def preprocess(x_train, y_train, x_valid, x_test, x_holdout):
+        for col in te_features:
+            if col not in x_train.columns:
+                continue
+            means = y_train.groupby(x_train[col]).mean()
+            global_mean = y_train.mean()
+            for df in [x_train, x_valid, x_test, x_holdout]:
+                df[f"{col}_te"] = df[col].map(means).fillna(global_mean)
+        if drop_original:
+            cols_to_drop = [c for c in te_features if c in x_train.columns]
+            for df in [x_train, x_valid, x_test, x_holdout]:
+                df.drop(columns=cols_to_drop, inplace=True)
+        return x_train, x_valid, x_test, x_holdout
+
+    return preprocess
 
 
 class ScaledLogisticRegression:
@@ -60,7 +112,9 @@ class GPUXGBClassifier(XGBClassifier):
     """XGBClassifier that uses DMatrix for GPU-native prediction."""
 
     def predict_proba(self, X, **kwargs):
-        dmat = xgb.DMatrix(X)
+        dmat = xgb.DMatrix(
+            X, enable_categorical=getattr(self, "enable_categorical", False)
+        )
         preds = self.get_booster().predict(dmat)
         return np.column_stack([1 - preds, preds])
 
@@ -70,33 +124,53 @@ class GPUXGBClassifier(XGBClassifier):
 
 
 class ScaledRealMLP:
-    """RealMLP_TD_Classifier with StandardScaler preprocessing."""
+    """RealMLP_TD_Classifier with native categorical feature support."""
 
-    def __init__(self, random_state=42, **kwargs):
+    def __init__(self, cat_features=None, random_state=42, **kwargs):
+        self.cat_features = cat_features or []
         self.random_state = random_state
         self.kwargs = kwargs
 
+    def _prepare(self, X):
+        if isinstance(X, pd.DataFrame) and self.cat_features:
+            X = X.copy()
+            for c in self.cat_features:
+                if c in X.columns:
+                    X[c] = X[c].astype("category")
+            return X
+        return X.values if isinstance(X, pd.DataFrame) else X
+
     def fit(self, X, y, **kwargs):
-        self.scaler = StandardScaler()
-        X_np = self.scaler.fit_transform(X.values if isinstance(X, pd.DataFrame) else X)
+        X_prep = self._prepare(X)
         y_np = y.values if hasattr(y, "values") else y
         self.model = RealMLP_TD_Classifier(
             random_state=self.random_state, **self.kwargs
         )
-        self.model.fit(X_np, y_np)
+        self.model.fit(X_prep, y_np)
         return self
 
     def predict_proba(self, X):
-        X_np = self.scaler.transform(X.values if isinstance(X, pd.DataFrame) else X)
-        return self.model.predict_proba(X_np)
+        return self.model.predict_proba(self._prepare(X))
 
     def predict(self, X):
-        X_np = self.scaler.transform(X.values if isinstance(X, pd.DataFrame) else X)
-        return self.model.predict(X_np)
+        return self.model.predict(self._prepare(X))
+
+
+class GaussianNoise(nn.Module):
+    """Adds Gaussian noise during training only. Regularization for synthetic data."""
+
+    def __init__(self, std=0.01):
+        super().__init__()
+        self.std = std
+
+    def forward(self, x):
+        if self.training and self.std > 0:
+            return x + torch.randn_like(x) * self.std
+        return x
 
 
 class ResNetModule(nn.Module):
-    """Wraps rtdl ResNet for skorch compatibility."""
+    """Wraps rtdl ResNet for skorch compatibility, with periodic numerical embeddings."""
 
     def __init__(
         self,
@@ -107,10 +181,23 @@ class ResNetModule(nn.Module):
         d_hidden_multiplier=2.0,
         dropout1=0.15,
         dropout2=0.0,
+        n_frequencies=48,
+        frequency_init_scale=0.01,
+        d_embedding=24,
+        noise_std=0.01,
     ):
         super().__init__()
+        self.noise = GaussianNoise(std=noise_std)
+        self.num_embeddings = PeriodicEmbeddings(
+            n_features=d_in,
+            d_embedding=d_embedding,
+            n_frequencies=n_frequencies,
+            frequency_init_scale=frequency_init_scale,
+            activation=True,
+            lite=False,
+        )
         self.net = ResNet(
-            d_in=d_in,
+            d_in=d_in * d_embedding,
             d_out=d_out,
             n_blocks=n_blocks,
             d_block=d_block,
@@ -120,11 +207,14 @@ class ResNetModule(nn.Module):
         )
 
     def forward(self, X):
+        X = self.noise(X)  # Add noise during training only
+        X = self.num_embeddings(X)  # (B, n_feat) -> (B, n_feat, d_emb)
+        X = X.flatten(1)  # (B, n_feat * d_emb)
         return self.net(X).squeeze(-1)
 
 
 class SkorchResNet:
-    """ResNet with StandardScaler, wrapped via skorch for sklearn API."""
+    """ResNet with QuantileTransformer + periodic embeddings + Gaussian noise."""
 
     def __init__(
         self,
@@ -152,7 +242,9 @@ class SkorchResNet:
 
     def fit(self, X, y, **kwargs):
         torch.manual_seed(self.random_state)
-        self.scaler = StandardScaler()
+        self.scaler = QuantileTransformer(
+            output_distribution="normal", random_state=self.random_state
+        )
         X_np = self.scaler.fit_transform(
             X.values if isinstance(X, pd.DataFrame) else X
         ).astype(np.float32)
@@ -194,11 +286,16 @@ class SkorchResNet:
 
 
 class FTTransformerModule(nn.Module):
-    """Wraps rtdl FTTransformer for skorch (continuous features only)."""
+    """Wraps rtdl FTTransformer for skorch (continuous + categorical features).
+
+    Replaces the default LinearEmbeddings for continuous features with
+    PeriodicEmbeddings for richer numerical representations.
+    """
 
     def __init__(
         self,
         n_cont_features=1,
+        cat_cardinalities=None,
         d_out=1,
         n_blocks=3,
         d_block=96,
@@ -207,11 +304,16 @@ class FTTransformerModule(nn.Module):
         ffn_d_hidden_multiplier=4 / 3,
         ffn_dropout=0.1,
         residual_dropout=0.0,
+        n_frequencies=48,
+        frequency_init_scale=0.01,
+        noise_std=0.01,
     ):
         super().__init__()
+        self.n_cont = n_cont_features
+        self.noise = GaussianNoise(std=noise_std)
         self.net = FTTransformer(
             n_cont_features=n_cont_features,
-            cat_cardinalities=[],
+            cat_cardinalities=cat_cardinalities or [],
             d_out=d_out,
             n_blocks=n_blocks,
             d_block=d_block,
@@ -221,16 +323,30 @@ class FTTransformerModule(nn.Module):
             ffn_dropout=ffn_dropout,
             residual_dropout=residual_dropout,
         )
+        # Replace the default LinearEmbeddings with PeriodicEmbeddings
+        if n_cont_features > 0:
+            self.net.cont_embeddings = PeriodicEmbeddings(
+                n_features=n_cont_features,
+                d_embedding=d_block,
+                n_frequencies=n_frequencies,
+                frequency_init_scale=frequency_init_scale,
+                activation=True,
+                lite=False,
+            )
 
     def forward(self, X):
-        return self.net(X, x_cat=None).squeeze(-1)
+        x_cont = X[:, : self.n_cont]
+        x_cont = self.noise(x_cont)  # Add noise to continuous features during training
+        x_cat = X[:, self.n_cont :].long() if X.shape[1] > self.n_cont else None
+        return self.net(x_cont, x_cat=x_cat).squeeze(-1)
 
 
 class SkorchFTTransformer:
-    """FTTransformer with StandardScaler, wrapped via skorch for sklearn API."""
+    """FTTransformer with categorical embeddings, wrapped via skorch."""
 
     def __init__(
         self,
+        cat_features=None,
         n_blocks=3,
         d_block=96,
         attention_n_heads=8,
@@ -244,6 +360,7 @@ class SkorchFTTransformer:
         batch_size=256,
         random_state=42,
     ):
+        self.cat_features = cat_features or []
         self.n_blocks = n_blocks
         self.d_block = d_block
         self.attention_n_heads = attention_n_heads
@@ -257,18 +374,53 @@ class SkorchFTTransformer:
         self.batch_size = batch_size
         self.random_state = random_state
 
+    def _prepare(self, X, fit=False):
+        if isinstance(X, pd.DataFrame):
+            cont_cols = [c for c in X.columns if c not in self.cat_features]
+            cat_cols = [c for c in X.columns if c in self.cat_features]
+        else:
+            if fit:
+                self.cont_cols = []
+                self.cat_cols = []
+                self.cat_cardinalities = []
+                self.scaler = QuantileTransformer(
+                    output_distribution="normal", random_state=self.random_state
+                )
+                return self.scaler.fit_transform(X).astype(np.float32)
+            return self.scaler.transform(X).astype(np.float32)
+
+        if fit:
+            self.cont_cols = cont_cols
+            self.cat_cols = cat_cols
+            self.scaler = QuantileTransformer(
+                output_distribution="normal", random_state=self.random_state
+            )
+            self.cat_encoders = {}
+            for c in cat_cols:
+                vals = sorted(X[c].unique())
+                self.cat_encoders[c] = {v: i for i, v in enumerate(vals)}
+            self.cat_cardinalities = [len(self.cat_encoders[c]) for c in cat_cols]
+            X_cont = self.scaler.fit_transform(X[cont_cols].values).astype(np.float32)
+        else:
+            X_cont = self.scaler.transform(X[self.cont_cols].values).astype(np.float32)
+
+        if self.cat_cols:
+            X_cat = np.column_stack(
+                [X[c].map(self.cat_encoders[c]).values for c in self.cat_cols]
+            ).astype(np.float32)
+            return np.hstack([X_cont, X_cat])
+        return X_cont
+
     def fit(self, X, y, **kwargs):
         torch.manual_seed(self.random_state)
-        self.scaler = StandardScaler()
-        X_np = self.scaler.fit_transform(
-            X.values if isinstance(X, pd.DataFrame) else X
-        ).astype(np.float32)
+        X_prep = self._prepare(X, fit=True)
         y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
-        n_features = X_np.shape[1]
+        n_cont = len(self.cont_cols) if self.cont_cols else X_prep.shape[1]
 
         self.net = NeuralNetBinaryClassifier(
             FTTransformerModule,
-            module__n_cont_features=n_features,
+            module__n_cont_features=n_cont,
+            module__cat_cardinalities=self.cat_cardinalities,
             module__d_out=1,
             module__n_blocks=self.n_blocks,
             module__d_block=self.d_block,
@@ -288,14 +440,12 @@ class SkorchFTTransformer:
             ],
             verbose=0,
         )
-        self.net.fit(X_np, y_np)
+        self.net.fit(X_prep, y_np)
         return self
 
     def predict_proba(self, X):
-        X_np = self.scaler.transform(
-            X.values if isinstance(X, pd.DataFrame) else X
-        ).astype(np.float32)
-        return self.net.predict_proba(X_np)
+        X_prep = self._prepare(X)
+        return self.net.predict_proba(X_prep)
 
     def predict(self, X):
         proba = self.predict_proba(X)
@@ -337,15 +487,16 @@ def _hill_climbing(
     return best_weights
 
 
-def get_models(n_features: int) -> dict:
+def get_models(n_features: int, fast: bool = False) -> dict:
     """Build model configs with GPU acceleration for GBDT models."""
-    return {
+    all_models = {
         # === CPU models ===
         "logistic_regression": {
             "model": ScaledLogisticRegression,
             "kwargs": {"max_iter": 1000, "C": 1.0, "random_state": 42},
             "seed_key": "random_state",
             "use_eval_set": False,
+            "fold_preprocess": make_te_preprocess(TE_FEATURES, drop_original=True),
         },
         "random_forest": {
             "model": RandomForestClassifier,
@@ -382,6 +533,7 @@ def get_models(n_features: int) -> dict:
                 "early_stopping_rounds": 100,
                 "tree_method": "hist",
                 "device": "cuda",
+                "enable_categorical": True,
                 "subsample": 0.7,
                 "colsample_bytree": 0.6,
                 "min_child_weight": 10,
@@ -391,6 +543,7 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "kwargs_fit": {"verbose": 500},
+            "convert_cat_dtype": True,
         },
         "xgboost_reg": {
             "model": GPUXGBClassifier,
@@ -402,6 +555,7 @@ def get_models(n_features: int) -> dict:
                 "early_stopping_rounds": 100,
                 "tree_method": "hist",
                 "device": "cuda",
+                "enable_categorical": True,
                 "subsample": 0.8,
                 "colsample_bytree": 0.7,
                 "min_child_weight": 20,
@@ -411,6 +565,7 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "kwargs_fit": {"verbose": 500},
+            "convert_cat_dtype": True,
         },
         "xgboost_deep": {
             "model": GPUXGBClassifier,
@@ -422,6 +577,7 @@ def get_models(n_features: int) -> dict:
                 "early_stopping_rounds": 100,
                 "tree_method": "hist",
                 "device": "cuda",
+                "enable_categorical": True,
                 "subsample": 0.6,
                 "colsample_bytree": 0.6,
                 "min_child_weight": 5,
@@ -431,6 +587,7 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "kwargs_fit": {"verbose": 500},
+            "convert_cat_dtype": True,
         },
         "xgboost_shallow": {
             "model": GPUXGBClassifier,
@@ -442,6 +599,7 @@ def get_models(n_features: int) -> dict:
                 "early_stopping_rounds": 50,
                 "tree_method": "hist",
                 "device": "cuda",
+                "enable_categorical": True,
                 "subsample": 0.8,
                 "colsample_bytree": 0.8,
                 "min_child_weight": 10,
@@ -451,6 +609,7 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "kwargs_fit": {"verbose": 500},
+            "convert_cat_dtype": True,
         },
         "xgboost_dart": {
             "model": GPUXGBClassifier,
@@ -462,6 +621,7 @@ def get_models(n_features: int) -> dict:
                 "eval_metric": "auc",
                 "tree_method": "hist",
                 "device": "cuda",
+                "enable_categorical": True,
                 "subsample": 0.8,
                 "colsample_bytree": 0.7,
                 "min_child_weight": 5,
@@ -472,6 +632,7 @@ def get_models(n_features: int) -> dict:
             "seed_key": "random_state",
             "kwargs_fit": {"verbose": 500},
             "use_eval_set": False,
+            "convert_cat_dtype": True,
         },
         # === LightGBM variants (GPU) ===
         "lightgbm": {
@@ -492,6 +653,7 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "kwargs_fit": {
+                "categorical_feature": CAT_FEATURES,
                 "callbacks": [
                     __import__("lightgbm").early_stopping(80),
                     __import__("lightgbm").log_evaluation(500),
@@ -516,6 +678,7 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "kwargs_fit": {
+                "categorical_feature": CAT_FEATURES,
                 "callbacks": [
                     __import__("lightgbm").log_evaluation(500),
                 ],
@@ -539,6 +702,7 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "kwargs_fit": {
+                "categorical_feature": CAT_FEATURES,
                 "callbacks": [
                     __import__("lightgbm").early_stopping(100),
                     __import__("lightgbm").log_evaluation(500),
@@ -563,6 +727,7 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "kwargs_fit": {
+                "categorical_feature": CAT_FEATURES,
                 "callbacks": [
                     __import__("lightgbm").early_stopping(50),
                     __import__("lightgbm").log_evaluation(500),
@@ -584,6 +749,7 @@ def get_models(n_features: int) -> dict:
                 "bootstrap_type": "Bernoulli",
                 "l2_leaf_reg": 3.0,
                 "random_strength": 1.5,
+                "cat_features": CAT_FEATURES,
                 "random_seed": 77,
                 "verbose": 500,
             },
@@ -603,6 +769,7 @@ def get_models(n_features: int) -> dict:
                 "bootstrap_type": "Bernoulli",
                 "l2_leaf_reg": 5.0,
                 "random_strength": 2.0,
+                "cat_features": CAT_FEATURES,
                 "random_seed": 42,
                 "verbose": 500,
             },
@@ -622,6 +789,7 @@ def get_models(n_features: int) -> dict:
                 "bootstrap_type": "Bernoulli",
                 "l2_leaf_reg": 1.0,
                 "random_strength": 0.5,
+                "cat_features": CAT_FEATURES,
                 "random_seed": 42,
                 "verbose": 500,
             },
@@ -631,22 +799,26 @@ def get_models(n_features: int) -> dict:
         "realmlp": {
             "model": ScaledRealMLP,
             "kwargs": {
+                "cat_features": CAT_FEATURES,
                 "n_epochs": 256,
                 "device": "cuda",
                 "hidden_sizes": [256, 256, 256],
             },
             "seed_key": "random_state",
             "use_eval_set": False,
+            "fold_preprocess": make_te_preprocess(TE_FEATURES),
         },
         "realmlp_large": {
             "model": ScaledRealMLP,
             "kwargs": {
+                "cat_features": CAT_FEATURES,
                 "n_epochs": 256,
                 "device": "cuda",
                 "hidden_sizes": [512, 256, 128],
             },
             "seed_key": "random_state",
             "use_eval_set": False,
+            "fold_preprocess": make_te_preprocess(TE_FEATURES),
         },
         "resnet": {
             "model": SkorchResNet,
@@ -662,10 +834,12 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "use_eval_set": False,
+            "fold_preprocess": make_te_preprocess(TE_FEATURES, drop_original=True),
         },
         "ft_transformer": {
             "model": SkorchFTTransformer,
             "kwargs": {
+                "cat_features": CAT_FEATURES,
                 "n_blocks": 3,
                 "d_block": 96,
                 "attention_n_heads": 8,
@@ -677,25 +851,102 @@ def get_models(n_features: int) -> dict:
             },
             "seed_key": "random_state",
             "use_eval_set": False,
+            "fold_preprocess": make_te_preprocess(TE_FEATURES),
         },
     }
 
+    if fast:
+        all_models = {k: v for k, v in all_models.items() if k in FAST_MODELS}
+        # Reduce neural model epochs for faster iteration
+        for name in all_models:
+            if name.startswith("realmlp"):
+                all_models[name]["kwargs"]["n_epochs"] = 64
+            elif name in ("resnet", "ft_transformer"):
+                all_models[name]["kwargs"]["max_epochs"] = 50
+
+    return all_models
+
+
+def _impute_cholesterol(df: pd.DataFrame) -> pd.DataFrame:
+    """Replace Cholesterol=0 (missing) with grouped median by Sex and Age bin."""
+    df = df.copy()
+    if (df["Cholesterol"] == 0).any():
+        df["_age_bin"] = pd.cut(df["Age"], bins=[0, 40, 50, 60, 100])
+        median_map = (
+            df[df["Cholesterol"] > 0]
+            .groupby(["Sex", "_age_bin"])["Cholesterol"]
+            .median()
+        )
+        mask = df["Cholesterol"] == 0
+        for idx in df[mask].index:
+            key = (df.loc[idx, "Sex"], df.loc[idx, "_age_bin"])
+            if key in median_map.index:
+                df.loc[idx, "Cholesterol"] = median_map[key]
+            else:
+                df.loc[idx, "Cholesterol"] = df.loc[~mask, "Cholesterol"].median()
+        df = df.drop(columns=["_age_bin"])
+    return df
+
 
 def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add interaction and ratio features."""
+    """Add domain-driven interaction and composite features."""
     df = df.copy()
-    df["age_x_maxhr"] = df["Age"] * df["Max HR"]
-    df["age_x_stdep"] = df["Age"] * df["ST depression"]
-    df["maxhr_x_stdep"] = df["Max HR"] * df["ST depression"]
-    df["hr_reserve"] = 220 - df["Age"] - df["Max HR"]
-    df["bp_x_chol"] = df["BP"] * df["Cholesterol"]
-    df["age_x_chol"] = df["Age"] * df["Cholesterol"]
-    df["bp_x_age"] = df["BP"] * df["Age"]
-    df["chol_per_age"] = df["Cholesterol"] / df["Age"]
-    df["maxhr_per_age"] = df["Max HR"] / df["Age"]
-    df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
-    df["vessels_x_thallium"] = df["Number of vessels fluro"] * df["Thallium"]
+
+    # --- Thallium interactions (Thallium is the #1 predictor) ---
+    df["thallium_x_chestpain"] = df["Thallium"] * df["Chest pain type"]
+    df["thallium_x_slope"] = df["Thallium"] * df["Slope of ST"]
+    df["thallium_x_sex"] = df["Thallium"] * df["Sex"]
+    df["thallium_x_stdep"] = df["Thallium"] * df["ST depression"]
+    df["thallium_abnormal"] = (df["Thallium"] >= 6).astype(int)
+
+    # --- Other strong interactions ---
+    df["chestpain_x_slope"] = df["Chest pain type"] * df["Slope of ST"]
     df["chestpain_x_angina"] = df["Chest pain type"] * df["Exercise angina"]
+    df["vessels_x_thallium"] = df["Number of vessels fluro"] * df["Thallium"]
+    df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
+
+    # --- Composite risk scores ---
+    df["top4_sum"] = (
+        df["Thallium"]
+        + df["Chest pain type"]
+        + df["Number of vessels fluro"]
+        + df["Exercise angina"]
+    )
+    df["abnormal_count"] = (
+        (df["Thallium"] >= 6).astype(int)
+        + (df["Number of vessels fluro"] >= 1).astype(int)
+        + (df["Chest pain type"] >= 3).astype(int)
+        + (df["Exercise angina"] == 1).astype(int)
+        + (df["Slope of ST"] >= 2).astype(int)
+        + (df["ST depression"] > 1).astype(int)
+        + (df["Sex"] == 1).astype(int)
+    )
+    df["risk_score"] = (
+        3 * (df["Thallium"] >= 6).astype(int)
+        + 2 * (df["Number of vessels fluro"] >= 1).astype(int)
+        + 2 * (df["Chest pain type"] >= 3).astype(int)
+        + 2 * (df["Exercise angina"] == 1).astype(int)
+        + (df["Slope of ST"] >= 2).astype(int)
+        + (df["ST depression"] > 1).astype(int)
+    )
+
+    # --- Ratio features ---
+    df["maxhr_per_age"] = df["Max HR"] / df["Age"]
+    df["hr_reserve_pct"] = df["Max HR"] / (220 - df["Age"])
+    df["age_x_stdep"] = df["Age"] * df["ST depression"]
+    df["age_x_maxhr"] = df["Age"] * df["Max HR"]
+    df["heart_load"] = df["BP"] * df["Cholesterol"] / df["Max HR"].clip(lower=1)
+
+    # --- Grouped deviation features (individual risk vs demographic peers) ---
+    for col in ["Cholesterol", "BP", "Max HR", "ST depression"]:
+        grp_mean = df.groupby("Sex")[col].transform("mean")
+        df[f"{col}_dev_sex"] = df[col] - grp_mean
+
+    # --- Signal conflict: top predictors disagree on risk direction ---
+    df["signal_conflict"] = (
+        (df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)
+    ).astype(int) + ((df["Thallium"] == 3) & (df["Chest pain type"] == 4)).astype(int)
+
     return df
 
 
@@ -705,6 +956,13 @@ def _train_single_model(
 ):
     """Train one model with one seed on a Ray worker."""
     print(f"[{model_name}] Starting seed={seed}", flush=True)
+
+    # Convert cat features to pandas category dtype for models that need it (XGBoost)
+    if model_config.get("convert_cat_dtype"):
+        cat_convert = {c: "category" for c in CAT_FEATURES if c in train.columns}
+        train = train.astype(cat_convert)
+        test = test.astype(cat_convert)
+        holdout = holdout.astype(cat_convert)
 
     kwargs = model_config["kwargs"].copy()
     seed_key = model_config.get("seed_key", "random_state")
@@ -723,12 +981,13 @@ def _train_single_model(
         use_probability=True,
         use_eval_set=model_config.get("use_eval_set", True),
         kfold_seed=seed,
+        fold_preprocess=model_config.get("fold_preprocess"),
     )
     print(f"[{model_name}] Finished seed={seed}", flush=True)
     return model_name, seed, oof, holdout_pred, test_pred
 
 
-def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
+def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds_n=10):
     """Train all models with multiple seeds via Ray and return ensemble predictions."""
     # Share data via Ray object store (stored once, shared across all tasks)
     train_ref = ray.put(train)
@@ -744,7 +1003,7 @@ def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
     for model_name, config in models.items():
         is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
         is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
-        for seed in SEEDS:
+        for seed in seeds:
             if model_name.startswith("catboost"):
                 opts = {"num_gpus": 1, "num_cpus": 1}
             elif is_neural:
@@ -812,16 +1071,16 @@ def _train_ensemble(train, holdout, test, features, models, tag="", folds_n=10):
 
     # Average across seeds and log per-model results
     for name in all_oof_preds:
-        all_oof_preds[name] /= len(SEEDS)
-        all_holdout_preds[name] /= len(SEEDS)
-        all_test_preds[name] /= len(SEEDS)
+        all_oof_preds[name] /= len(seeds)
+        all_holdout_preds[name] /= len(seeds)
+        all_test_preds[name] /= len(seeds)
 
         auc = roc_auc_score(holdout_labels, all_holdout_preds[name])
         acc = accuracy_score(
             holdout_labels, (all_holdout_preds[name] >= 0.5).astype(int)
         )
         logger.info(
-            f"{name} (avg {len(SEEDS)} seeds) — "
+            f"{name} (avg {len(seeds)} seeds) — "
             f"Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
         )
 
@@ -876,6 +1135,11 @@ def main():
     parser.add_argument(
         "--debug", action="store_true", help="Quick run with small sample"
     )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast iteration: 5 folds, 1 seed, core models only (~30-60 min)",
+    )
     args = parser.parse_args()
 
     ray.init()
@@ -914,6 +1178,11 @@ def main():
     train = train.reset_index(drop=True)
     holdout = holdout.reset_index(drop=True)
 
+    # Impute Cholesterol=0 (missing values in original UCI data)
+    train = _impute_cholesterol(train)
+    holdout = _impute_cholesterol(holdout)
+    test = _impute_cholesterol(test)
+
     # Engineer features
     train = _engineer_features(train)
     holdout = _engineer_features(holdout)
@@ -922,12 +1191,26 @@ def main():
     # Features = all columns except id and target
     features = [c for c in train.columns if c not in ["id", TARGET]]
     n_features = len(features)
-    models = get_models(n_features)
+    models = get_models(n_features, fast=args.fast)
+
+    # Configure seeds and folds based on mode
+    if args.debug:
+        seeds, folds_n = SEEDS_FAST, 2
+    elif args.fast:
+        seeds, folds_n = SEEDS_FAST, 5
+    else:
+        seeds, folds_n = SEEDS_FULL, 10
+
+    n_tasks = len(models) * len(seeds)
+    logger.info(
+        f"Mode: {'debug' if args.debug else 'fast' if args.fast else 'full'} "
+        f"— {len(models)} models × {len(seeds)} seeds × {folds_n} folds "
+        f"= {n_tasks} tasks"
+    )
 
     # Train ensemble with multi-seed averaging via Ray
-    folds_n = 2 if args.debug else 10
     best_test, best_method, best_auc = _train_ensemble(
-        train, holdout, test, features, models, folds_n=folds_n
+        train, holdout, test, features, models, seeds=seeds, folds_n=folds_n
     )
 
     # Generate submission

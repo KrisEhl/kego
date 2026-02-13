@@ -41,6 +41,7 @@ def train_model_split(
     use_probability: bool = True,
     use_eval_set: bool = True,
     kfold_seed: int = 42,
+    fold_preprocess=None,
 ):
     kf = KFold(n_splits=folds_n, shuffle=True, random_state=kfold_seed)
 
@@ -59,6 +60,11 @@ def train_model_split(
         y_valid = train.loc[test_index, target]
         x_test = test[features].copy()
         x_holdout = holdout[features].copy()
+
+        if fold_preprocess is not None:
+            x_train, x_valid, x_test, x_holdout = fold_preprocess(
+                x_train, y_train, x_valid, x_test, x_holdout
+            )
 
         model_trained = model(**kwargs_model)
         if use_eval_set:
