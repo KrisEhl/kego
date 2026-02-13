@@ -36,5 +36,5 @@ register-worker:
 	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="${RAY_API_SERVER_IP}:${RAY_API_SERVER_PORT}" $(if $(NODE_IP),--node-ip-address=$(NODE_IP))
 
 restart-register-worker:
-	ray stop --force
+	uv run ray stop --force
 	$(MAKE) register-worker
