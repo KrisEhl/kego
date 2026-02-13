@@ -30,5 +30,7 @@ members = [
     "notebooks/playground-series-s5e9",
     "notebooks/playground",
     "notebooks/cafa",
-    ".", "notebooks/nfl-big-data-bowl-2026-prediction",
+    ".",
+    "notebooks/nfl-big-data-bowl-2026-prediction",
+    "cluster",
 ]
