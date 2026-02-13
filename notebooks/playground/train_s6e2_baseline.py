@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import ray
+import xgboost as xgb
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
@@ -46,6 +47,19 @@ class ScaledLogisticRegression:
 
     def predict(self, X):
         return self.pipe.predict(X)
+
+
+class GPUXGBClassifier(XGBClassifier):
+    """XGBClassifier that uses DMatrix for GPU-native prediction."""
+
+    def predict_proba(self, X, **kwargs):
+        dmat = xgb.DMatrix(X)
+        preds = self.get_booster().predict(dmat)
+        return np.column_stack([1 - preds, preds])
+
+    def predict(self, X, **kwargs):
+        proba = self.predict_proba(X)
+        return (proba[:, 1] >= 0.5).astype(int)
 
 
 def _hill_climbing(
@@ -119,7 +133,7 @@ def get_models(n_features: int) -> dict:
         },
         # === XGBoost variants (GPU) ===
         "xgboost": {
-            "model": XGBClassifier,
+            "model": GPUXGBClassifier,
             "kwargs": {
                 "n_estimators": 2000,
                 "max_depth": 7,
@@ -139,7 +153,7 @@ def get_models(n_features: int) -> dict:
             "kwargs_fit": {"verbose": 500},
         },
         "xgboost_reg": {
-            "model": XGBClassifier,
+            "model": GPUXGBClassifier,
             "kwargs": {
                 "n_estimators": 1500,
                 "max_depth": 4,
@@ -159,7 +173,7 @@ def get_models(n_features: int) -> dict:
             "kwargs_fit": {"verbose": 500},
         },
         "xgboost_deep": {
-            "model": XGBClassifier,
+            "model": GPUXGBClassifier,
             "kwargs": {
                 "n_estimators": 2000,
                 "max_depth": 10,
@@ -179,7 +193,7 @@ def get_models(n_features: int) -> dict:
             "kwargs_fit": {"verbose": 500},
         },
         "xgboost_shallow": {
-            "model": XGBClassifier,
+            "model": GPUXGBClassifier,
             "kwargs": {
                 "n_estimators": 500,
                 "max_depth": 3,
@@ -199,7 +213,7 @@ def get_models(n_features: int) -> dict:
             "kwargs_fit": {"verbose": 500},
         },
         "xgboost_dart": {
-            "model": XGBClassifier,
+            "model": GPUXGBClassifier,
             "kwargs": {
                 "booster": "dart",
                 "n_estimators": 1000,
