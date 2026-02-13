@@ -155,20 +155,12 @@ ls -lh "\${DATA_PATH}/"
 REMOTE_DATA
 
 # --- Start Ray worker and connect to head ---
-echo "=== Starting Ray worker on ${WORKER_IP} ==="
-ssh "${SSH_USER}@${WORKER_IP}" bash -s <<REMOTE_START
-set -euo pipefail
-export PATH="\$HOME/.local/bin:\$PATH"
-export RAY_API_SERVER_IP="${RAY_API_SERVER_IP}"
-export RAY_API_SERVER_PORT="${RAY_API_SERVER_PORT}"
-cd "${PROJECT_DIR}"
+echo "=== Starting Ray worker ==="
 
 # Stop any existing Ray processes
-.venv/bin/ray stop --force 2>/dev/null || true
+ray stop --force 2>/dev/null || true
 
 # Start worker connected to head
-RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="\${RAY_API_SERVER_IP}:\${RAY_API_SERVER_PORT}"
-echo "=== Ray worker started and connected to \${RAY_API_SERVER_IP}:\${RAY_API_SERVER_PORT} ==="
-REMOTE_START
+RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="${RAY_API_SERVER_IP}:${RAY_API_SERVER_PORT}"
 
 echo "=== Done! Check cluster status at http://${RAY_API_SERVER_IP}:8265 ==="
