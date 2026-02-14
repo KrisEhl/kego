@@ -46,13 +46,13 @@ logs-raw:
 	fi
 
 submit-fast:
-	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --fast'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --fast'
 
 submit-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py'
 
 submit-neural:
-	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --neural'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --neural'
 
 submit-debug:
-	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast'
