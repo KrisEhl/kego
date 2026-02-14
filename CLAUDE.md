@@ -30,6 +30,18 @@ uv run pre-commit run --all-files
 
 # Run a training script (example: RNA baseline)
 uv run python notebooks/stanford/train_rna_baseline.py
+
+# Ray cluster commands (run from cluster/ directory)
+cd cluster
+make start-head           # Start Ray head node
+make start-worker         # Connect as worker to head
+make restart-worker       # Stop and reconnect worker
+make submit-fast          # Submit fast iteration job (~3-5 min)
+make submit-full          # Submit full training run
+make submit-debug         # Submit debug job (small sample)
+make logs                 # Show progress of running job
+make status               # List all jobs and their status
+make stop                 # Stop Ray on this node
 ```
 
 ## Architecture

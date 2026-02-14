@@ -15,7 +15,9 @@ from lightgbm import LGBMClassifier
 from pytabkit import RealMLP_TD_Classifier
 from rtdl_num_embeddings import PeriodicEmbeddings
 from rtdl_revisiting_models import FTTransformer, ResNet
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression, RidgeCV
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.pipeline import make_pipeline
@@ -47,7 +49,6 @@ FAST_MODELS = {
     "xgboost",
     "lightgbm",
     "catboost",
-    "realmlp",
 }
 GPU_MODEL_PREFIXES = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
 NEURAL_MODEL_PREFIXES = {"realmlp", "resnet", "ft_transformer"}
@@ -1118,14 +1119,38 @@ def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds
 
     # Pick best ensemble method
     results = {
-        "average": (avg_holdout, avg_test),
-        "ridge": (ridge_holdout, ridge_test),
-        "hill_climbing": (hc_holdout, hc_test),
+        "average": (avg_holdout, avg_test, np.mean(oof_matrix, axis=1)),
+        "ridge": (ridge_holdout, ridge_test, ridge.predict(oof_matrix)),
+        "hill_climbing": (hc_holdout, hc_test, oof_matrix @ best_weights),
     }
     best_name = max(results, key=lambda k: roc_auc_score(holdout_labels, results[k][0]))
-    best_holdout, best_test = results[best_name]
+    best_holdout, best_test, best_oof = results[best_name]
     auc = roc_auc_score(holdout_labels, best_holdout)
     logger.info(f"{tag}Best method: {best_name} (AUC: {auc:.4f})")
+
+    # --- Post-processing: Isotonic calibration ---
+    # Fit isotonic regression on OOF predictions vs true labels,
+    # then apply to holdout and test predictions.
+    iso = IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip")
+    iso.fit(best_oof, train_labels)
+    cal_holdout = iso.predict(best_holdout)
+    cal_test = iso.predict(best_test)
+    cal_auc = roc_auc_score(holdout_labels, cal_holdout)
+    logger.info(f"{tag}Calibrated ({best_name}) — Holdout AUC: {cal_auc:.4f}")
+
+    # Use calibrated if it improves AUC
+    if cal_auc > auc:
+        logger.info(
+            f"{tag}Calibration improved AUC by {cal_auc - auc:.5f}, using calibrated"
+        )
+        best_test = cal_test
+        auc = cal_auc
+    else:
+        logger.info(
+            f"{tag}Calibration did not improve AUC ({cal_auc:.4f} vs {auc:.4f}), using raw"
+        )
+
+    logger.info(f"{'='*50}")
 
     return best_test, best_name, auc
 
