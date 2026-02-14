@@ -6,17 +6,20 @@ import sys
 from datetime import datetime
 
 
-def _parse_timestamps(text):
-    """Extract first and last timestamps from Ray log lines."""
-    # Ray logs timestamps like: 2026-02-14 19:03:03,927
+def _parse_start_time(text):
+    """Extract job start timestamp from Ray log lines.
+
+    Skips CLI timestamps (cli.py) and finds the first actual job timestamp.
+    """
+    fmt = "%Y-%m-%d %H:%M:%S"
     ts_pattern = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+"
-    timestamps = re.findall(ts_pattern, text)
-    if len(timestamps) >= 2:
-        fmt = "%Y-%m-%d %H:%M:%S"
-        first = datetime.strptime(timestamps[0], fmt)
-        last = datetime.strptime(timestamps[-1], fmt)
-        return first, last
-    return None, None
+    for line in text.splitlines():
+        if "cli.py" in line:
+            continue
+        match = re.search(ts_pattern, line)
+        if match:
+            return datetime.strptime(match.group(1), fmt)
+    return None
 
 
 def _fmt_duration(minutes):
@@ -50,11 +53,9 @@ def main():
         r"\[(\d+)/(\d+)\].*?(\w[\w_]+) seed=(\d+).*?Holdout AUC: ([\d.]+)", text
     )
 
-    # Elapsed time
-    t_start, t_last = _parse_timestamps(text)
-    elapsed_min = (
-        (t_last - t_start).total_seconds() / 60.0 if t_start and t_last else None
-    )
+    # Elapsed time (from first log timestamp to now)
+    t_start = _parse_start_time(text)
+    elapsed_min = (datetime.now() - t_start).total_seconds() / 60.0 if t_start else None
 
     if completed:
         last = completed[-1]
