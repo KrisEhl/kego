@@ -50,6 +50,12 @@ FAST_MODELS = {
     "lightgbm",
     "catboost",
 }
+NEURAL_ONLY_MODELS = {
+    "resnet",
+    "ft_transformer",
+    "realmlp",
+    "realmlp_large",
+}
 GPU_MODEL_PREFIXES = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
 NEURAL_MODEL_PREFIXES = {"realmlp", "resnet", "ft_transformer"}
 CAT_FEATURES = [
@@ -488,7 +494,7 @@ def _hill_climbing(
     return best_weights
 
 
-def get_models(n_features: int, fast: bool = False) -> dict:
+def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dict:
     """Build model configs with GPU acceleration for GBDT models."""
     all_models = {
         # === CPU models ===
@@ -864,6 +870,8 @@ def get_models(n_features: int, fast: bool = False) -> dict:
                 all_models[name]["kwargs"]["n_epochs"] = 64
             elif name in ("resnet", "ft_transformer"):
                 all_models[name]["kwargs"]["max_epochs"] = 50
+    elif neural:
+        all_models = {k: v for k, v in all_models.items() if k in NEURAL_ONLY_MODELS}
 
     return all_models
 
@@ -1163,7 +1171,12 @@ def main():
     parser.add_argument(
         "--fast",
         action="store_true",
-        help="Fast iteration: 5 folds, 1 seed, core models only (~30-60 min)",
+        help="Fast iteration: 5 folds, 1 seed, core models only (~3-5 min)",
+    )
+    parser.add_argument(
+        "--neural",
+        action="store_true",
+        help="Neural models only: 5 folds, 1 seed (resnet, ft_transformer, realmlp)",
     )
     args = parser.parse_args()
 
@@ -1216,19 +1229,24 @@ def main():
     # Features = all columns except id and target
     features = [c for c in train.columns if c not in ["id", TARGET]]
     n_features = len(features)
-    models = get_models(n_features, fast=args.fast)
+    models = get_models(n_features, fast=args.fast, neural=args.neural)
 
     # Configure seeds and folds based on mode
     if args.debug:
         seeds, folds_n = SEEDS_FAST, 2
-    elif args.fast:
+    elif args.fast or args.neural:
         seeds, folds_n = SEEDS_FAST, 5
     else:
         seeds, folds_n = SEEDS_FULL, 10
 
+    mode_name = (
+        "debug"
+        if args.debug
+        else "fast" if args.fast else "neural" if args.neural else "full"
+    )
     n_tasks = len(models) * len(seeds)
     logger.info(
-        f"Mode: {'debug' if args.debug else 'fast' if args.fast else 'full'} "
+        f"Mode: {mode_name} "
         f"— {len(models)} models × {len(seeds)} seeds × {folds_n} folds "
         f"= {n_tasks} tasks"
     )
