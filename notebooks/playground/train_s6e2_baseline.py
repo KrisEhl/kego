@@ -837,6 +837,7 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
                 "lr": 1e-3,
                 "max_epochs": 200,
                 "patience": 20,
+                "batch_size": 1024,
             },
             "seed_key": "random_state",
             "use_eval_set": False,
@@ -854,6 +855,7 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
                 "lr": 1e-4,
                 "max_epochs": 200,
                 "patience": 20,
+                "batch_size": 1024,
             },
             "seed_key": "random_state",
             "use_eval_set": False,
@@ -871,6 +873,11 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
                 all_models[name]["kwargs"]["max_epochs"] = 50
     elif neural:
         all_models = {k: v for k, v in all_models.items() if k in NEURAL_ONLY_MODELS}
+        for name in all_models:
+            if name.startswith("realmlp"):
+                all_models[name]["kwargs"]["n_epochs"] = 64
+            elif name in ("resnet", "ft_transformer"):
+                all_models[name]["kwargs"]["max_epochs"] = 100
 
     return all_models
 
