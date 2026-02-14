@@ -1034,8 +1034,10 @@ def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds
         for seed in seeds:
             if model_name.startswith("catboost"):
                 opts = {"num_gpus": 1, "num_cpus": 1}
-            elif is_neural:
+            elif model_name.startswith("realmlp"):
                 opts = {"num_gpus": 1, "num_cpus": 4}
+            elif is_neural:
+                opts = {"num_gpus": 0.5, "num_cpus": 4}
             elif is_gpu:
                 opts = {"num_gpus": 0.25, "num_cpus": 1}
             else:

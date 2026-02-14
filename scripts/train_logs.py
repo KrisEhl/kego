@@ -85,11 +85,6 @@ def main():
         for m, s in sorted(running):
             print(f"    {m} seed={s}")
 
-    # Timeouts (each 600s = 10min between checks)
-    timeouts = text.count("ray.wait timed out")
-    if timeouts:
-        print(f"  Waiting: ~{timeouts * 10}min ({timeouts} x 600s timeouts)")
-
     # Neural model fold progress (per running neural model)
     if running:
         folds_match = re.search(r"(\d+) folds", text)
@@ -100,13 +95,22 @@ def main():
             if m in ("realmlp", "realmlp_large", "resnet", "ft_transformer")
         ]
         if neural_running:
-            # Count folds per PID to get per-model progress
-            fold_counts = {}
-            for m in re.finditer(
-                r"pid=(\d+).*?max_epochs=\d+.? reached", text, re.DOTALL
-            ):
+            # Count folds per PID
+            # skorch (resnet, ft_transformer): count "epoch  train_loss" headers
+            # pytabkit (realmlp): count "Trainer.fit stopped" / 2 sub-models
+            fold_starts = {}
+            for m in re.finditer(r"pid=(\d+).*?epoch\s+train_loss", text):
                 pid = m.group(1)
-                fold_counts[pid] = fold_counts.get(pid, 0) + 1
+                fold_starts[pid] = fold_starts.get(pid, 0) + 1
+            fold_counts = {pid: max(0, cnt - 1) for pid, cnt in fold_starts.items()}
+            # pytabkit: count completed sub-models, ~2 per fold
+            fit_stopped = {}
+            for m in re.finditer(r"pid=(\d+).*?Trainer\.fit.? stopped", text):
+                pid = m.group(1)
+                fit_stopped[pid] = fit_stopped.get(pid, 0) + 1
+            for pid, cnt in fit_stopped.items():
+                if pid not in fold_counts:
+                    fold_counts[pid] = cnt // 2
 
             # Map PIDs to model names via Starting messages
             pid_model = {}
