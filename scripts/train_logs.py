@@ -95,59 +95,41 @@ def main():
             if m in ("realmlp", "realmlp_large", "resnet", "ft_transformer")
         ]
         if neural_running:
-            # Count folds per PID
-            # skorch (resnet, ft_transformer): count "epoch  train_loss" headers
-            # pytabkit (realmlp): count "Trainer.fit stopped" / 2 sub-models
-            fold_starts = {}
-            for m in re.finditer(r"pid=(\d+).*?epoch\s+train_loss", text):
-                pid = m.group(1)
-                fold_starts[pid] = fold_starts.get(pid, 0) + 1
-            fold_counts = {pid: max(0, cnt - 1) for pid, cnt in fold_starts.items()}
-            # pytabkit: count completed sub-models, ~2 per fold
-            fit_stopped = {}
-            for m in re.finditer(r"pid=(\d+).*?Trainer\.fit.? stopped", text):
-                pid = m.group(1)
-                fit_stopped[pid] = fit_stopped.get(pid, 0) + 1
-            for pid, cnt in fit_stopped.items():
-                if pid not in fold_counts:
-                    fold_counts[pid] = cnt // 2
-
-            # Map PIDs to model names via Starting messages
-            pid_model = {}
+            # Map each running neural model to its PID and log start position.
+            # Ray reuses PIDs, so we take the LAST Starting message per PID.
+            # Then count fold markers only after that position.
+            model_pid = {}  # model_name -> (pid, start_pos)
             for m in re.finditer(r"pid=(\d+).*?\[(\w[\w_]*)\] Starting seed=", text):
-                pid_model[m.group(1)] = m.group(2)
+                pid, mname = m.group(1), m.group(2)
+                if mname in neural_running:
+                    model_pid[mname] = (pid, m.start())
 
-            shown = set()
-            for pid, model_name in pid_model.items():
-                if (
-                    model_name in [m for m in neural_running]
-                    and model_name not in shown
-                ):
-                    done = fold_counts.get(pid, 0)
-                    print(f"  {model_name} fold progress: ~{done}/{folds_n}")
-                    shown.add(model_name)
+            fold_counts = {}
+            for mname, (pid, start_pos) in model_pid.items():
+                after = text[start_pos:]
+                if mname.startswith("realmlp"):
+                    # pytabkit: count Trainer.fit stopped, ~2 per fold
+                    cnt = len(re.findall(rf"pid={pid}.*?Trainer\.fit.? stopped", after))
+                    fold_counts[mname] = cnt // 2
+                else:
+                    # skorch: count epoch headers (1 per fold start)
+                    cnt = len(re.findall(rf"pid={pid}.*?epoch\s+train_loss", after))
+                    fold_counts[mname] = max(0, cnt - 1)
 
-            # Show any neural models without PID mapping
-            for model_name in neural_running:
-                if model_name not in shown:
-                    total_folds_done = sum(fold_counts.values()) if fold_counts else 0
-                    print(f"  {model_name} fold progress: ~0/{folds_n}")
+            for mname in neural_running:
+                done = fold_counts.get(mname, 0)
+                print(f"  {mname} fold progress: ~{done}/{folds_n}")
 
             # Estimate remaining from fold rate (models run in parallel)
             # ETA = time for slowest model to finish its remaining folds
-            per_model_done = {}
-            for pid, cnt in fold_counts.items():
-                mname = pid_model.get(pid)
-                if mname and mname in neural_running:
-                    per_model_done[mname] = cnt
-            max_done = max(per_model_done.values()) if per_model_done else 0
+            max_done = max(fold_counts.values()) if fold_counts else 0
             if elapsed_min and max_done > 0:
                 fold_rate = elapsed_min / max_done
                 max_remaining = max(
-                    folds_n - per_model_done.get(m, 0) for m in neural_running
+                    folds_n - fold_counts.get(m, 0) for m in neural_running
                 )
                 eta = fold_rate * max_remaining
-                total_done = sum(per_model_done.values())
+                total_done = sum(fold_counts.values())
                 total_needed = len(neural_running) * folds_n
                 print(
                     f"  Neural ETA: {_fmt_duration(eta)} "
