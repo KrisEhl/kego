@@ -34,14 +34,25 @@ logs:
 		python3 ../scripts/train_logs.py "$$JOB_ID"; \
 	fi
 
+N ?= 20
+logs-raw:
+	@JOB_ID=$$(uv run ray job list --address $(RAY_DASHBOARD) 2>/dev/null | \
+		python3 -c "import sys,re; text=sys.stdin.read(); \
+		jobs=re.findall(r\"submission_id='(raysubmit_\w+)'.*?status=<JobStatus\.(\w+):\",text,re.DOTALL); \
+		running=[j for j,s in jobs if s=='RUNNING']; \
+		print(running[-1] if running else '')"); \
+	if [ -z "$$JOB_ID" ]; then echo "No running jobs"; \
+	else uv run ray job logs "$$JOB_ID" --address $(RAY_DASHBOARD) 2>/dev/null | tail -n $(N); \
+	fi
+
 submit-fast:
-	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && python ../notebooks/playground/train_s6e2_baseline.py --fast'
+	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --fast'
 
 submit-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && python ../notebooks/playground/train_s6e2_baseline.py'
+	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py'
 
 submit-neural:
-	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && python ../notebooks/playground/train_s6e2_baseline.py --neural'
+	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --neural'
 
 submit-debug:
-	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast'
+	uv run ray job submit --address $(RAY_DASHBOARD) -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast'

@@ -129,17 +129,26 @@ def main():
                     total_folds_done = sum(fold_counts.values()) if fold_counts else 0
                     print(f"  {model_name} fold progress: ~0/{folds_n}")
 
-            # Estimate remaining from fold rate
-            total_folds_done = sum(fold_counts.values()) if fold_counts else 0
-            total_folds_needed = len(neural_running) * folds_n
-            if elapsed_min and total_folds_done > 0:
-                fold_rate = elapsed_min / total_folds_done
-                remaining_folds = total_folds_needed - total_folds_done
-                eta = fold_rate * remaining_folds
+            # Estimate remaining from fold rate (models run in parallel)
+            # ETA = time for slowest model to finish its remaining folds
+            per_model_done = {}
+            for pid, cnt in fold_counts.items():
+                mname = pid_model.get(pid)
+                if mname and mname in neural_running:
+                    per_model_done[mname] = cnt
+            max_done = max(per_model_done.values()) if per_model_done else 0
+            if elapsed_min and max_done > 0:
+                fold_rate = elapsed_min / max_done
+                max_remaining = max(
+                    folds_n - per_model_done.get(m, 0) for m in neural_running
+                )
+                eta = fold_rate * max_remaining
+                total_done = sum(per_model_done.values())
+                total_needed = len(neural_running) * folds_n
                 print(
                     f"  Neural ETA: {_fmt_duration(eta)} "
                     f"({_fmt_duration(fold_rate)}/fold, "
-                    f"{total_folds_done}/{total_folds_needed} folds done)"
+                    f"{total_done}/{total_needed} folds done)"
                 )
 
     # Ensemble results

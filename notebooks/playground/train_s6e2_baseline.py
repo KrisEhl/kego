@@ -54,7 +54,6 @@ NEURAL_ONLY_MODELS = {
     "resnet",
     "ft_transformer",
     "realmlp",
-    "realmlp_large",
 }
 GPU_MODEL_PREFIXES = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
 NEURAL_MODEL_PREFIXES = {"realmlp", "resnet", "ft_transformer"}
@@ -964,6 +963,11 @@ def _train_single_model(
     train, test, holdout, features, target, model_name, model_config, seed, folds_n=10
 ):
     """Train one model with one seed on a Ray worker."""
+    import os
+    import sys
+
+    os.environ["PYTHONUNBUFFERED"] = "1"
+    sys.stdout.reconfigure(line_buffering=True)
     print(f"[{model_name}] Starting seed={seed}", flush=True)
 
     # Convert cat features to pandas category dtype for models that need it (XGBoost)
@@ -1016,7 +1020,7 @@ def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds
             if model_name.startswith("catboost"):
                 opts = {"num_gpus": 1, "num_cpus": 1}
             elif is_neural:
-                opts = {"num_gpus": 0.5, "num_cpus": 1}
+                opts = {"num_gpus": 1, "num_cpus": 1}
             elif is_gpu:
                 opts = {"num_gpus": 0.25, "num_cpus": 1}
             else:
