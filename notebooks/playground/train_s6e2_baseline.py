@@ -272,15 +272,15 @@ class SkorchResNet:
             max_epochs=self.max_epochs,
             batch_size=self.batch_size,
             device="cuda",
-            iterator_train__num_workers=2,
             iterator_train__pin_memory=True,
-            iterator_valid__num_workers=2,
             iterator_valid__pin_memory=True,
             callbacks=[
                 EarlyStopping(patience=self.patience, monitor="valid_loss"),
             ],
             verbose=1,
         )
+        self.net.initialize()
+        self.net.module_ = torch.compile(self.net.module_)
         self.net.fit(X_np, y_np)
         return self
 
@@ -445,15 +445,15 @@ class SkorchFTTransformer:
             max_epochs=self.max_epochs,
             batch_size=self.batch_size,
             device="cuda",
-            iterator_train__num_workers=2,
             iterator_train__pin_memory=True,
-            iterator_valid__num_workers=2,
             iterator_valid__pin_memory=True,
             callbacks=[
                 EarlyStopping(patience=self.patience, monitor="valid_loss"),
             ],
             verbose=1,
         )
+        self.net.initialize()
+        self.net.module_ = torch.compile(self.net.module_)
         self.net.fit(X_prep, y_np)
         return self
 
@@ -1035,7 +1035,7 @@ def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds
             if model_name.startswith("catboost"):
                 opts = {"num_gpus": 1, "num_cpus": 1}
             elif is_neural:
-                opts = {"num_gpus": 1, "num_cpus": 1}
+                opts = {"num_gpus": 1, "num_cpus": 4}
             elif is_gpu:
                 opts = {"num_gpus": 0.25, "num_cpus": 1}
             else:
