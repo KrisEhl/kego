@@ -272,10 +272,14 @@ class SkorchResNet:
             max_epochs=self.max_epochs,
             batch_size=self.batch_size,
             device="cuda",
+            iterator_train__num_workers=2,
+            iterator_train__pin_memory=True,
+            iterator_valid__num_workers=2,
+            iterator_valid__pin_memory=True,
             callbacks=[
                 EarlyStopping(patience=self.patience, monitor="valid_loss"),
             ],
-            verbose=0,
+            verbose=1,
         )
         self.net.fit(X_np, y_np)
         return self
@@ -441,10 +445,14 @@ class SkorchFTTransformer:
             max_epochs=self.max_epochs,
             batch_size=self.batch_size,
             device="cuda",
+            iterator_train__num_workers=2,
+            iterator_train__pin_memory=True,
+            iterator_valid__num_workers=2,
+            iterator_valid__pin_memory=True,
             callbacks=[
                 EarlyStopping(patience=self.patience, monitor="valid_loss"),
             ],
-            verbose=0,
+            verbose=1,
         )
         self.net.fit(X_prep, y_np)
         return self
@@ -837,7 +845,7 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
                 "lr": 1e-3,
                 "max_epochs": 200,
                 "patience": 20,
-                "batch_size": 1024,
+                "batch_size": 4096,
             },
             "seed_key": "random_state",
             "use_eval_set": False,
@@ -855,7 +863,7 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
                 "lr": 1e-4,
                 "max_epochs": 200,
                 "patience": 20,
-                "batch_size": 1024,
+                "batch_size": 4096,
             },
             "seed_key": "random_state",
             "use_eval_set": False,
