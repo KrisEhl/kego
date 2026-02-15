@@ -1300,6 +1300,8 @@ def _train_ensemble(
                 opts = {"num_gpus": 1, "num_cpus": 1, "resources": {"heavy_gpu": 1}}
             elif model_name.startswith("realmlp"):
                 opts = {"num_gpus": 1, "num_cpus": 2, "resources": {"heavy_gpu": 1}}
+            elif model_name == "ft_transformer":
+                opts = {"num_gpus": 1, "num_cpus": 2, "resources": {"heavy_gpu": 1}}
             elif is_neural:
                 opts = {"num_gpus": 0.5, "num_cpus": 2, "resources": {"heavy_gpu": 0.5}}
             elif is_gpu:
