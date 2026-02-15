@@ -1,6 +1,9 @@
 RAY_HEAD_IP ?= 192.168.178.32
 RAY_HEAD_PORT ?= 6379
 RAY_DASHBOARD ?= http://$(RAY_HEAD_IP):8265
+MLFLOW_PORT ?= 5000
+MLFLOW_DIR ?= $(HOME)/mlflow
+MLFLOW_TRACKING_URI ?= http://$(RAY_HEAD_IP):$(MLFLOW_PORT)
 
 start-head:
 	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --head --port=$(RAY_HEAD_PORT) --node-ip-address $(RAY_HEAD_IP) --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=$$(expr $$(nproc --all) - 2)
@@ -45,14 +48,24 @@ logs-raw:
 	else uv run ray job logs "$$JOB_ID" --address $(RAY_DASHBOARD) 2>/dev/null | tail -n $(N); \
 	fi
 
+mlflow-start:
+	mkdir -p $(MLFLOW_DIR)/artifacts
+	uv run mlflow server \
+		--backend-store-uri sqlite:///$(MLFLOW_DIR)/mlflow.db \
+		--default-artifact-root $(MLFLOW_DIR)/artifacts \
+		--host 0.0.0.0 --port $(MLFLOW_PORT) &
+
+mlflow-stop:
+	pkill -f "mlflow server" || true
+
 submit-fast:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --fast'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --fast'
 
 submit-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py'
 
 submit-neural:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --neural'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --neural'
 
 submit-debug:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast'

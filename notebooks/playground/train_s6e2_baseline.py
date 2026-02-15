@@ -1011,11 +1011,42 @@ def _train_single_model(
         kfold_seed=seed,
         fold_preprocess=model_config.get("fold_preprocess"),
     )
-    print(f"[{model_name}] Finished seed={seed}", flush=True)
-    return model_name, seed, oof, holdout_pred, test_pred
+
+    # Compute metrics for MLflow logging
+    from sklearn.metrics import roc_auc_score
+
+    holdout_labels = holdout[target].values
+    oof_auc = roc_auc_score(train[target].values, oof)
+    holdout_auc = roc_auc_score(holdout_labels, holdout_pred)
+
+    logging_data = {
+        "params": {
+            "model": model_name,
+            "seed": seed,
+            "folds_n": folds_n,
+            **{
+                k: v
+                for k, v in model_config["kwargs"].items()
+                if isinstance(v, (int, float, str, bool))
+            },
+        },
+        "metrics": {
+            "oof_auc": oof_auc,
+            "holdout_auc": holdout_auc,
+        },
+    }
+
+    print(
+        f"[{model_name}] Finished seed={seed} "
+        f"— OOF AUC: {oof_auc:.4f}, Holdout AUC: {holdout_auc:.4f}",
+        flush=True,
+    )
+    return model_name, seed, oof, holdout_pred, test_pred, logging_data
 
 
-def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds_n=10):
+def _train_ensemble(
+    train, holdout, test, features, models, seeds, tag="", folds_n=10, mode="full"
+):
     """Train all models with multiple seeds via Ray and return ensemble predictions."""
     # Share data via Ray object store (stored once, shared across all tasks)
     train_ref = ray.put(train)
@@ -1064,6 +1095,7 @@ def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds
     all_oof_preds = {}
     all_holdout_preds = {}
     all_test_preds = {}
+    all_logging_data = []
     remaining = list(futures)
     completed = 0
 
@@ -1077,12 +1109,15 @@ def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds
             )
             continue
         try:
-            model_name, seed, oof, holdout_pred, test_pred = ray.get(done[0])
+            model_name, seed, oof, holdout_pred, test_pred, logging_data = ray.get(
+                done[0]
+            )
         except Exception as e:
             completed += 1
             logger.error(f"[{completed}/{len(futures)}] Task failed: {e}")
             continue
         completed += 1
+        all_logging_data.append(logging_data)
 
         if model_name not in all_oof_preds:
             all_oof_preds[model_name] = np.zeros(len(train))
@@ -1181,6 +1216,39 @@ def _train_ensemble(train, holdout, test, features, models, seeds, tag="", folds
 
     logger.info(f"{'='*50}")
 
+    # --- Log to MLflow ---
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+    if tracking_uri:
+        try:
+            import mlflow
+
+            mlflow.set_tracking_uri(tracking_uri)
+            experiment_name = f"playground-s6e2-{tag or mode}"
+            mlflow.set_experiment(experiment_name)
+
+            # Log per-model runs
+            for ld in all_logging_data:
+                run_name = f"{ld['params']['model']}_seed{ld['params']['seed']}"
+                with mlflow.start_run(run_name=run_name):
+                    mlflow.log_params(ld["params"])
+                    mlflow.log_metrics(ld["metrics"])
+
+            # Log ensemble run
+            with mlflow.start_run(run_name=f"ensemble_{tag or mode}"):
+                mlflow.log_metric("ensemble_auc", auc)
+                mlflow.log_param("ensemble_method", best_name)
+                mlflow.log_param("n_models", len(model_names))
+                mlflow.log_param("n_seeds", len(seeds))
+
+            logger.info(
+                f"MLflow: logged {len(all_logging_data)} model runs + 1 ensemble run "
+                f"to experiment '{experiment_name}'"
+            )
+        except Exception as e:
+            logger.warning(f"MLflow logging failed (non-fatal): {e}")
+    else:
+        logger.info("MLflow: MLFLOW_TRACKING_URI not set, skipping logging")
+
     return best_test, best_name, auc
 
 
@@ -1274,7 +1342,14 @@ def main():
 
     # Train ensemble with multi-seed averaging via Ray
     best_test, best_method, best_auc = _train_ensemble(
-        train, holdout, test, features, models, seeds=seeds, folds_n=folds_n
+        train,
+        holdout,
+        test,
+        features,
+        models,
+        seeds=seeds,
+        folds_n=folds_n,
+        mode=mode_name,
     )
 
     # Generate submission
