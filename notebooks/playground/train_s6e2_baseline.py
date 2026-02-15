@@ -1711,7 +1711,11 @@ def main():
                 logger.warning(f"Poll failed: {result.stderr}")
                 continue
 
-            reader = csv.DictReader(io.StringIO(result.stdout))
+            # Skip warning lines before CSV header
+            csv_lines = [
+                l for l in result.stdout.splitlines() if not l.startswith("Warning:")
+            ]
+            reader = csv.DictReader(csv_lines)
             for row in reader:
                 # Check the most recent submission (first row)
                 status = row.get("status", "").lower()
