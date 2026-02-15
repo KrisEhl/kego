@@ -61,7 +61,7 @@ mlflow-start:
 		> $(MLFLOW_DIR)/server.log 2>&1 &
 
 mlflow-stop:
-	pkill -f "mlflow server" || true
+	pkill -f "mlflow.server" || true
 
 log-score:
 	@test -n "$(SCORE)" || (echo "Usage: make log-score SCORE=0.953"; exit 1)
