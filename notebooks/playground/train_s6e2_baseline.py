@@ -1192,20 +1192,38 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
     mlflow.set_tracking_uri(tracking_uri)
     client = mlflow.tracking.MlflowClient()
 
+    # First pass: load all predictions
+    loaded_runs = []
+    for _, run in runs_df.iterrows():
+        model_name = run.get("params.model")
+        if model_name is None:
+            continue
+        artifact_dir = client.download_artifacts(run.run_id, "predictions")
+        oof = np.load(os.path.join(artifact_dir, "oof.npy"))
+        holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
+        test = np.load(os.path.join(artifact_dir, "test.npy"))
+        seed = run.get("params.seed", "?")
+        loaded_runs.append((model_name, seed, oof, holdout, test))
+
+    # Determine expected OOF size (most common across runs)
+    from collections import Counter
+
+    size_counts = Counter(len(r[2]) for r in loaded_runs)
+    expected_oof_size = size_counts.most_common(1)[0][0]
+
+    # Second pass: accumulate, skipping size mismatches
     all_oof = {}
     all_holdout = {}
     all_test = {}
     seed_counts = {}
 
-    for _, run in runs_df.iterrows():
-        model_name = run.get("params.model")
-        if model_name is None:
+    for model_name, seed, oof, holdout, test in loaded_runs:
+        if len(oof) != expected_oof_size:
+            logger.warning(
+                f"  Skipping {model_name} seed={seed}: OOF size {len(oof)} "
+                f"!= expected {expected_oof_size}"
+            )
             continue
-
-        artifact_dir = client.download_artifacts(run.run_id, "predictions")
-        oof = np.load(os.path.join(artifact_dir, "oof.npy"))
-        holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
-        test = np.load(os.path.join(artifact_dir, "test.npy"))
 
         if model_name not in all_oof:
             all_oof[model_name] = np.zeros_like(oof)
@@ -1218,7 +1236,6 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
         all_test[model_name] += test
         seed_counts[model_name] += 1
 
-        seed = run.get("params.seed", "?")
         logger.info(f"  Loaded {model_name} seed={seed}")
 
     # Average across seeds
