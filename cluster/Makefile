@@ -66,7 +66,7 @@ log-score:
 	runs = mlflow.search_runs(search_all_experiments=True, filter_string=\"run_name LIKE 'ensemble_%'\", order_by=['start_time DESC'], max_results=1); \
 	assert len(runs) > 0, 'No ensemble runs found'; \
 	rid = runs.iloc[0].run_id; \
-	name = runs.iloc[0].run_name; \
+	name = runs.iloc[0]['tags.mlflow.runName']; \
 	exp = mlflow.get_experiment(runs.iloc[0].experiment_id).name; \
 	client = mlflow.tracking.MlflowClient(); \
 	client.log_metric(rid, 'public_lb_score', $(SCORE)); \
