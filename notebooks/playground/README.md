@@ -21,6 +21,7 @@ The original data is combined with the synthetic training data during training t
 ## Scripts
 
 - `train_s6e2_baseline.py` — 19-model ensemble with multi-seed averaging and Ridge stacking (runs on Ray cluster)
+- `compare_stacking.py` — Stacking comparison: simple average vs Ridge vs LightGBM meta-models
 - `test_features_local.py` — Local CPU feature engineering comparison (LightGBM + LogReg)
 - `submit_s6e2.sh` — Submit predictions via Kaggle CLI
 - `explore_s6e2.py` — EDA and data exploration
@@ -80,6 +81,19 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 
 Trees discover interactions natively — FE doesn't help them. New features improve LogReg (+0.00066) which helps ensemble diversity.
 
+## Stacking Comparison (15 models, 10 folds, 3 seeds)
+
+Compared simple averaging vs learned meta-models on holdout AUC. Script: `compare_stacking.py`.
+
+| Method | Holdout AUC | Delta vs Average |
+|---|---|---|
+| Simple Average | 0.95545 | baseline |
+| Ridge Regression (alpha=1.0) | 0.95605 | +0.00060 |
+| LightGBM (preds only) | 0.95594 | +0.00049 |
+| LightGBM (preds + features) | 0.95595 | +0.00050 |
+
+**Verdict**: Gap < 0.001 — stacking is not worth the added complexity over simple averaging. Ridge weights reveal catboost (+0.61) and xgboost_reg (+0.40) dominate; original features add negligible signal beyond what base models capture.
+
 ## What Worked
 
 - **Model diversity**: Adding sklearn models (LR, RF, ET) and GBDT variants (XGB-reg, LGB-dart) alongside the original XGB/LGB/CB improved the ensemble
@@ -89,6 +103,7 @@ Trees discover interactions natively — FE doesn't help them. New features impr
 
 ## What Didn't Work
 
+- **Stacking meta-models**: Ridge, LightGBM (preds-only), and LightGBM (preds+features) all gain < 0.001 AUC over simple averaging — not worth the complexity
 - **StandardScaler for LR**: Ridge stacking already handles different prediction scales, so normalizing LR inputs had no effect on the ensemble
 - **Pseudo-labeling**: Even with 136k confident test predictions (prob > 0.95 or < 0.05), the second training round didn't improve. Likely because the synthetic data is already large enough and pseudo-labels don't add new signal
 - **Neural models on CPU**: RealMLP, FTTransformer, ResNet were too slow to train on CPU (hours per model). Now running on GPU cluster.
