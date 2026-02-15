@@ -1138,10 +1138,9 @@ def _load_predictions_from_mlflow(experiment_names, tracking_uri):
             logger.warning(f"Experiment '{exp_name}' not found, skipping")
             continue
 
-        runs = mlflow.search_runs(
-            experiment_ids=[exp.experiment_id],
-            filter_string="run_name NOT LIKE 'ensemble_%'",
-        )
+        runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
+        # Filter out ensemble runs (NOT LIKE not supported by MLflow API)
+        runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
         logger.info(f"Experiment '{exp_name}': {len(runs)} model runs")
 
         client = mlflow.tracking.MlflowClient()
