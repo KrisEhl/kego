@@ -1278,7 +1278,8 @@ def _train_ensemble(
                 folds_n,
             )
             futures.append(future)
-            task_info.append(f"{model_name} seed={seed} ({'GPU' if is_gpu else 'CPU'})")
+            device = f"GPU {opts['num_gpus']}" if is_gpu else "CPU"
+            task_info.append(f"{model_name} seed={seed} ({device})")
 
     logger.info(f"Launched {len(futures)} Ray tasks:")
     for info in task_info:

@@ -84,10 +84,11 @@ def _is_neural(model_name):
     return model_name in NEURAL_MODELS
 
 
-def _device_label(model_name, color=True):
+def _device_label(model_name, color=True, gpu_amount=None):
     """Return GPU/CPU label, optionally colored (yellow GPU, dim CPU)."""
     if _is_gpu_model(model_name):
-        return "\033[33mGPU\033[0m" if color else "GPU"
+        amt = f"\u00d7{gpu_amount:g}" if gpu_amount else ""
+        return f"\033[33mGPU{amt}\033[0m" if color else f"GPU{amt}"
     return "\033[2mCPU\033[0m" if color else "CPU"
 
 
@@ -103,7 +104,15 @@ def main():
         print(f"  {mode.group(0)}")
 
     # Track task lifecycle
-    all_planned = set(re.findall(r"- (\w[\w_]*) seed=(\d+) \((?:CPU|GPU)\)", text))
+    all_planned = set()
+    gpu_amounts = {}  # (model, seed) -> float
+    for m in re.finditer(
+        r"- (\w[\w_]*) seed=(\d+) \((?:CPU|GPU(?: ([\d.]+))?)\)", text
+    ):
+        key = (m.group(1), m.group(2))
+        all_planned.add(key)
+        if m.group(3):
+            gpu_amounts[key] = float(m.group(3))
     started = set(re.findall(r"\[(\w+)\] Starting seed=(\d+)", text))
     finished = set(re.findall(r"\[(\w+)\] Finished seed=(\d+)", text))
     running = started - finished
@@ -161,7 +170,9 @@ def main():
             dur_str = f"  ({dur // 60}m{dur % 60:02d}s)" if dur else ""
             idx = f"[{c[0]:>{idx_width}}/{c[1]}]"
             is_top = float(c[4]) >= top_threshold
-            dev = _device_label(c[2], color=not is_top)
+            dev = _device_label(
+                c[2], color=not is_top, gpu_amount=gpu_amounts.get((c[2], c[3]))
+            )
             # GPU type for completed GPU tasks
             ip = task_ips.get((c[2], c[3]))
             gpu_str = ""
@@ -275,7 +286,7 @@ def main():
         max_name_len = max(len(n) for n in all_names) if all_names else 10
         print(f"  Running ({len(running)}):")
         for m, s in sorted(running):
-            dev = _device_label(m)
+            dev = _device_label(m, gpu_amount=gpu_amounts.get((m, s)))
             elapsed_secs = task_elapsed.get((m, s))
             remaining = task_remaining.get((m, s))
             folds_done = fold_counts.get((m, s))
@@ -305,7 +316,7 @@ def main():
         max_name_len = max(len(n) for n in all_names) if all_names else 10
         print(f"  Unscheduled ({len(unscheduled)}):")
         for m, s in sorted(unscheduled):
-            dev = _device_label(m)
+            dev = _device_label(m, gpu_amount=gpu_amounts.get((m, s)))
             est = unsched_est.get((m, s)) or model_avg_dur.get(m)
             est_str = f"  (~{_fmt_secs(est)} est)" if est else ""
             print(f"    {m:<{max_name_len}}  seed={s:<4} {dev}{est_str}")
