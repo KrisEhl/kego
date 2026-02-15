@@ -2,15 +2,18 @@
 # Check network connectivity between a worker and the Ray head node.
 # Run this ON THE WORKER machine before joining the cluster.
 #
-# Usage: ./cluster/scripts/check-ray-ports.sh [head-ip]
+# Usage: ./cluster/scripts/check-ray-ports.sh [head-ip] [head-ssh]
+# Example: ./cluster/scripts/check-ray-ports.sh 192.168.178.32 kristian@omarchy.fritz.box
 
 set -euo pipefail
 
 HEAD_IP="${1:-192.168.178.32}"
+HEAD_SSH="${2:-kristian@$HEAD_IP}"
 WORKER_IP=$(ip -4 route get 1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I 2>/dev/null | awk '{print $1}' || echo "unknown")
 
 echo "=== Ray Cluster Connectivity Check ==="
 echo "Head node:   $HEAD_IP"
+echo "Head SSH:    $HEAD_SSH"
 echo "Worker IP:   $WORKER_IP"
 echo ""
 
@@ -69,7 +72,7 @@ LISTENER_PID=$!
 sleep 1
 
 # Connect from head to worker's test port
-if timeout 10 ssh -o ConnectTimeout=3 -o BatchMode=yes kristian@"$HEAD_IP" \
+if timeout 10 ssh -o ConnectTimeout=3 -o BatchMode=yes "$HEAD_SSH" \
     "python3 -c \"import socket; s=socket.socket(); s.settimeout(3); s.connect(('$WORKER_IP', $TEST_PORT)); s.close(); print('OK')\"" 2>/dev/null; then
     echo "  OK   $HEAD_IP -> $WORKER_IP:$TEST_PORT"
     PASS=$((PASS + 1))
