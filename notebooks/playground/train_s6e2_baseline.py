@@ -273,6 +273,7 @@ class SkorchResNet:
         max_epochs=200,
         patience=20,
         batch_size=256,
+        num_workers=0,
         random_state=42,
     ):
         self.d_block = d_block
@@ -284,6 +285,7 @@ class SkorchResNet:
         self.max_epochs = max_epochs
         self.patience = patience
         self.batch_size = batch_size
+        self.num_workers = num_workers
         self.random_state = random_state
 
     def fit(self, X, y, **kwargs):
@@ -314,6 +316,8 @@ class SkorchResNet:
             device="cuda",
             iterator_train__pin_memory=True,
             iterator_valid__pin_memory=True,
+            iterator_train__num_workers=self.num_workers,
+            iterator_valid__num_workers=self.num_workers,
             callbacks=[
                 EarlyStopping(patience=self.patience, monitor="valid_loss"),
             ],
@@ -408,6 +412,7 @@ class SkorchFTTransformer:
         max_epochs=200,
         patience=20,
         batch_size=256,
+        num_workers=0,
         random_state=42,
     ):
         self.cat_features = cat_features or []
@@ -422,6 +427,7 @@ class SkorchFTTransformer:
         self.max_epochs = max_epochs
         self.patience = patience
         self.batch_size = batch_size
+        self.num_workers = num_workers
         self.random_state = random_state
 
     def _prepare(self, X, fit=False):
@@ -487,6 +493,8 @@ class SkorchFTTransformer:
             device="cuda",
             iterator_train__pin_memory=True,
             iterator_valid__pin_memory=True,
+            iterator_train__num_workers=self.num_workers,
+            iterator_valid__num_workers=self.num_workers,
             callbacks=[
                 EarlyStopping(patience=self.patience, monitor="valid_loss"),
             ],
