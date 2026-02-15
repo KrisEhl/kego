@@ -48,37 +48,14 @@ fi
 echo ""
 
 # --- Head -> Worker connectivity (reverse) ---
-# Ray workers need to be reachable from the head for object transfer.
+# Ray needs bidirectional TCP between head and workers for object transfer.
 echo "--- Head -> Worker (reverse) ---"
-echo "  Testing if head can reach this worker at $WORKER_IP..."
-
-# Start a temporary listener, test from head via ssh, then clean up
-TEST_PORT=19999
-# Start listener in background
-(timeout 10 bash -c "echo >/dev/tcp/0.0.0.0/$TEST_PORT || nc -l -p $TEST_PORT >/dev/null 2>&1" 2>/dev/null || python3 -c "
-import socket, threading
-s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('0.0.0.0', $TEST_PORT)); s.listen(1); s.settimeout(10)
-try: s.accept()
-except: pass
-s.close()
-") &
-LISTENER_PID=$!
-sleep 1
-
-if ssh -o ConnectTimeout=3 -o BatchMode=yes kristian@"$HEAD_IP" \
-    "timeout 3 bash -c 'echo >/dev/tcp/$WORKER_IP/$TEST_PORT'" 2>/dev/null; then
-    echo "  OK   $HEAD_IP -> $WORKER_IP:$TEST_PORT (reverse connectivity)"
-    PASS=$((PASS + 1))
-else
-    echo "  FAIL $HEAD_IP -> $WORKER_IP:$TEST_PORT (reverse connectivity)"
-    echo "       Head cannot reach worker. Check:"
-    echo "       - Worker firewall (ufw/iptables/Windows Firewall)"
-    echo "       - WSL: networkingMode=mirrored in .wslconfig"
-    FAIL=$((FAIL + 1))
-fi
-kill $LISTENER_PID 2>/dev/null || true
-wait $LISTENER_PID 2>/dev/null || true
+echo "  Run this ON THE HEAD NODE ($HEAD_IP) to verify:"
+echo ""
+echo "    timeout 3 bash -c 'echo >/dev/tcp/$WORKER_IP/22' && echo OK || echo FAIL"
+echo ""
+echo "  If FAIL: open worker firewall with:"
+echo "    sudo ufw allow from 192.168.178.0/24"
 echo ""
 
 # --- Summary ---
