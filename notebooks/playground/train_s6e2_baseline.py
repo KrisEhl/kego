@@ -25,7 +25,6 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import QuantileTransformer, StandardScaler
 from skorch import NeuralNetBinaryClassifier
 from skorch.callbacks import EarlyStopping
-from skorch.utils import unpack_data
 from xgboost import XGBClassifier
 
 project_root = Path(__file__).resolve().parents[2]
@@ -234,6 +233,8 @@ class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
             return super().infer(x, **fit_params)
 
     def train_step_single(self, batch, **fit_params):
+        from skorch.utils import unpack_data
+
         self._set_training(True)
         Xi, yi = unpack_data(batch)
         y_pred = self.infer(Xi, **fit_params)
@@ -1134,9 +1135,10 @@ def _ensemble_predictions(
         "hill_climbing": (hc_holdout, hc_test, oof_matrix @ best_weights),
         "rank_blending": (rb_holdout, rb_test, rb_oof),
     }
-    best_name = max(results, key=lambda k: roc_auc_score(holdout_labels, results[k][0]))
+    all_aucs = {k: roc_auc_score(holdout_labels, v[0]) for k, v in results.items()}
+    best_name = max(all_aucs, key=all_aucs.get)
     best_holdout, best_test, best_oof = results[best_name]
-    auc = roc_auc_score(holdout_labels, best_holdout)
+    auc = all_aucs[best_name]
     logger.info(f"{tag}Best method: {best_name} (AUC: {auc:.4f})")
 
     # --- Post-processing: Isotonic calibration ---
@@ -1160,7 +1162,7 @@ def _ensemble_predictions(
         )
 
     logger.info(f"{'='*50}")
-    return best_test, best_name, auc
+    return best_test, best_name, auc, all_aucs
 
 
 def _load_predictions_from_runs(runs_df, tracking_uri):
@@ -1410,7 +1412,7 @@ def _train_ensemble(
     model_names = [n for n in models.keys() if n in all_oof_preds]
     logger.info(f"Models with predictions: {len(model_names)}/{len(models)}")
 
-    best_test, best_name, auc = _ensemble_predictions(
+    best_test, best_name, auc, all_aucs = _ensemble_predictions(
         model_names,
         all_oof_preds,
         all_holdout_preds,
@@ -1421,18 +1423,24 @@ def _train_ensemble(
     )
 
     # --- Log ensemble to MLflow ---
+    ensemble_run_id = None
     if mlflow_ready:
         try:
-            with mlflow.start_run(run_name=f"ensemble_{tag}"):
-                mlflow.log_metric("ensemble_auc", auc)
-                mlflow.log_param("ensemble_method", best_name)
+            mlflow.set_experiment("ensemble")
+            with mlflow.start_run(run_name=f"ensemble_{tag}") as run:
+                ensemble_run_id = run.info.run_id
+                for method, method_auc in all_aucs.items():
+                    mlflow.log_metric(f"auc_{method}", method_auc)
+                mlflow.log_metric("auc_best", auc)
+                mlflow.log_param("best_method", best_name)
                 mlflow.log_param("n_models", len(model_names))
                 mlflow.log_param("n_seeds", len(seeds))
-            logger.info(f"MLflow: logged ensemble run to '{experiment_name}'")
+                mlflow.log_param("source", f"training_{tag}")
+            logger.info("MLflow: logged ensemble run to 'ensemble'")
         except Exception as e:
             logger.warning(f"MLflow ensemble logging failed (non-fatal): {e}")
 
-    return best_test, best_name, auc
+    return best_test, best_name, auc, ensemble_run_id
 
 
 def main():
@@ -1467,6 +1475,11 @@ def main():
         type=str,
         metavar="ENSEMBLE",
         help="Load predictions from a curated ensemble (tagged runs) instead of training",
+    )
+    parser.add_argument(
+        "--submit",
+        action="store_true",
+        help="Submit to Kaggle after generating submission.csv and log LB score to MLflow",
     )
     args = parser.parse_args()
 
@@ -1539,6 +1552,7 @@ def main():
 
     train_labels = train[TARGET].values
     holdout_labels = holdout[TARGET].values
+    ensemble_run_id = None
 
     if args.from_experiment or args.from_ensemble:
         # Load predictions from MLflow and re-ensemble (no training)
@@ -1564,7 +1578,7 @@ def main():
             logger.error("No predictions loaded, exiting")
             sys.exit(1)
 
-        best_test, best_method, best_auc = _ensemble_predictions(
+        best_test, best_method, best_auc, all_aucs = _ensemble_predictions(
             model_names,
             all_oof,
             all_holdout,
@@ -1572,6 +1586,32 @@ def main():
             train_labels,
             holdout_labels,
         )
+
+        # Log ensemble to MLflow
+        try:
+            import mlflow
+
+            mlflow.set_tracking_uri(tracking_uri)
+            mlflow.set_experiment("ensemble")
+            run_name = (
+                args.from_ensemble
+                if args.from_ensemble
+                else "_".join(args.from_experiment)
+            )
+            with mlflow.start_run(run_name=run_name) as run:
+                ensemble_run_id = run.info.run_id
+                for method, method_auc in all_aucs.items():
+                    mlflow.log_metric(f"auc_{method}", method_auc)
+                mlflow.log_metric("auc_best", best_auc)
+                mlflow.log_param("best_method", best_method)
+                mlflow.log_param("n_models", len(model_names))
+                mlflow.log_param(
+                    "source",
+                    args.from_ensemble or ",".join(args.from_experiment),
+                )
+            logger.info(f"MLflow: logged ensemble run '{run_name}' to 'ensemble'")
+        except Exception as e:
+            logger.warning(f"MLflow ensemble logging failed (non-fatal): {e}")
     else:
         n_tasks = len(models) * len(seeds)
         logger.info(
@@ -1581,7 +1621,7 @@ def main():
         )
 
         # Train ensemble with multi-seed averaging via Ray
-        best_test, best_method, best_auc = _train_ensemble(
+        best_test, best_method, best_auc, ensemble_run_id = _train_ensemble(
             train,
             holdout,
             test,
@@ -1599,6 +1639,109 @@ def main():
     submission.to_csv(output_path, index=False)
     logger.info(f"Submission saved to {output_path}")
     logger.info(f"Mean prediction: {np.mean(best_test):.3f}")
+
+    # --- Kaggle submit + poll + log LB score ---
+    if args.submit:
+        import csv
+        import io
+        import subprocess
+        import time
+
+        competition = "playground-series-s6e2"
+        message = (
+            args.from_ensemble
+            if args.from_ensemble
+            else "_".join(args.from_experiment) if args.from_experiment else tag
+        )
+
+        logger.info(f"Submitting to Kaggle competition: {competition}")
+        try:
+            subprocess.run(
+                [
+                    "kaggle",
+                    "competitions",
+                    "submit",
+                    "-c",
+                    competition,
+                    "-f",
+                    str(output_path),
+                    "-m",
+                    message,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            logger.info("Kaggle submission uploaded, polling for score...")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Kaggle submit failed: {e.stderr}")
+            if not args.from_experiment and not args.from_ensemble:
+                ray.shutdown()
+            sys.exit(1)
+
+        # Poll for completion
+        public_score = None
+        timeout = 300  # 5 minutes
+        poll_interval = 10
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            time.sleep(poll_interval)
+            result = subprocess.run(
+                [
+                    "kaggle",
+                    "competitions",
+                    "submissions",
+                    "-c",
+                    competition,
+                    "--csv",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                logger.warning(f"Poll failed: {result.stderr}")
+                continue
+
+            reader = csv.DictReader(io.StringIO(result.stdout))
+            for row in reader:
+                # Check the most recent submission (first row)
+                status = row.get("status", "")
+                if status == "complete":
+                    public_score = float(row.get("publicScore", 0))
+                    logger.info(f"Kaggle public LB score: {public_score}")
+                elif status == "error":
+                    logger.error(f"Kaggle submission errored: {row}")
+                else:
+                    logger.info(f"Submission status: {status}, waiting...")
+                break  # only check the latest submission
+
+            if public_score is not None:
+                break
+        else:
+            logger.warning("Timed out waiting for Kaggle score")
+
+        # Log LB score to the ensemble MLflow run
+        if public_score is not None:
+            try:
+                import mlflow
+
+                tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+                mlflow.set_tracking_uri(tracking_uri)
+                client = mlflow.tracking.MlflowClient()
+
+                if ensemble_run_id:
+                    client.log_metric(ensemble_run_id, "public_lb_score", public_score)
+                    logger.info(
+                        f"MLflow: logged public_lb_score={public_score} "
+                        f"to run {ensemble_run_id}"
+                    )
+                else:
+                    logger.warning(
+                        "No ensemble MLflow run ID available, skipping LB score logging"
+                    )
+            except Exception as e:
+                logger.warning(f"MLflow LB score logging failed: {e}")
 
     if not args.from_experiment and not args.from_ensemble:
         ray.shutdown()

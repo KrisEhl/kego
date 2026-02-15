@@ -38,6 +38,7 @@ The original data is combined with the synthetic training data during training t
 | 1 | Ridge stacking, 3 models | 0.9561 | 0.95354 | -0.0026 |
 | 2 | Ridge stacking, 8 models | 0.9562 | 0.95359 | -0.0026 |
 | 5 | Ridge stacking, 8 models x 3 seeds | 0.9562 | 0.95360 | -0.0026 |
+| submit-v1 | Ridge stacking, all models, 10 folds | — | 0.95341 | — |
 
 The holdout AUC consistently overestimates the leaderboard score by ~0.0026. This gap is stable across runs, so holdout improvements should translate 1:1 to LB improvements.
 
@@ -65,7 +66,8 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | 3 | StandardScaler for LogisticRegression | 0.9562 | 0.95359 | +0.00000 | Fixed convergence warnings but Ridge already compensated for scale |
 | 4 | Pseudo-labeling (high-confidence test preds as extra training data) | 0.9562 | 0.95359 | +0.00000 | 136k confident samples added, no improvement. Reverted |
 | 5 | Multi-seed ensembling (3 seeds x 8 models) | 0.9562 | 0.95360 | +0.00001 | Tiny variance reduction |
-| 6 | 19 models on Ray cluster (+ neural + GBDT variants) | TBD | TBD | TBD | Running: `raysubmit_4B4eqYJpfAyje4Xz` |
+| 6 | 19 models on Ray cluster (+ neural + GBDT variants) | — | — | — | Completed, individual runs in MLflow |
+| submit-v1 | Curated ensemble, 14 models x 3 seeds, 10 folds | — | 0.95341 | -0.00019 | 40 runs; missing ft_transformer/realmlp (not finished), catboost only 1 seed |
 | 7 | Categorical handling + new Thallium FE + risk scores | — | — | — | Queued |
 
 ### Local Feature Validation (5-fold CV on full train, CPU, single LightGBM/LogReg)

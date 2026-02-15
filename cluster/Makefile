@@ -96,12 +96,12 @@ submit-debug:
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
 
 submit-ensemble:
-	@test -n "$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --from-experiment $(EXPERIMENTS)'
+	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble ENSEMBLE=submit-v1"; echo "       make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
 
-submit-curated:
-	@test -n "$(ENSEMBLE)" || (echo "Usage: make submit-curated ENSEMBLE=submit-v1"; exit 1)
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --from-ensemble $(ENSEMBLE)'
+submit-kaggle:
+	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-kaggle ENSEMBLE=submit-v1"; echo "       make submit-kaggle EXPERIMENTS='exp1 exp2'"; exit 1)
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --submit $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
 
 promote:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make promote ENSEMBLE=submit-v1 RUN_ID='id1 id2'"; exit 1)
