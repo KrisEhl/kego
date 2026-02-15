@@ -30,11 +30,11 @@ status:
 	[print(f'{sid}  {status:<10s}  {cmd}') for sid, status, cmd in jobs]"
 
 logs:
-	@JOB_ID=$$(uv run ray job list --address $(RAY_DASHBOARD) 2>/dev/null | \
+	@JOB_ID=$(if $(JOB),$(JOB),$$(uv run ray job list --address $(RAY_DASHBOARD) 2>/dev/null | \
 		python3 -c "import sys,re; text=sys.stdin.read(); \
 		jobs=re.findall(r\"submission_id='(raysubmit_\w+)'.*?status=<JobStatus\.(\w+):\",text,re.DOTALL); \
 		running=[j for j,s in jobs if s=='RUNNING']; \
-		print(running[-1] if running else '')"); \
+		print(running[-1] if running else '')")); \
 	if [ -z "$$JOB_ID" ]; then echo "No running jobs"; \
 	else uv run ray job logs "$$JOB_ID" --address $(RAY_DASHBOARD) 2>/dev/null | \
 		python3 scripts/train_logs.py "$$JOB_ID"; \
@@ -42,11 +42,11 @@ logs:
 
 N ?= 20
 logs-raw:
-	@JOB_ID=$$(uv run ray job list --address $(RAY_DASHBOARD) 2>/dev/null | \
+	@JOB_ID=$(if $(JOB),$(JOB),$$(uv run ray job list --address $(RAY_DASHBOARD) 2>/dev/null | \
 		python3 -c "import sys,re; text=sys.stdin.read(); \
 		jobs=re.findall(r\"submission_id='(raysubmit_\w+)'.*?status=<JobStatus\.(\w+):\",text,re.DOTALL); \
 		running=[j for j,s in jobs if s=='RUNNING']; \
-		print(running[-1] if running else '')"); \
+		print(running[-1] if running else '')")); \
 	if [ -z "$$JOB_ID" ]; then echo "No running jobs"; \
 	else uv run ray job logs "$$JOB_ID" --address $(RAY_DASHBOARD) 2>/dev/null | tail -n $(N); \
 	fi
