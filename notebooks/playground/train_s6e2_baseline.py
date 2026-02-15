@@ -15,6 +15,7 @@ from lightgbm import LGBMClassifier
 from pytabkit import RealMLP_TD_Classifier
 from rtdl_num_embeddings import PeriodicEmbeddings
 from rtdl_revisiting_models import FTTransformer, ResNet
+from scipy.stats import rankdata
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.isotonic import IsotonicRegression
@@ -1084,6 +1085,22 @@ def _ensemble_predictions(
     auc = roc_auc_score(holdout_labels, hc_holdout)
     logger.info(f"{tag}Hill Climbing — Holdout AUC: {auc:.4f}")
     logger.info(f"  Weights: {dict(zip(model_names, best_weights))}")
+
+    # --- Rank Blending ---
+    # Normalize predictions to ranks per model, then average.
+    # Robust to different calibrations across models.
+    def _rank_blend(matrix):
+        n = matrix.shape[0]
+        ranked = np.column_stack(
+            [rankdata(matrix[:, i]) / n for i in range(matrix.shape[1])]
+        )
+        return np.mean(ranked, axis=1)
+
+    rb_oof = _rank_blend(oof_matrix)
+    rb_holdout = _rank_blend(holdout_matrix)
+    rb_test = _rank_blend(test_matrix)
+    auc = roc_auc_score(holdout_labels, rb_holdout)
+    logger.info(f"{tag}Rank Blending — Holdout AUC: {auc:.4f}")
     logger.info(f"{'='*50}")
 
     # Pick best ensemble method
@@ -1091,6 +1108,7 @@ def _ensemble_predictions(
         "average": (avg_holdout, avg_test, np.mean(oof_matrix, axis=1)),
         "ridge": (ridge_holdout, ridge_test, ridge.predict(oof_matrix)),
         "hill_climbing": (hc_holdout, hc_test, oof_matrix @ best_weights),
+        "rank_blending": (rb_holdout, rb_test, rb_oof),
     }
     best_name = max(results, key=lambda k: roc_auc_score(holdout_labels, results[k][0]))
     best_holdout, best_test, best_oof = results[best_name]
