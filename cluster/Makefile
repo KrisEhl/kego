@@ -73,13 +73,17 @@ log-score:
 	print(f'Logged public_lb_score=$(SCORE) to run \"{name}\" in experiment \"{exp}\"')"
 
 submit-fast:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --fast'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --fast $(if $(TAG),--tag $(TAG))'
 
 submit-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(TAG),--tag $(TAG))'
 
 submit-neural:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --neural'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --neural $(if $(TAG),--tag $(TAG))'
 
 submit-debug:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
+
+submit-ensemble:
+	@test -n "$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --from-experiment $(EXPERIMENTS)'

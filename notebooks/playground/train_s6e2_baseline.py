@@ -1034,6 +1034,9 @@ def _train_single_model(
             "oof_auc": oof_auc,
             "holdout_auc": holdout_auc,
         },
+        "oof": oof,
+        "holdout": holdout_pred,
+        "test": test_pred,
     }
 
     print(
@@ -1044,8 +1047,143 @@ def _train_single_model(
     return model_name, seed, oof, holdout_pred, test_pred, logging_data
 
 
+def _ensemble_predictions(
+    model_names,
+    all_oof_preds,
+    all_holdout_preds,
+    all_test_preds,
+    train_labels,
+    holdout_labels,
+    tag="",
+):
+    """Run ensemble methods on collected predictions and return best test preds."""
+    oof_matrix = np.column_stack([all_oof_preds[n] for n in model_names])
+    holdout_matrix = np.column_stack([all_holdout_preds[n] for n in model_names])
+    test_matrix = np.column_stack([all_test_preds[n] for n in model_names])
+
+    # --- Simple average ---
+    avg_holdout = np.mean(holdout_matrix, axis=1)
+    avg_test = np.mean(test_matrix, axis=1)
+    auc = roc_auc_score(holdout_labels, avg_holdout)
+    logger.info(f"\n{'='*50}")
+    logger.info(f"{tag}Simple Average — Holdout AUC: {auc:.4f}")
+
+    # --- Ridge stacking ---
+    ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
+    ridge.fit(oof_matrix, train_labels)
+    ridge_holdout = ridge.predict(holdout_matrix)
+    ridge_test = ridge.predict(test_matrix)
+    auc = roc_auc_score(holdout_labels, ridge_holdout)
+    logger.info(f"{tag}Ridge (alpha={ridge.alpha_:.2f}) — Holdout AUC: {auc:.4f}")
+    logger.info(f"  Weights: {dict(zip(model_names, ridge.coef_))}")
+
+    # --- Hill Climbing ---
+    best_weights = _hill_climbing(oof_matrix, train_labels, model_names)
+    hc_holdout = holdout_matrix @ best_weights
+    hc_test = test_matrix @ best_weights
+    auc = roc_auc_score(holdout_labels, hc_holdout)
+    logger.info(f"{tag}Hill Climbing — Holdout AUC: {auc:.4f}")
+    logger.info(f"  Weights: {dict(zip(model_names, best_weights))}")
+    logger.info(f"{'='*50}")
+
+    # Pick best ensemble method
+    results = {
+        "average": (avg_holdout, avg_test, np.mean(oof_matrix, axis=1)),
+        "ridge": (ridge_holdout, ridge_test, ridge.predict(oof_matrix)),
+        "hill_climbing": (hc_holdout, hc_test, oof_matrix @ best_weights),
+    }
+    best_name = max(results, key=lambda k: roc_auc_score(holdout_labels, results[k][0]))
+    best_holdout, best_test, best_oof = results[best_name]
+    auc = roc_auc_score(holdout_labels, best_holdout)
+    logger.info(f"{tag}Best method: {best_name} (AUC: {auc:.4f})")
+
+    # --- Post-processing: Isotonic calibration ---
+    iso = IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip")
+    iso.fit(best_oof, train_labels)
+    cal_holdout = iso.predict(best_holdout)
+    cal_test = iso.predict(best_test)
+    cal_auc = roc_auc_score(holdout_labels, cal_holdout)
+    logger.info(f"{tag}Calibrated ({best_name}) — Holdout AUC: {cal_auc:.4f}")
+
+    if cal_auc > auc:
+        logger.info(
+            f"{tag}Calibration improved AUC by {cal_auc - auc:.5f}, using calibrated"
+        )
+        best_test = cal_test
+        auc = cal_auc
+    else:
+        logger.info(
+            f"{tag}Calibration did not improve AUC "
+            f"({cal_auc:.4f} vs {auc:.4f}), using raw"
+        )
+
+    logger.info(f"{'='*50}")
+    return best_test, best_name, auc
+
+
+def _load_predictions_from_mlflow(experiment_names, tracking_uri):
+    """Load per-model averaged predictions from MLflow experiments."""
+    import mlflow
+
+    mlflow.set_tracking_uri(tracking_uri)
+
+    all_oof = {}
+    all_holdout = {}
+    all_test = {}
+    seed_counts = {}
+
+    for exp_name in experiment_names:
+        exp = mlflow.get_experiment_by_name(exp_name)
+        if exp is None:
+            logger.warning(f"Experiment '{exp_name}' not found, skipping")
+            continue
+
+        runs = mlflow.search_runs(
+            experiment_ids=[exp.experiment_id],
+            filter_string="run_name NOT LIKE 'ensemble_%'",
+        )
+        logger.info(f"Experiment '{exp_name}': {len(runs)} model runs")
+
+        client = mlflow.tracking.MlflowClient()
+        for _, run in runs.iterrows():
+            model_name = run.get("params.model")
+            if model_name is None:
+                continue
+
+            artifact_dir = client.download_artifacts(run.run_id, "predictions")
+            oof = np.load(os.path.join(artifact_dir, "oof.npy"))
+            holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
+            test = np.load(os.path.join(artifact_dir, "test.npy"))
+
+            if model_name not in all_oof:
+                all_oof[model_name] = np.zeros_like(oof)
+                all_holdout[model_name] = np.zeros_like(holdout)
+                all_test[model_name] = np.zeros_like(test)
+                seed_counts[model_name] = 0
+
+            all_oof[model_name] += oof
+            all_holdout[model_name] += holdout
+            all_test[model_name] += test
+            seed_counts[model_name] += 1
+
+            seed = run.get("params.seed", "?")
+            logger.info(f"  Loaded {model_name} seed={seed}")
+
+    # Average across seeds
+    for name in all_oof:
+        n = seed_counts[name]
+        all_oof[name] /= n
+        all_holdout[name] /= n
+        all_test[name] /= n
+        logger.info(f"{name}: averaged over {n} seed(s)")
+
+    model_names = list(all_oof.keys())
+    logger.info(f"Total models loaded: {len(model_names)}")
+    return model_names, all_oof, all_holdout, all_test
+
+
 def _train_ensemble(
-    train, holdout, test, features, models, seeds, tag="", folds_n=10, mode="full"
+    train, holdout, test, features, models, seeds, tag="full", folds_n=10
 ):
     """Train all models with multiple seeds via Ray and return ensemble predictions."""
     # Share data via Ray object store (stored once, shared across all tasks)
@@ -1152,89 +1290,50 @@ def _train_ensemble(
     # Build stacking matrices (only models that succeeded)
     model_names = [n for n in models.keys() if n in all_oof_preds]
     logger.info(f"Models with predictions: {len(model_names)}/{len(models)}")
-    oof_matrix = np.column_stack([all_oof_preds[n] for n in model_names])
-    holdout_matrix = np.column_stack([all_holdout_preds[n] for n in model_names])
-    test_matrix = np.column_stack([all_test_preds[n] for n in model_names])
 
-    # --- Simple average ---
-    avg_holdout = np.mean(holdout_matrix, axis=1)
-    avg_test = np.mean(test_matrix, axis=1)
-    auc = roc_auc_score(holdout_labels, avg_holdout)
-    logger.info(f"\n{'='*50}")
-    logger.info(f"{tag}Simple Average — Holdout AUC: {auc:.4f}")
-
-    # --- Ridge stacking ---
-    ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
-    ridge.fit(oof_matrix, train_labels)
-    ridge_holdout = ridge.predict(holdout_matrix)
-    ridge_test = ridge.predict(test_matrix)
-    auc = roc_auc_score(holdout_labels, ridge_holdout)
-    logger.info(f"{tag}Ridge (alpha={ridge.alpha_:.2f}) — Holdout AUC: {auc:.4f}")
-    logger.info(f"  Weights: {dict(zip(model_names, ridge.coef_))}")
-
-    # --- Hill Climbing ---
-    best_weights = _hill_climbing(oof_matrix, train_labels, model_names)
-    hc_holdout = holdout_matrix @ best_weights
-    hc_test = test_matrix @ best_weights
-    auc = roc_auc_score(holdout_labels, hc_holdout)
-    logger.info(f"{tag}Hill Climbing — Holdout AUC: {auc:.4f}")
-    logger.info(f"  Weights: {dict(zip(model_names, best_weights))}")
-    logger.info(f"{'='*50}")
-
-    # Pick best ensemble method
-    results = {
-        "average": (avg_holdout, avg_test, np.mean(oof_matrix, axis=1)),
-        "ridge": (ridge_holdout, ridge_test, ridge.predict(oof_matrix)),
-        "hill_climbing": (hc_holdout, hc_test, oof_matrix @ best_weights),
-    }
-    best_name = max(results, key=lambda k: roc_auc_score(holdout_labels, results[k][0]))
-    best_holdout, best_test, best_oof = results[best_name]
-    auc = roc_auc_score(holdout_labels, best_holdout)
-    logger.info(f"{tag}Best method: {best_name} (AUC: {auc:.4f})")
-
-    # --- Post-processing: Isotonic calibration ---
-    # Fit isotonic regression on OOF predictions vs true labels,
-    # then apply to holdout and test predictions.
-    iso = IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip")
-    iso.fit(best_oof, train_labels)
-    cal_holdout = iso.predict(best_holdout)
-    cal_test = iso.predict(best_test)
-    cal_auc = roc_auc_score(holdout_labels, cal_holdout)
-    logger.info(f"{tag}Calibrated ({best_name}) — Holdout AUC: {cal_auc:.4f}")
-
-    # Use calibrated if it improves AUC
-    if cal_auc > auc:
-        logger.info(
-            f"{tag}Calibration improved AUC by {cal_auc - auc:.5f}, using calibrated"
-        )
-        best_test = cal_test
-        auc = cal_auc
-    else:
-        logger.info(
-            f"{tag}Calibration did not improve AUC ({cal_auc:.4f} vs {auc:.4f}), using raw"
-        )
-
-    logger.info(f"{'='*50}")
+    best_test, best_name, auc = _ensemble_predictions(
+        model_names,
+        all_oof_preds,
+        all_holdout_preds,
+        all_test_preds,
+        train_labels,
+        holdout_labels,
+        tag,
+    )
 
     # --- Log to MLflow ---
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
     if tracking_uri:
         try:
+            import tempfile
+
             import mlflow
 
             mlflow.set_tracking_uri(tracking_uri)
-            experiment_name = f"playground-s6e2-{tag or mode}"
+            experiment_name = f"playground-s6e2-{tag}"
             mlflow.set_experiment(experiment_name)
 
-            # Log per-model runs
+            # Log per-model runs with prediction artifacts
             for ld in all_logging_data:
-                run_name = f"{ld['params']['model']}_seed{ld['params']['seed']}"
+                m = ld["params"]["model"]
+                s = ld["params"]["seed"]
+                run_name = f"{m}_seed{s}"
                 with mlflow.start_run(run_name=run_name):
                     mlflow.log_params(ld["params"])
                     mlflow.log_metrics(ld["metrics"])
+                    # Save predictions as artifacts
+                    with tempfile.TemporaryDirectory() as tmp:
+                        for arr_name, arr in [
+                            ("oof", ld["oof"]),
+                            ("holdout", ld["holdout"]),
+                            ("test", ld["test"]),
+                        ]:
+                            path = os.path.join(tmp, f"{arr_name}.npy")
+                            np.save(path, arr)
+                        mlflow.log_artifacts(tmp, artifact_path="predictions")
 
             # Log ensemble run
-            with mlflow.start_run(run_name=f"ensemble_{tag or mode}"):
+            with mlflow.start_run(run_name=f"ensemble_{tag}"):
                 mlflow.log_metric("ensemble_auc", auc)
                 mlflow.log_param("ensemble_method", best_name)
                 mlflow.log_param("n_models", len(model_names))
@@ -1267,9 +1366,22 @@ def main():
         action="store_true",
         help="Neural models only: 5 folds, 1 seed (resnet, ft_transformer, realmlp)",
     )
+    parser.add_argument(
+        "--tag",
+        type=str,
+        default="",
+        help="Custom tag for MLflow experiment name (e.g. 'gbdt-v2')",
+    )
+    parser.add_argument(
+        "--from-experiment",
+        nargs="+",
+        metavar="EXPERIMENT",
+        help="Load predictions from MLflow experiments instead of training",
+    )
     args = parser.parse_args()
 
-    ray.init()
+    if not args.from_experiment:
+        ray.init()
 
     # Load data
     train_full = pd.read_csv(DATA_DIR / "train.csv")
@@ -1333,24 +1445,53 @@ def main():
         if args.debug
         else "fast" if args.fast else "neural" if args.neural else "full"
     )
-    n_tasks = len(models) * len(seeds)
-    logger.info(
-        f"Mode: {mode_name} "
-        f"— {len(models)} models × {len(seeds)} seeds × {folds_n} folds "
-        f"= {n_tasks} tasks"
-    )
+    tag = args.tag or mode_name
 
-    # Train ensemble with multi-seed averaging via Ray
-    best_test, best_method, best_auc = _train_ensemble(
-        train,
-        holdout,
-        test,
-        features,
-        models,
-        seeds=seeds,
-        folds_n=folds_n,
-        mode=mode_name,
-    )
+    train_labels = train[TARGET].values
+    holdout_labels = holdout[TARGET].values
+
+    if args.from_experiment:
+        # Load predictions from MLflow and re-ensemble (no training)
+        tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+        if not tracking_uri:
+            logger.error("MLFLOW_TRACKING_URI must be set for --from-experiment")
+            sys.exit(1)
+
+        logger.info(f"Loading predictions from experiments: {args.from_experiment}")
+        model_names, all_oof, all_holdout, all_test = _load_predictions_from_mlflow(
+            args.from_experiment, tracking_uri
+        )
+        if not model_names:
+            logger.error("No predictions loaded, exiting")
+            sys.exit(1)
+
+        best_test, best_method, best_auc = _ensemble_predictions(
+            model_names,
+            all_oof,
+            all_holdout,
+            all_test,
+            train_labels,
+            holdout_labels,
+        )
+    else:
+        n_tasks = len(models) * len(seeds)
+        logger.info(
+            f"Mode: {mode_name} "
+            f"— {len(models)} models × {len(seeds)} seeds × {folds_n} folds "
+            f"= {n_tasks} tasks"
+        )
+
+        # Train ensemble with multi-seed averaging via Ray
+        best_test, best_method, best_auc = _train_ensemble(
+            train,
+            holdout,
+            test,
+            features,
+            models,
+            seeds=seeds,
+            folds_n=folds_n,
+            tag=tag,
+        )
 
     # Generate submission
     submission = sample_submission.copy()
@@ -1360,7 +1501,8 @@ def main():
     logger.info(f"Submission saved to {output_path}")
     logger.info(f"Mean prediction: {np.mean(best_test):.3f}")
 
-    ray.shutdown()
+    if not args.from_experiment:
+        ray.shutdown()
 
 
 if __name__ == "__main__":
