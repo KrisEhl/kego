@@ -981,9 +981,11 @@ def _train_single_model(
     """Train one model with one seed on a Ray worker."""
     import os
     import sys
+    import time
 
     os.environ["PYTHONUNBUFFERED"] = "1"
     sys.stdout.reconfigure(line_buffering=True)
+    t0 = time.time()
     print(f"[{model_name}] Starting seed={seed}", flush=True)
 
     # Convert cat features to pandas category dtype for models that need it (XGBoost)
@@ -1040,11 +1042,15 @@ def _train_single_model(
         "test": test_pred,
     }
 
+    elapsed = time.time() - t0
+    mins, secs = divmod(int(elapsed), 60)
     print(
         f"[{model_name}] Finished seed={seed} "
-        f"— OOF AUC: {oof_auc:.4f}, Holdout AUC: {holdout_auc:.4f}",
+        f"— OOF AUC: {oof_auc:.4f}, Holdout AUC: {holdout_auc:.4f} "
+        f"({mins}m{secs:02d}s)",
         flush=True,
     )
+    logging_data["metrics"]["duration_seconds"] = elapsed
     return model_name, seed, oof, holdout_pred, test_pred, logging_data
 
 

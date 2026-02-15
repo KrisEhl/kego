@@ -53,6 +53,15 @@ def main():
         r"\[(\d+)/(\d+)\].*?(\w[\w_]+) seed=(\d+).*?Holdout AUC: ([\d.]+)", text
     )
 
+    # Per-task durations from worker Finished lines: "Finished seed=N ... (Xm YYs)"
+    task_durations = {}
+    for m in re.finditer(
+        r"\[(\w[\w_]*)\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
+    ):
+        key = (m.group(1), m.group(2))
+        mins, secs = int(m.group(3)), int(m.group(4))
+        task_durations[key] = mins * 60 + secs
+
     # Elapsed time (from first log timestamp to now)
     t_start = _parse_start_time(text)
     elapsed_min = (datetime.now() - t_start).total_seconds() / 60.0 if t_start else None
@@ -63,7 +72,9 @@ def main():
         n_total = int(last[1])
         print(f"  Progress: {n_done}/{n_total} tasks completed")
         for c in completed:
-            print(f"    [{c[0]}/{c[1]}] {c[2]} seed={c[3]} — AUC: {c[4]}")
+            dur = task_durations.get((c[2], c[3]))
+            dur_str = f"  ({dur // 60}m{dur % 60:02d}s)" if dur else ""
+            print(f"    [{c[0]}/{c[1]}] {c[2]} seed={c[3]} — AUC: {c[4]}{dur_str}")
 
         # Estimate remaining time from task completion rate
         if elapsed_min and n_done > 0 and n_done < n_total:
@@ -79,11 +90,22 @@ def main():
     elif elapsed_min:
         print(f"  Elapsed: {_fmt_duration(elapsed_min)}, no tasks completed yet")
 
-    # Currently running
+    # Currently running — show estimated duration from same-model completions
     if running:
+        # Build avg duration per model type from completed tasks
+        model_durations = {}
+        for (model, seed), dur in task_durations.items():
+            model_durations.setdefault(model, []).append(dur)
+        model_avg_dur = {m: sum(ds) / len(ds) for m, ds in model_durations.items()}
+
         print(f"  Running ({len(running)}):")
         for m, s in sorted(running):
-            print(f"    {m} seed={s}")
+            avg = model_avg_dur.get(m)
+            if avg:
+                est_str = f"  (~{int(avg) // 60}m{int(avg) % 60:02d}s est)"
+            else:
+                est_str = ""
+            print(f"    {m} seed={s}{est_str}")
 
     # Neural model fold progress (per running neural model)
     if running:
