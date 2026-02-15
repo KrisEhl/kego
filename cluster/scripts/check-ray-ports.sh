@@ -9,7 +9,10 @@ set -euo pipefail
 
 HEAD_IP="${1:-192.168.178.32}"
 HEAD_SSH="${2:-kristian@omarchyd.fritz.box}"
-WORKER_IP=$(ip -4 route get 1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I 2>/dev/null | awk '{print $1}' || echo "unknown")
+WORKER_IP=$(ip -4 route get 1 2>/dev/null | awk '/src/ {for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' \
+    || ipconfig getifaddr en0 2>/dev/null \
+    || hostname -I 2>/dev/null | awk '{print $1}' \
+    || echo "unknown")
 
 echo "=== Ray Cluster Connectivity Check ==="
 echo "Head node:   $HEAD_IP"
