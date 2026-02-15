@@ -1246,11 +1246,27 @@ def _train_ensemble(
     for info in task_info:
         logger.info(f"  - {info}")
 
+    # Setup MLflow for incremental logging
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+    mlflow_ready = False
+    if tracking_uri:
+        try:
+            import tempfile
+
+            import mlflow
+
+            mlflow.set_tracking_uri(tracking_uri)
+            experiment_name = f"playground-s6e2-{tag}"
+            mlflow.set_experiment(experiment_name)
+            mlflow_ready = True
+            logger.info(f"MLflow: logging to experiment '{experiment_name}'")
+        except Exception as e:
+            logger.warning(f"MLflow setup failed (non-fatal): {e}")
+
     # Collect results incrementally as they complete
     all_oof_preds = {}
     all_holdout_preds = {}
     all_test_preds = {}
-    all_logging_data = []
     remaining = list(futures)
     completed = 0
 
@@ -1272,7 +1288,6 @@ def _train_ensemble(
             logger.error(f"[{completed}/{len(futures)}] Task failed: {e}")
             continue
         completed += 1
-        all_logging_data.append(logging_data)
 
         if model_name not in all_oof_preds:
             all_oof_preds[model_name] = np.zeros(len(train))
@@ -1288,6 +1303,25 @@ def _train_ensemble(
             f"[{completed}/{len(futures)}] {model_name} seed={seed} "
             f"— Holdout AUC: {auc:.4f}"
         )
+
+        # Log to MLflow immediately
+        if mlflow_ready:
+            try:
+                run_name = f"{model_name}_seed{seed}"
+                with mlflow.start_run(run_name=run_name):
+                    mlflow.log_params(logging_data["params"])
+                    mlflow.log_metrics(logging_data["metrics"])
+                    with tempfile.TemporaryDirectory() as tmp:
+                        for arr_name, arr in [
+                            ("oof", logging_data["oof"]),
+                            ("holdout", logging_data["holdout"]),
+                            ("test", logging_data["test"]),
+                        ]:
+                            path = os.path.join(tmp, f"{arr_name}.npy")
+                            np.save(path, arr)
+                        mlflow.log_artifacts(tmp, artifact_path="predictions")
+            except Exception as e:
+                logger.warning(f"MLflow logging failed for {model_name}: {e}")
 
     # Average across seeds and log per-model results
     for name in all_oof_preds:
@@ -1318,52 +1352,17 @@ def _train_ensemble(
         tag,
     )
 
-    # --- Log to MLflow ---
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
-    if tracking_uri:
+    # --- Log ensemble to MLflow ---
+    if mlflow_ready:
         try:
-            import tempfile
-
-            import mlflow
-
-            mlflow.set_tracking_uri(tracking_uri)
-            experiment_name = f"playground-s6e2-{tag}"
-            mlflow.set_experiment(experiment_name)
-
-            # Log per-model runs with prediction artifacts
-            for ld in all_logging_data:
-                m = ld["params"]["model"]
-                s = ld["params"]["seed"]
-                run_name = f"{m}_seed{s}"
-                with mlflow.start_run(run_name=run_name):
-                    mlflow.log_params(ld["params"])
-                    mlflow.log_metrics(ld["metrics"])
-                    # Save predictions as artifacts
-                    with tempfile.TemporaryDirectory() as tmp:
-                        for arr_name, arr in [
-                            ("oof", ld["oof"]),
-                            ("holdout", ld["holdout"]),
-                            ("test", ld["test"]),
-                        ]:
-                            path = os.path.join(tmp, f"{arr_name}.npy")
-                            np.save(path, arr)
-                        mlflow.log_artifacts(tmp, artifact_path="predictions")
-
-            # Log ensemble run
             with mlflow.start_run(run_name=f"ensemble_{tag}"):
                 mlflow.log_metric("ensemble_auc", auc)
                 mlflow.log_param("ensemble_method", best_name)
                 mlflow.log_param("n_models", len(model_names))
                 mlflow.log_param("n_seeds", len(seeds))
-
-            logger.info(
-                f"MLflow: logged {len(all_logging_data)} model runs + 1 ensemble run "
-                f"to experiment '{experiment_name}'"
-            )
+            logger.info(f"MLflow: logged ensemble run to '{experiment_name}'")
         except Exception as e:
-            logger.warning(f"MLflow logging failed (non-fatal): {e}")
-    else:
-        logger.info("MLflow: MLFLOW_TRACKING_URI not set, skipping logging")
+            logger.warning(f"MLflow ensemble logging failed (non-fatal): {e}")
 
     return best_test, best_name, auc
 
