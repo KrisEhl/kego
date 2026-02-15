@@ -140,11 +140,44 @@ class EpochTimer:
             self.epoch_times.append(time.time() - self._epoch_start)
 
 
+def _resolve_smi_index(cuda_index=0):
+    """Map PyTorch CUDA device index to nvidia-smi device index via UUID."""
+    if not torch.cuda.is_available():
+        return cuda_index
+    try:
+        # Get UUID from PyTorch (format: bytes, no "GPU-" prefix)
+        props = torch.cuda.get_device_properties(cuda_index)
+        cuda_uuid = str(props.uuid) if hasattr(props, "uuid") else None
+        if cuda_uuid is None:
+            return cuda_index
+
+        # Query nvidia-smi for index,uuid mapping
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return cuda_index
+
+        for line in result.stdout.strip().split("\n"):
+            parts = line.split(",")
+            smi_idx = int(parts[0].strip())
+            smi_uuid = parts[1].strip()
+            # PyTorch uuid may or may not have "GPU-" prefix
+            if cuda_uuid in smi_uuid or smi_uuid in cuda_uuid:
+                return smi_idx
+    except Exception:
+        pass
+    return cuda_index
+
+
 class GPUMonitor:
     """Sample GPU utilization via nvidia-smi in a background thread."""
 
     def __init__(self, device_index=0, interval=1.0):
-        self.device_index = device_index
+        self.device_index = _resolve_smi_index(device_index)
         self.interval = interval
         self.samples = []
         self.mem_samples = []
