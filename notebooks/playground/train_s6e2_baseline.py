@@ -823,18 +823,7 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(TE_FEATURES),
         },
-        "realmlp_large": {
-            "model": ScaledRealMLP,
-            "kwargs": {
-                "cat_features": CAT_FEATURES,
-                "n_epochs": 256,
-                "device": "cuda",
-                "hidden_sizes": [512, 256, 128],
-            },
-            "seed_key": "random_state",
-            "use_eval_set": False,
-            "fold_preprocess": make_te_preprocess(TE_FEATURES),
-        },
+        # "realmlp_large" removed — too slow for regular runs, marginal gain
         "resnet": {
             "model": SkorchResNet,
             "kwargs": {
