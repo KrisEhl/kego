@@ -21,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import skorch
 import torch
 
 project_root = Path(__file__).resolve().parents[2]
@@ -125,8 +126,8 @@ def _build_model(model_name, models_config, batch_size, num_workers, epochs, com
         raise ValueError(f"Unknown model: {model_name}")
 
 
-class EpochTimer:
-    """Skorch-compatible callback that records per-epoch wall time."""
+class EpochTimer(skorch.callbacks.Callback):
+    """Skorch callback that records per-epoch wall time."""
 
     def __init__(self):
         self.epoch_times = []
