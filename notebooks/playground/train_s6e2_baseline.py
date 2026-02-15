@@ -866,7 +866,7 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
             "kwargs": {
                 "cat_features": CAT_FEATURES,
                 "n_epochs": 256,
-                "batch_size": 4096,
+                "batch_size": 1024,
                 "device": "cuda",
                 "hidden_sizes": [256, 256, 256],
             },
@@ -904,7 +904,7 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
                 "lr": 1e-4,
                 "max_epochs": 200,
                 "patience": 20,
-                "batch_size": 4096,
+                "batch_size": 2048,
             },
             "seed_key": "random_state",
             "use_eval_set": False,
