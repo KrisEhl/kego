@@ -58,6 +58,20 @@ mlflow-start:
 mlflow-stop:
 	pkill -f "mlflow server" || true
 
+log-score:
+	@test -n "$(SCORE)" || (echo "Usage: make log-score SCORE=0.953"; exit 1)
+	@uv run python3 -c "\
+	import mlflow; \
+	mlflow.set_tracking_uri('$(MLFLOW_TRACKING_URI)'); \
+	runs = mlflow.search_runs(search_all_experiments=True, filter_string=\"run_name LIKE 'ensemble_%'\", order_by=['start_time DESC'], max_results=1); \
+	assert len(runs) > 0, 'No ensemble runs found'; \
+	rid = runs.iloc[0].run_id; \
+	name = runs.iloc[0].run_name; \
+	exp = mlflow.get_experiment(runs.iloc[0].experiment_id).name; \
+	client = mlflow.tracking.MlflowClient(); \
+	client.log_metric(rid, 'public_lb_score', $(SCORE)); \
+	print(f'Logged public_lb_score=$(SCORE) to run \"{name}\" in experiment \"{exp}\"')"
+
 submit-fast:
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --fast'
 
