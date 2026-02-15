@@ -207,7 +207,7 @@ def main():
             cnt = len(re.findall(rf"pid={pid}.*?LOCAL_RANK:", after))
         else:
             cnt = len(re.findall(rf"pid={pid}.*?epoch\s+train_loss", after))
-        fold_counts[(mname, seed)] = max(0, cnt - 1)
+        fold_counts[(mname, seed)] = min(max(0, cnt - 1), folds_n)
 
     # Compute how long each running task has been running
     task_elapsed = {}  # (model, seed) -> seconds running
@@ -228,7 +228,7 @@ def main():
         # For neural tasks with fold progress: extrapolate from elapsed time
         if folds_done is not None and folds_done > 0 and elapsed_secs:
             total_est = elapsed_secs * folds_n / folds_done
-            task_remaining[(mname, seed)] = total_est - elapsed_secs
+            task_remaining[(mname, seed)] = max(0, total_est - elapsed_secs)
         elif folds_done is not None and folds_done == 0:
             # Neural but no folds done yet — use model avg or None
             avg = model_avg_dur.get(mname)
