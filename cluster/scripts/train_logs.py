@@ -65,6 +65,14 @@ GPU_MODELS = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
 NEURAL_MODELS = {"realmlp", "realmlp_large", "resnet", "ft_transformer"}
 N_GPU_WORKERS = 3
 
+# Map worker IP → GPU label (None = head node: 2080Ti + 3090)
+NODE_GPUS = {
+    None: "head",
+    "192.168.178.32": "head",
+    "192.168.178.80": "3090",
+    "192.168.178.75": "3050",
+}
+
 
 def _is_gpu_model(model_name):
     """Check if model runs on GPU based on name prefix."""
@@ -106,14 +114,25 @@ def main():
         r"\[(\d+)/(\d+)\].*?(\w[\w_]+) seed=(\d+).*?Holdout AUC: ([\d.]+)", text
     )
 
-    # Per-task durations from worker Finished lines: "Finished seed=N ... (Xm YYs)"
+    # Per-task durations and IPs from worker Finished lines
     task_durations = {}
+    task_ips = {}  # (model, seed) -> ip or None
     for m in re.finditer(
-        r"\[(\w[\w_]*)\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
+        r"ip=([\d.]+)\).*?\[(\w[\w_]*)\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
     ):
-        key = (m.group(1), m.group(2))
-        mins, secs = int(m.group(3)), int(m.group(4))
+        key = (m.group(2), m.group(3))
+        mins, secs = int(m.group(4)), int(m.group(5))
         task_durations[key] = mins * 60 + secs
+        task_ips[key] = m.group(1)
+    # Also match head node tasks (no ip= in prefix)
+    for m in re.finditer(
+        r"pid=(\d+)\).*?\[(\w[\w_]*)\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
+    ):
+        key = (m.group(2), m.group(3))
+        if key not in task_durations:
+            mins, secs = int(m.group(4)), int(m.group(5))
+            task_durations[key] = mins * 60 + secs
+            task_ips[key] = None
 
     # Average duration per model type from completed tasks
     model_durations = {}
@@ -143,11 +162,17 @@ def main():
             idx = f"[{c[0]:>{idx_width}}/{c[1]}]"
             is_top = float(c[4]) >= top_threshold
             dev = _device_label(c[2], color=not is_top)
+            # GPU type for completed GPU tasks
+            ip = task_ips.get((c[2], c[3]))
+            gpu_str = ""
+            if _is_gpu_model(c[2]) and (c[2], c[3]) in task_ips:
+                gpu_name = NODE_GPUS.get(ip, ip or "?")
+                gpu_str = f" [{gpu_name}]"
             hi = "\033[1;32m" if is_top else ""
             reset = "\033[0m" if is_top else ""
             print(
                 f"    {hi}{idx} {c[2]:<{max_model_len}}  seed={c[3]:<4} "
-                f"AUC: {c[4]}  {dev}{dur_str}{reset}"
+                f"AUC: {c[4]}  {dev}{gpu_str}{dur_str}{reset}"
             )
         if elapsed_min and n_done == n_total:
             print(f"  Completed in {_fmt_duration(elapsed_min)}")
@@ -160,11 +185,13 @@ def main():
     if folds_match:
         folds_n = int(folds_match.group(1))
 
-    # Parse Starting messages → (model, seed) -> (pid, start_pos)
+    # Parse Starting messages → (model, seed) -> (pid, start_pos, ip)
     task_pids = {}
-    for m in re.finditer(r"pid=(\d+).*?\[(\w[\w_]*)\] Starting seed=(\d+)", text):
-        pid, mname, seed = m.group(1), m.group(2), m.group(3)
-        task_pids[(mname, seed)] = (pid, m.start())
+    for m in re.finditer(
+        r"pid=(\d+)(?:, ip=([\d.]+))?.*?\[(\w[\w_]*)\] Starting seed=(\d+)", text
+    ):
+        pid, ip, mname, seed = m.group(1), m.group(2), m.group(3), m.group(4)
+        task_pids[(mname, seed)] = (pid, m.start(), ip)
 
     # Count folds per running neural task
     fold_counts = {}
@@ -174,7 +201,7 @@ def main():
         pid_info = task_pids.get((mname, seed))
         if not pid_info:
             continue
-        pid, start_pos = pid_info
+        pid, start_pos, _ = pid_info
         after = text[start_pos:]
         if mname.startswith("realmlp"):
             cnt = len(re.findall(rf"pid={pid}.*?LOCAL_RANK:", after))
@@ -187,7 +214,7 @@ def main():
     for mname, seed in running:
         pid_info = task_pids.get((mname, seed))
         if pid_info:
-            _, start_pos = pid_info
+            _, start_pos, _ = pid_info
             start_ts = _ts_at_pos(ts_index, start_pos)
             if start_ts:
                 task_elapsed[(mname, seed)] = (now - start_ts).total_seconds()
@@ -253,6 +280,14 @@ def main():
             remaining = task_remaining.get((m, s))
             folds_done = fold_counts.get((m, s))
 
+            # GPU type from worker IP
+            pid_info = task_pids.get((m, s))
+            gpu_str = ""
+            if _is_gpu_model(m) and pid_info:
+                ip = pid_info[2]
+                gpu_name = NODE_GPUS.get(ip, ip or "?")
+                gpu_str = f" [{gpu_name}]"
+
             parts = []
             if elapsed_secs:
                 parts.append(f"running {_fmt_secs(elapsed_secs)}")
@@ -262,7 +297,7 @@ def main():
                 parts.append(f"~{_fmt_secs(remaining)} left")
 
             eta_str = f"  ({', '.join(parts)})" if parts else ""
-            print(f"    {m:<{max_name_len}}  seed={s:<4} {dev}{eta_str}")
+            print(f"    {m:<{max_name_len}}  seed={s:<4} {dev}{gpu_str}{eta_str}")
 
     # --- Print unscheduled tasks with estimated durations ---
     if unscheduled:
