@@ -48,8 +48,12 @@ logger = logging.getLogger(__name__)
 MODEL_CHOICES = ["realmlp", "resnet", "ft_transformer"]
 
 
-def _prepare_data():
-    """Load, preprocess, and split S6E2 data."""
+def _prepare_data(sample=None):
+    """Load, preprocess, and split S6E2 data.
+
+    Args:
+        sample: If set, subsample to this many rows after splitting.
+    """
     train_full = pd.read_csv(DATA_DIR / "train.csv")
     original = pd.read_csv(DATA_DIR / "Heart_Disease_Prediction.csv")
 
@@ -63,6 +67,13 @@ def _prepare_data():
     )
     train = train.reset_index(drop=True)
     holdout = holdout.reset_index(drop=True)
+
+    if sample is not None and sample < len(train):
+        train = train.sample(n=sample, random_state=42).reset_index(drop=True)
+        holdout = holdout.sample(
+            n=min(sample // 4, len(holdout)), random_state=42
+        ).reset_index(drop=True)
+        logger.info(f"Subsampled to {len(train)} train / {len(holdout)} holdout rows")
 
     train = _impute_cholesterol(train)
     holdout = _impute_cholesterol(holdout)
@@ -482,6 +493,12 @@ def main():
         action="store_true",
         help="Enable PyTorch profiler and export Chrome trace",
     )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="Subsample training data to N rows (for quick debug runs)",
+    )
     args = parser.parse_args()
 
     compile_flag = not args.no_compile
@@ -499,7 +516,7 @@ def main():
         logger.warning("No CUDA GPU available, running on CPU")
 
     # Load and preprocess data
-    train, holdout, features = _prepare_data()
+    train, holdout, features = _prepare_data(sample=args.sample)
     n_features = len(features)
 
     # Get default model configs
