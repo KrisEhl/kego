@@ -6,11 +6,14 @@ MLFLOW_DIR ?= $(HOME)/mlflow
 MLFLOW_TRACKING_URI ?= http://$(RAY_HEAD_IP):$(MLFLOW_PORT)
 
 start-head:
-	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --head --port=$(RAY_HEAD_PORT) --node-ip-address $(RAY_HEAD_IP) --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=$$(expr $$(nproc --all) - 2)
+	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --head --port=$(RAY_HEAD_PORT) --node-ip-address $(RAY_HEAD_IP) --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=$$(expr $$(nproc --all) - 2) --resources '{"heavy_gpu": 2}'
 
 start-worker:
 	$(eval NODE_IP := $(shell if grep -qi microsoft /proc/version 2>/dev/null; then ip -4 addr show | grep -oP 'inet 192\.168\.\d+\.\d+' | head -1 | grep -oP '192\.168\.\d+\.\d+'; fi))
-	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="$(RAY_HEAD_IP):$(RAY_HEAD_PORT)" $(if $(NODE_IP),--node-ip-address=$(NODE_IP))
+	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="$(RAY_HEAD_IP):$(RAY_HEAD_PORT)" $(if $(NODE_IP),--node-ip-address=$(NODE_IP)) --resources '{"heavy_gpu": 1}'
+
+start-worker-light:
+	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --address="$(RAY_HEAD_IP):$(RAY_HEAD_PORT)"
 
 restart-worker:
 	uv run ray stop --force

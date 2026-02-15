@@ -1268,11 +1268,11 @@ def _train_ensemble(
         is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
         for seed in seeds:
             if model_name.startswith("catboost"):
-                opts = {"num_gpus": 1, "num_cpus": 1}
+                opts = {"num_gpus": 1, "num_cpus": 1, "resources": {"heavy_gpu": 1}}
             elif model_name.startswith("realmlp"):
-                opts = {"num_gpus": 1, "num_cpus": 4}
+                opts = {"num_gpus": 1, "num_cpus": 4, "resources": {"heavy_gpu": 1}}
             elif is_neural:
-                opts = {"num_gpus": 0.5, "num_cpus": 4}
+                opts = {"num_gpus": 0.5, "num_cpus": 4, "resources": {"heavy_gpu": 0.5}}
             elif is_gpu:
                 opts = {"num_gpus": 0.25, "num_cpus": 1}
             else:
