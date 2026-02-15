@@ -33,6 +33,21 @@ def _fmt_duration(minutes):
     return f"~{hours}h{mins:02d}m"
 
 
+GPU_MODELS = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
+
+
+def _is_gpu_model(model_name):
+    """Check if model runs on GPU based on name prefix."""
+    return any(model_name.startswith(p) for p in GPU_MODELS)
+
+
+def _device_label(model_name, color=True):
+    """Return GPU/CPU label, optionally colored (yellow GPU, dim CPU)."""
+    if _is_gpu_model(model_name):
+        return "\033[33mGPU\033[0m" if color else "GPU"
+    return "\033[2mCPU\033[0m" if color else "CPU"
+
+
 def main():
     job_id = sys.argv[1] if len(sys.argv) > 1 else "unknown"
     lines = sys.stdin.readlines()
@@ -66,25 +81,35 @@ def main():
     t_start = _parse_start_time(text)
     elapsed_min = (datetime.now() - t_start).total_seconds() / 60.0 if t_start else None
 
+    task_eta_min = None
+    neural_eta_min = None
+    neural_detail = None
+
     if completed:
         last = completed[-1]
         n_done = int(last[0])
         n_total = int(last[1])
+        idx_width = len(last[1])  # width of "57" in "[29/57]"
+        max_model_len = max(len(c[2]) for c in completed)
         print(f"  Progress: {n_done}/{n_total} tasks completed")
+        top_threshold = max(float(c[4]) for c in completed) - 0.0001
         for c in completed:
             dur = task_durations.get((c[2], c[3]))
             dur_str = f"  ({dur // 60}m{dur % 60:02d}s)" if dur else ""
-            print(f"    [{c[0]}/{c[1]}] {c[2]} seed={c[3]} — AUC: {c[4]}{dur_str}")
+            idx = f"[{c[0]:>{idx_width}}/{c[1]}]"
+            is_top = float(c[4]) >= top_threshold
+            dev = _device_label(c[2], color=not is_top)
+            hi = "\033[1;32m" if is_top else ""
+            reset = "\033[0m" if is_top else ""
+            print(
+                f"    {hi}{idx} {c[2]:<{max_model_len}}  seed={c[3]:<4} "
+                f"AUC: {c[4]}  {dev}{dur_str}{reset}"
+            )
 
-        # Estimate remaining time from task completion rate
+        # Compute task-rate ETA (used later in combined estimate)
         if elapsed_min and n_done > 0 and n_done < n_total:
             rate = elapsed_min / n_done
-            remaining = rate * (n_total - n_done)
-            print(
-                f"  Elapsed: {_fmt_duration(elapsed_min)}, "
-                f"ETA: {_fmt_duration(remaining)} "
-                f"({_fmt_duration(rate)}/task)"
-            )
+            task_eta_min = rate * (n_total - n_done)
         elif elapsed_min and n_done == n_total:
             print(f"  Completed in {_fmt_duration(elapsed_min)}")
     elif elapsed_min:
@@ -98,6 +123,7 @@ def main():
             model_durations.setdefault(model, []).append(dur)
         model_avg_dur = {m: sum(ds) / len(ds) for m, ds in model_durations.items()}
 
+        max_run_model_len = max(len(m) for m, s in running)
         print(f"  Running ({len(running)}):")
         for m, s in sorted(running):
             avg = model_avg_dur.get(m)
@@ -105,7 +131,8 @@ def main():
                 est_str = f"  (~{int(avg) // 60}m{int(avg) % 60:02d}s est)"
             else:
                 est_str = ""
-            print(f"    {m} seed={s}{est_str}")
+            dev = _device_label(m)
+            print(f"    {m:<{max_run_model_len}}  seed={s:<4} {dev}{est_str}")
 
     # Neural model fold progress (per running neural model)
     if running:
@@ -142,22 +169,39 @@ def main():
                 done = fold_counts.get(mname, 0)
                 print(f"  {mname} fold progress: ~{done}/{folds_n}")
 
-            # Estimate remaining from fold rate (models run in parallel)
-            # ETA = time for slowest model to finish its remaining folds
+            # Compute neural fold-based ETA (used in combined estimate)
             max_done = max(fold_counts.values()) if fold_counts else 0
             if elapsed_min and max_done > 0:
                 fold_rate = elapsed_min / max_done
                 max_remaining = max(
                     folds_n - fold_counts.get(m, 0) for m in neural_running
                 )
-                eta = fold_rate * max_remaining
+                neural_eta_min = fold_rate * max_remaining
                 total_done = sum(fold_counts.values())
                 total_needed = len(neural_running) * folds_n
-                print(
-                    f"  Neural ETA: {_fmt_duration(eta)} "
-                    f"({_fmt_duration(fold_rate)}/fold, "
-                    f"{total_done}/{total_needed} folds done)"
+                neural_detail = (
+                    f"{_fmt_duration(fold_rate)}/fold, "
+                    f"{total_done}/{total_needed} folds done"
                 )
+
+    # Combined ETA: max of task-rate and neural fold-rate estimates
+    if elapsed_min and completed:
+        last = completed[-1]
+        n_done = int(last[0])
+        n_total = int(last[1])
+        if n_done < n_total:
+            combined_eta = max(task_eta_min or 0, neural_eta_min or 0)
+            parts = [f"Elapsed: {_fmt_duration(elapsed_min)}"]
+            parts.append(f"ETA: {_fmt_duration(combined_eta)}")
+            detail_parts = []
+            if task_eta_min:
+                rate = elapsed_min / n_done
+                detail_parts.append(f"{_fmt_duration(rate)}/task")
+            if neural_detail:
+                detail_parts.append(neural_detail)
+            if detail_parts:
+                parts.append(f"({', '.join(detail_parts)})")
+            print(f"  {' '.join(parts)}")
 
     # Ensemble results
     for line in lines:
