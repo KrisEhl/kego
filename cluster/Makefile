@@ -34,7 +34,7 @@ logs:
 		print(running[-1] if running else '')"); \
 	if [ -z "$$JOB_ID" ]; then echo "No running jobs"; \
 	else uv run ray job logs "$$JOB_ID" --address $(RAY_DASHBOARD) 2>/dev/null | \
-		python3 ../scripts/train_logs.py "$$JOB_ID"; \
+		python3 scripts/train_logs.py "$$JOB_ID"; \
 	fi
 
 N ?= 20

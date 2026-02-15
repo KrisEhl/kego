@@ -26,7 +26,7 @@ make publish
 uv run pre-commit run --all-files
 
 # Setup a Ray cluster worker (run on the worker machine)
-./scripts/setup-ray-worker.sh [head-ip]
+./cluster/scripts/setup-ray-worker.sh [head-ip]
 
 # Run a training script (example: RNA baseline)
 uv run python notebooks/stanford/train_rna_baseline.py
@@ -63,7 +63,7 @@ Each competition lives in `notebooks/<competition>/` with its own `pyproject.tom
 
 ### Ray Cluster (`cluster/`)
 
-The `cluster/` workspace member provides a uv-managed venv with `ray[default]` for Ray cluster workers. On each worker node, `cd cluster && uv sync` creates the venv, then ML deps are installed via `uv pip install`. Worker setup is handled by `scripts/setup-ray-worker.sh`.
+The `cluster/` workspace member provides a uv-managed venv with `ray[default]` for Ray cluster workers. On each worker node, `cd cluster && uv sync` creates the venv, then ML deps are installed via `uv pip install`. Worker setup is handled by `cluster/scripts/setup-ray-worker.sh`.
 
 ### Current Active Focus: Stanford RNA 3D Folding
 
