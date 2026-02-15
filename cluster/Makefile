@@ -53,10 +53,12 @@ logs-raw:
 
 mlflow-start:
 	mkdir -p $(MLFLOW_DIR)/artifacts
-	uv run mlflow server \
+	nohup uv run mlflow server \
 		--backend-store-uri sqlite:///$(MLFLOW_DIR)/mlflow.db \
-		--default-artifact-root $(MLFLOW_DIR)/artifacts \
-		--host 0.0.0.0 --port $(MLFLOW_PORT) &
+		--default-artifact-root mlflow-artifacts:/ \
+		--artifacts-destination $(MLFLOW_DIR)/artifacts \
+		--host 0.0.0.0 --port $(MLFLOW_PORT) \
+		> $(MLFLOW_DIR)/server.log 2>&1 &
 
 mlflow-stop:
 	pkill -f "mlflow server" || true
