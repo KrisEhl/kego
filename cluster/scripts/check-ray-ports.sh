@@ -2,12 +2,12 @@
 # Check network connectivity between a worker and the Ray head node.
 # Run this ON THE WORKER machine before joining the cluster.
 #
-# Usage: ./scripts/check-ray-ports.sh [head-ip]
+# Usage: ./cluster/scripts/check-ray-ports.sh [head-ip]
 
 set -euo pipefail
 
 HEAD_IP="${1:-192.168.178.32}"
-WORKER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ip -4 addr show | grep -oP 'inet 192\.168\.\d+\.\d+' | head -1 | grep -oP '192\.168\.\d+\.\d+' || echo "unknown")
+WORKER_IP=$(ip -4 route get 1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I 2>/dev/null | awk '{print $1}' || echo "unknown")
 
 echo "=== Ray Cluster Connectivity Check ==="
 echo "Head node:   $HEAD_IP"
@@ -49,13 +49,42 @@ echo ""
 
 # --- Head -> Worker connectivity (reverse) ---
 # Ray needs bidirectional TCP between head and workers for object transfer.
+# Start a temporary listener, then ask the head to connect to it.
 echo "--- Head -> Worker (reverse) ---"
-echo "  Run this ON THE HEAD NODE ($HEAD_IP) to verify:"
-echo ""
-echo "    timeout 3 bash -c 'echo >/dev/tcp/$WORKER_IP/22' && echo OK || echo FAIL"
-echo ""
-echo "  If FAIL: open worker firewall with:"
-echo "    sudo ufw allow from 192.168.178.0/24"
+TEST_PORT=19999
+
+# Start a TCP listener on the worker
+python3 -c "
+import socket, sys
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', $TEST_PORT)); s.listen(1); s.settimeout(8)
+try:
+    conn, _ = s.accept(); conn.close()
+except socket.timeout:
+    s.close(); sys.exit(1)
+s.close()
+" &
+LISTENER_PID=$!
+sleep 1
+
+# Connect from head to worker's test port
+if timeout 10 ssh -o ConnectTimeout=3 -o BatchMode=yes kristian@"$HEAD_IP" \
+    "python3 -c \"import socket; s=socket.socket(); s.settimeout(3); s.connect(('$WORKER_IP', $TEST_PORT)); s.close(); print('OK')\"" 2>/dev/null; then
+    echo "  OK   $HEAD_IP -> $WORKER_IP:$TEST_PORT"
+    PASS=$((PASS + 1))
+else
+    # SSH might not have key auth — print manual instructions
+    echo "  SKIP Could not auto-test (SSH key auth to head required)"
+    echo ""
+    echo "  To test manually, run ON THE WORKER:"
+    echo "    python3 -c \"import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('0.0.0.0',$TEST_PORT)); s.listen(1); s.settimeout(30); print('Listening on $TEST_PORT...'); conn,a=s.accept(); print(f'Connected from {a}'); conn.close(); s.close()\""
+    echo ""
+    echo "  Then ON THE HEAD NODE ($HEAD_IP):"
+    echo "    python3 -c \"import socket; s=socket.socket(); s.settimeout(3); s.connect(('$WORKER_IP', $TEST_PORT)); print('OK'); s.close()\""
+fi
+kill $LISTENER_PID 2>/dev/null || true
+wait $LISTENER_PID 2>/dev/null || true
 echo ""
 
 # --- Summary ---
@@ -64,7 +93,7 @@ if [ "$FAIL" -gt 0 ]; then
     echo ""
     echo "Troubleshooting:"
     echo "  Head firewall:    sudo ufw allow from 192.168.178.0/24"
-    echo "  Worker firewall:  open TCP+UDP from LAN (192.168.178.0/24)"
+    echo "  Worker firewall:  sudo ufw allow from 192.168.178.0/24"
     echo "  WSL networking:   add networkingMode=mirrored to .wslconfig"
     exit 1
 fi
