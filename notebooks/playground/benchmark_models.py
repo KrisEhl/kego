@@ -13,7 +13,9 @@ Usage:
 import argparse
 import logging
 import os
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -125,6 +127,68 @@ class EpochTimer:
     def on_epoch_end(self, net, **kwargs):
         if self._epoch_start is not None:
             self.epoch_times.append(time.time() - self._epoch_start)
+
+
+class GPUMonitor:
+    """Sample GPU utilization via nvidia-smi in a background thread."""
+
+    def __init__(self, device_index=0, interval=1.0):
+        self.device_index = device_index
+        self.interval = interval
+        self.samples = []
+        self.mem_samples = []
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def _poll(self):
+        while not self._stop.is_set():
+            try:
+                result = subprocess.run(
+                    [
+                        "nvidia-smi",
+                        f"--id={self.device_index}",
+                        "--query-gpu=utilization.gpu,utilization.memory",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    parts = result.stdout.strip().split(",")
+                    self.samples.append(float(parts[0].strip()))
+                    self.mem_samples.append(float(parts[1].strip()))
+            except Exception:
+                pass
+            self._stop.wait(self.interval)
+
+    @property
+    def avg_gpu_util(self):
+        return sum(self.samples) / len(self.samples) if self.samples else 0.0
+
+    @property
+    def max_gpu_util(self):
+        return max(self.samples) if self.samples else 0.0
+
+    @property
+    def avg_mem_util(self):
+        return (
+            sum(self.mem_samples) / len(self.mem_samples) if self.mem_samples else 0.0
+        )
+
+    @property
+    def max_mem_util(self):
+        return max(self.mem_samples) if self.mem_samples else 0.0
 
 
 def _patch_compile(model, compile_flag):
@@ -259,6 +323,9 @@ def _benchmark_skorch(model, model_name, train, holdout, features, profile):
     n_samples = len(X_fit)
     logger.info(f"Training {model_name} on {n_samples} samples...")
 
+    gpu_monitor = GPUMonitor()
+    gpu_monitor.start()
+
     if profile:
         trace_path = Path(__file__).parent / f"trace_{model_name}.json"
         with torch.profiler.profile(
@@ -281,7 +348,8 @@ def _benchmark_skorch(model, model_name, train, holdout, features, profile):
         net.fit(X_fit, y_fit)
         total_time = time.time() - t0
 
-    return timer.epoch_times, total_time, n_samples
+    gpu_monitor.stop()
+    return timer.epoch_times, total_time, n_samples, gpu_monitor
 
 
 def _benchmark_realmlp(model, train, features, profile):
@@ -290,6 +358,9 @@ def _benchmark_realmlp(model, train, features, profile):
     y_train = train[TARGET]
     n_samples = len(X_train)
     logger.info(f"Training realmlp on {n_samples} samples...")
+
+    gpu_monitor = GPUMonitor()
+    gpu_monitor.start()
 
     if profile:
         trace_path = Path(__file__).parent / "trace_realmlp.json"
@@ -313,7 +384,8 @@ def _benchmark_realmlp(model, train, features, profile):
         model.fit(X_train, y_train)
         total_time = time.time() - t0
 
-    return [], total_time, n_samples
+    gpu_monitor.stop()
+    return [], total_time, n_samples, gpu_monitor
 
 
 def _log_to_mlflow(
@@ -325,6 +397,7 @@ def _log_to_mlflow(
     epoch_times,
     total_time,
     n_samples,
+    gpu_monitor,
 ):
     """Log benchmark results to MLflow."""
     try:
@@ -352,7 +425,7 @@ def _log_to_mlflow(
                 "num_workers": num_workers,
                 "compile": compile_flag,
                 "epochs": epochs,
-                "device": gpu_name,
+                "gpu": gpu_name,
             }
         )
 
@@ -369,6 +442,13 @@ def _log_to_mlflow(
             # RealMLP: no per-epoch times
             throughput = n_samples / total_time if total_time > 0 else 0
             metrics["throughput_samples_per_sec"] = throughput
+
+        if gpu_monitor.samples:
+            metrics["avg_gpu_util"] = gpu_monitor.avg_gpu_util
+            metrics["max_gpu_util"] = gpu_monitor.max_gpu_util
+            metrics["avg_mem_util"] = gpu_monitor.avg_mem_util
+            metrics["max_mem_util"] = gpu_monitor.max_mem_util
+            metrics["gpu_samples"] = len(gpu_monitor.samples)
 
         mlflow.log_metrics(metrics)
 
@@ -450,17 +530,19 @@ def main():
 
     # Run benchmark
     if model_name == "realmlp":
-        epoch_times, total_time, n_samples = _benchmark_realmlp(
+        epoch_times, total_time, n_samples, gpu_monitor = _benchmark_realmlp(
             model, train, features, args.profile
         )
     else:
-        epoch_times, total_time, n_samples = _benchmark_skorch(
+        epoch_times, total_time, n_samples, gpu_monitor = _benchmark_skorch(
             model, model_name, train, holdout, features, args.profile
         )
 
     # Report results
+    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
     logger.info(f"\n{'='*50}")
     logger.info(f"Model: {model_name}")
+    logger.info(f"GPU: {gpu_name}")
     logger.info(f"Total time: {total_time:.2f}s")
     if epoch_times:
         avg = sum(epoch_times) / len(epoch_times)
@@ -471,6 +553,16 @@ def main():
             logger.info(f"  Epoch {i}: {t:.3f}s")
     else:
         logger.info(f"Throughput: {n_samples / total_time:.0f} samples/sec")
+    if gpu_monitor.samples:
+        logger.info(
+            f"GPU utilization: avg={gpu_monitor.avg_gpu_util:.1f}%, "
+            f"max={gpu_monitor.max_gpu_util:.1f}% "
+            f"({len(gpu_monitor.samples)} samples)"
+        )
+        logger.info(
+            f"GPU memory util: avg={gpu_monitor.avg_mem_util:.1f}%, "
+            f"max={gpu_monitor.max_mem_util:.1f}%"
+        )
     logger.info(f"{'='*50}")
 
     # Log to MLflow
@@ -483,6 +575,7 @@ def main():
         epoch_times,
         total_time,
         n_samples,
+        gpu_monitor,
     )
 
 
