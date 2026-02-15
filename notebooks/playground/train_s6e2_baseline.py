@@ -25,6 +25,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import QuantileTransformer, StandardScaler
 from skorch import NeuralNetBinaryClassifier
 from skorch.callbacks import EarlyStopping
+from skorch.utils import unpack_data
 from xgboost import XGBClassifier
 
 project_root = Path(__file__).resolve().parents[2]
@@ -220,6 +221,34 @@ class ResNetModule(nn.Module):
         return self.net(X).squeeze(-1)
 
 
+class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
+    """NeuralNetBinaryClassifier with automatic mixed precision (fp16)."""
+
+    def initialize(self):
+        super().initialize()
+        self.amp_scaler_ = torch.amp.GradScaler("cuda")
+        return self
+
+    def infer(self, x, **fit_params):
+        with torch.amp.autocast("cuda"):
+            return super().infer(x, **fit_params)
+
+    def train_step_single(self, batch, **fit_params):
+        self._set_training(True)
+        Xi, yi = unpack_data(batch)
+        y_pred = self.infer(Xi, **fit_params)
+        loss = self.get_loss(y_pred, yi, X=Xi, training=True)
+        self.amp_scaler_.scale(loss).backward()
+        return {"loss": loss, "y_pred": y_pred}
+
+    def train_step(self, batch, **fit_params):
+        self.optimizer_.zero_grad()
+        step = self.train_step_single(batch, **fit_params)
+        self.amp_scaler_.step(self.optimizer_)
+        self.amp_scaler_.update()
+        return step
+
+
 class SkorchResNet:
     """ResNet with QuantileTransformer + periodic embeddings + Gaussian noise."""
 
@@ -258,7 +287,7 @@ class SkorchResNet:
         y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
         d_in = X_np.shape[1]
 
-        self.net = NeuralNetBinaryClassifier(
+        self.net = AMPNeuralNetBinaryClassifier(
             ResNetModule,
             module__d_in=d_in,
             module__d_out=1,
@@ -428,7 +457,7 @@ class SkorchFTTransformer:
         y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
         n_cont = len(self.cont_cols) if self.cont_cols else X_prep.shape[1]
 
-        self.net = NeuralNetBinaryClassifier(
+        self.net = AMPNeuralNetBinaryClassifier(
             FTTransformerModule,
             module__n_cont_features=n_cont,
             module__cat_cardinalities=self.cat_cardinalities,
