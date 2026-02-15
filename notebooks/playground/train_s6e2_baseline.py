@@ -242,7 +242,10 @@ class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
             return super().infer(x, **fit_params)
 
     def train_step_single(self, batch, **fit_params):
-        from skorch.utils import unpack_data
+        try:
+            from skorch.dataset import unpack_data
+        except ImportError:
+            from skorch.utils import unpack_data
 
         self._set_training(True)
         Xi, yi = unpack_data(batch)
