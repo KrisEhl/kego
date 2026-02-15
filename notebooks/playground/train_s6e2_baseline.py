@@ -1706,11 +1706,11 @@ def main():
             reader = csv.DictReader(io.StringIO(result.stdout))
             for row in reader:
                 # Check the most recent submission (first row)
-                status = row.get("status", "")
-                if status == "complete":
+                status = row.get("status", "").lower()
+                if "complete" in status:
                     public_score = float(row.get("publicScore", 0))
                     logger.info(f"Kaggle public LB score: {public_score}")
-                elif status == "error":
+                elif "error" in status:
                     logger.error(f"Kaggle submission errored: {row}")
                 else:
                     logger.info(f"Submission status: {status}, waiting...")
