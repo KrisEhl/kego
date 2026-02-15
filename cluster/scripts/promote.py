@@ -80,6 +80,15 @@ def _collect_and_filter(args):
         ~runs_df["tags.mlflow.runName"].str.startswith("ensemble_", na=True)
     ]
 
+    # Check which runs have prediction artifacts
+    client = mlflow.tracking.MlflowClient()
+    has_preds = []
+    for _, row in runs_df.iterrows():
+        arts = client.list_artifacts(row.run_id, "predictions")
+        has_preds.append(len(arts) > 0)
+    runs_df = runs_df.copy()
+    runs_df["_has_predictions"] = has_preds
+
     # Apply constraints
     if args.folds:
         runs_df = runs_df[runs_df["params.folds_n"].astype(float) == args.folds]
@@ -117,6 +126,14 @@ def _print_runs_table(runs_df):
     runs_df = runs_df.copy()
     runs_df["_exp_name"] = runs_df["experiment_id"].map(_exp_name)
 
+    # Check prediction artifacts if not already done
+    if "_has_predictions" not in runs_df.columns:
+        client = mlflow.tracking.MlflowClient()
+        runs_df["_has_predictions"] = [
+            len(client.list_artifacts(rid, "predictions")) > 0
+            for rid in runs_df["run_id"]
+        ]
+
     # Find max experiment name length for alignment
     max_exp_len = max(len(n) for n in runs_df["_exp_name"].unique())
 
@@ -133,8 +150,10 @@ def _print_runs_table(runs_df):
             model_group.groupby("_exp_name"),
             key=lambda x: -x[1]["metrics.holdout_auc"].mean(),
         )
+        # Best avg only among experiments with predictions
+        valid_groups = [g for _, g in exp_groups if g["_has_predictions"].all()]
         best_avg = (
-            exp_groups[0][1]["metrics.holdout_auc"].mean() if exp_groups else None
+            valid_groups[0]["metrics.holdout_auc"].mean() if valid_groups else None
         )
 
         for exp_name, exp_group in exp_groups:
@@ -142,13 +161,23 @@ def _print_runs_table(runs_df):
             n_seeds = len(exp_group)
             avg_auc = exp_group["metrics.holdout_auc"].mean()
             avg_str = f"{avg_auc:.4f}" if avg_auc == avg_auc else "?"
-            is_best = best_avg is not None and avg_auc == best_avg
-            bold = "\033[1;32m" if is_best else ""
-            reset = "\033[0m" if is_best else ""
-            print(
-                f"  {bold}{exp_name:<{max_exp_len}s}  "
-                f"seeds: {n_seeds:<4d} avg holdout: {avg_str}{reset}"
-            )
+            has_preds = exp_group["_has_predictions"].all()
+
+            if not has_preds:
+                # Dim runs without prediction artifacts
+                print(
+                    f"  \033[2m{exp_name:<{max_exp_len}s}  "
+                    f"seeds: {n_seeds:<4d} avg holdout: {avg_str}  "
+                    f"(no artifacts)\033[0m"
+                )
+            else:
+                is_best = best_avg is not None and avg_auc == best_avg
+                bold = "\033[1;32m" if is_best else ""
+                reset = "\033[0m" if is_best else ""
+                print(
+                    f"  {bold}{exp_name:<{max_exp_len}s}  "
+                    f"seeds: {n_seeds:<4d} avg holdout: {avg_str}{reset}"
+                )
 
             for _, row in exp_group.iterrows():
                 seed = row.get("params.seed", "?")
@@ -156,10 +185,12 @@ def _print_runs_table(runs_df):
                 holdout_auc = row.get("metrics.holdout_auc")
                 auc_str = f"{holdout_auc:.4f}" if holdout_auc is not None else "?"
                 rid = row["run_id"][:8]
+                dim = "\033[2m" if not has_preds else ""
+                reset = "\033[0m" if not has_preds else ""
                 print(
-                    f"  {'':<{max_exp_len}s}  "
+                    f"  {dim}{'':<{max_exp_len}s}  "
                     f"  seed: {seed:<5s} folds: {folds:<4s} "
-                    f"holdout: {auc_str}  {rid}"
+                    f"holdout: {auc_str}  {rid}{reset}"
                 )
         print()
 
@@ -193,9 +224,19 @@ def cmd_auto(args):
             exp_cache[eid] = exp.name if exp else "?"
         return exp_cache[eid]
 
+    # Only consider runs with prediction artifacts
+    valid_df = runs_df[runs_df["_has_predictions"]]
+    if valid_df.empty:
+        print("No runs with prediction artifacts found")
+        sys.exit(1)
+
+    skipped = len(runs_df) - len(valid_df)
+    if skipped:
+        print(f"  Skipping {skipped} runs without prediction artifacts\n")
+
     promoted = 0
     for model_name, model_group in sorted(
-        runs_df.groupby("params.model"), key=lambda x: x[0]
+        valid_df.groupby("params.model"), key=lambda x: x[0]
     ):
         # Find experiment with best avg holdout AUC for this model
         best_exp_id = (
@@ -269,6 +310,31 @@ def cmd_remove(args):
             print(f"  Error removing {run_id}: {e}", file=sys.stderr)
 
 
+def cmd_clear(args):
+    """Remove all runs from a named ensemble."""
+    client = _get_client()
+    tag_key = _tag_key(args.ensemble)
+
+    runs = mlflow.search_runs(
+        search_all_experiments=True,
+        filter_string=f"tags.`{tag_key}` = 'true'",
+    )
+
+    if runs.empty:
+        print(f"No runs in ensemble '{args.ensemble}'")
+        return
+
+    removed = 0
+    for _, row in runs.iterrows():
+        try:
+            client.delete_tag(row.run_id, tag_key)
+            removed += 1
+        except Exception as e:
+            print(f"  Error removing {row.run_id[:8]}...: {e}", file=sys.stderr)
+
+    print(f"Cleared ensemble '{args.ensemble}' ({removed} runs removed)")
+
+
 def _add_filter_args(parser):
     """Add shared filter arguments to a subparser."""
     parser.add_argument(
@@ -330,6 +396,10 @@ def main():
     p_remove.add_argument("ensemble", help="Ensemble name")
     p_remove.add_argument("--run-id", "-r", nargs="+", required=True)
 
+    # clear
+    p_clear = sub.add_parser("clear", help="Remove all runs from an ensemble")
+    p_clear.add_argument("ensemble", help="Ensemble name")
+
     args = parser.parse_args()
 
     commands = {
@@ -338,6 +408,7 @@ def main():
         "add": cmd_add,
         "list": cmd_list,
         "remove": cmd_remove,
+        "clear": cmd_clear,
     }
     commands[args.command](args)
 

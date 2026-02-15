@@ -106,5 +106,9 @@ list-ensemble:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make list-ensemble ENSEMBLE=submit-v1"; exit 1)
 	@MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py list $(ENSEMBLE)
 
+clear-ensemble:
+	@test -n "$(ENSEMBLE)" || (echo "Usage: make clear-ensemble ENSEMBLE=submit-v1"; exit 1)
+	@MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py clear $(ENSEMBLE)
+
 search-runs:
 	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py search $(if $(ALL),--all,$(if $(EXPERIMENT),--experiment $(EXPERIMENT),--all)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(SEEDS),--seeds $(SEEDS))
