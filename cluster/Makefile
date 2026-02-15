@@ -58,10 +58,16 @@ mlflow-start:
 		--default-artifact-root mlflow-artifacts:/ \
 		--artifacts-destination $(MLFLOW_DIR)/artifacts \
 		--host 0.0.0.0 --port $(MLFLOW_PORT) \
-		> $(MLFLOW_DIR)/server.log 2>&1 &
+		> $(MLFLOW_DIR)/server.log 2>&1 & echo $$! > $(MLFLOW_DIR)/server.pid
 
 mlflow-stop:
-	pkill -f "mlflow.server" || true
+	@if [ -f $(MLFLOW_DIR)/server.pid ]; then \
+		kill $$(cat $(MLFLOW_DIR)/server.pid) 2>/dev/null; \
+		rm -f $(MLFLOW_DIR)/server.pid; \
+		echo "MLflow server stopped"; \
+	else \
+		echo "No PID file found"; \
+	fi
 
 log-score:
 	@test -n "$(SCORE)" || (echo "Usage: make log-score SCORE=0.953"; exit 1)
