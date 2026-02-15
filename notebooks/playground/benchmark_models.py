@@ -309,7 +309,7 @@ def _benchmark_skorch(model, model_name, train, holdout, features, profile):
             iterator_valid__num_workers=model.num_workers,
             callbacks=[
                 EarlyStopping(patience=model.patience, monitor="valid_loss"),
-                ("epoch_timer", timer),
+                ("bench_timer", timer),
             ],
             verbose=1,
         )
@@ -354,7 +354,7 @@ def _benchmark_skorch(model, model_name, train, holdout, features, profile):
             iterator_valid__num_workers=model.num_workers,
             callbacks=[
                 EarlyStopping(patience=model.patience, monitor="valid_loss"),
-                ("epoch_timer", timer),
+                ("bench_timer", timer),
             ],
             verbose=1,
         )
