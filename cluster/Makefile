@@ -87,3 +87,24 @@ submit-debug:
 submit-ensemble:
 	@test -n "$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --from-experiment $(EXPERIMENTS)'
+
+submit-curated:
+	@test -n "$(ENSEMBLE)" || (echo "Usage: make submit-curated ENSEMBLE=submit-v1"; exit 1)
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --from-ensemble $(ENSEMBLE)'
+
+promote:
+	@test -n "$(ENSEMBLE)" || (echo "Usage: make promote ENSEMBLE=submit-v1 RUN_ID='id1 id2'"; exit 1)
+	@test -n "$(RUN_ID)" || (echo "Usage: make promote ENSEMBLE=submit-v1 RUN_ID='id1 id2'"; exit 1)
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py add $(ENSEMBLE) --run-id $(RUN_ID)
+
+auto-promote:
+	@test -n "$(ENSEMBLE)" || (echo "Usage: make auto-promote ENSEMBLE=submit-v1 EXPERIMENT='full-v1 gbdt-v1' [FOLDS=10]"; echo "       make auto-promote ENSEMBLE=submit-v1 ALL=1 [FOLDS=10]"; exit 1)
+	@test -n "$(EXPERIMENT)$(ALL)" || (echo "Error: set EXPERIMENT='...' or ALL=1"; exit 1)
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py auto $(ENSEMBLE) $(if $(ALL),--all,--experiment $(EXPERIMENT)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS))
+
+list-ensemble:
+	@test -n "$(ENSEMBLE)" || (echo "Usage: make list-ensemble ENSEMBLE=submit-v1"; exit 1)
+	@MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py list $(ENSEMBLE)
+
+search-runs:
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py search $(if $(ALL),--all,$(if $(EXPERIMENT),--experiment $(EXPERIMENT),--all)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(SEEDS),--seeds $(SEEDS))

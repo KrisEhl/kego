@@ -1139,52 +1139,44 @@ def _ensemble_predictions(
     return best_test, best_name, auc
 
 
-def _load_predictions_from_mlflow(experiment_names, tracking_uri):
-    """Load per-model averaged predictions from MLflow experiments."""
+def _load_predictions_from_runs(runs_df, tracking_uri):
+    """Load and average predictions from a DataFrame of MLflow runs.
+
+    Shared logic for --from-experiment and --from-ensemble.
+    """
     import mlflow
 
     mlflow.set_tracking_uri(tracking_uri)
+    client = mlflow.tracking.MlflowClient()
 
     all_oof = {}
     all_holdout = {}
     all_test = {}
     seed_counts = {}
 
-    for exp_name in experiment_names:
-        exp = mlflow.get_experiment_by_name(exp_name)
-        if exp is None:
-            logger.warning(f"Experiment '{exp_name}' not found, skipping")
+    for _, run in runs_df.iterrows():
+        model_name = run.get("params.model")
+        if model_name is None:
             continue
 
-        runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
-        # Filter out ensemble runs (NOT LIKE not supported by MLflow API)
-        runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
-        logger.info(f"Experiment '{exp_name}': {len(runs)} model runs")
+        artifact_dir = client.download_artifacts(run.run_id, "predictions")
+        oof = np.load(os.path.join(artifact_dir, "oof.npy"))
+        holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
+        test = np.load(os.path.join(artifact_dir, "test.npy"))
 
-        client = mlflow.tracking.MlflowClient()
-        for _, run in runs.iterrows():
-            model_name = run.get("params.model")
-            if model_name is None:
-                continue
+        if model_name not in all_oof:
+            all_oof[model_name] = np.zeros_like(oof)
+            all_holdout[model_name] = np.zeros_like(holdout)
+            all_test[model_name] = np.zeros_like(test)
+            seed_counts[model_name] = 0
 
-            artifact_dir = client.download_artifacts(run.run_id, "predictions")
-            oof = np.load(os.path.join(artifact_dir, "oof.npy"))
-            holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
-            test = np.load(os.path.join(artifact_dir, "test.npy"))
+        all_oof[model_name] += oof
+        all_holdout[model_name] += holdout
+        all_test[model_name] += test
+        seed_counts[model_name] += 1
 
-            if model_name not in all_oof:
-                all_oof[model_name] = np.zeros_like(oof)
-                all_holdout[model_name] = np.zeros_like(holdout)
-                all_test[model_name] = np.zeros_like(test)
-                seed_counts[model_name] = 0
-
-            all_oof[model_name] += oof
-            all_holdout[model_name] += holdout
-            all_test[model_name] += test
-            seed_counts[model_name] += 1
-
-            seed = run.get("params.seed", "?")
-            logger.info(f"  Loaded {model_name} seed={seed}")
+        seed = run.get("params.seed", "?")
+        logger.info(f"  Loaded {model_name} seed={seed}")
 
     # Average across seeds
     for name in all_oof:
@@ -1197,6 +1189,57 @@ def _load_predictions_from_mlflow(experiment_names, tracking_uri):
     model_names = list(all_oof.keys())
     logger.info(f"Total models loaded: {len(model_names)}")
     return model_names, all_oof, all_holdout, all_test
+
+
+def _load_predictions_from_mlflow(experiment_names, tracking_uri):
+    """Load per-model averaged predictions from MLflow experiments."""
+    import mlflow
+
+    mlflow.set_tracking_uri(tracking_uri)
+
+    all_runs = []
+    for exp_name in experiment_names:
+        exp = mlflow.get_experiment_by_name(exp_name)
+        if exp is None:
+            logger.warning(f"Experiment '{exp_name}' not found, skipping")
+            continue
+
+        runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
+        # Filter out ensemble runs (NOT LIKE not supported by MLflow API)
+        runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
+        logger.info(f"Experiment '{exp_name}': {len(runs)} model runs")
+        all_runs.append(runs)
+
+    if not all_runs:
+        return [], {}, {}, {}
+
+    import pandas as pd
+
+    runs_df = pd.concat(all_runs, ignore_index=True)
+    return _load_predictions_from_runs(runs_df, tracking_uri)
+
+
+def _load_predictions_from_ensemble(ensemble_name, tracking_uri):
+    """Load predictions from runs tagged with a named ensemble."""
+    import mlflow
+
+    mlflow.set_tracking_uri(tracking_uri)
+
+    tag_key = f"ensemble:{ensemble_name}"
+    runs = mlflow.search_runs(
+        search_all_experiments=True,
+        filter_string=f"tags.`{tag_key}` = 'true'",
+    )
+
+    if runs.empty:
+        logger.error(f"No runs found in ensemble '{ensemble_name}'")
+        return [], {}, {}, {}
+
+    # Filter out ensemble summary runs
+    runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
+    logger.info(f"Ensemble '{ensemble_name}': {len(runs)} model runs")
+
+    return _load_predictions_from_runs(runs, tracking_uri)
 
 
 def _train_ensemble(
@@ -1394,9 +1437,15 @@ def main():
         metavar="EXPERIMENT",
         help="Load predictions from MLflow experiments instead of training",
     )
+    parser.add_argument(
+        "--from-ensemble",
+        type=str,
+        metavar="ENSEMBLE",
+        help="Load predictions from a curated ensemble (tagged runs) instead of training",
+    )
     args = parser.parse_args()
 
-    if not args.from_experiment:
+    if not args.from_experiment and not args.from_ensemble:
         ray.init()
 
     # Load data
@@ -1466,17 +1515,26 @@ def main():
     train_labels = train[TARGET].values
     holdout_labels = holdout[TARGET].values
 
-    if args.from_experiment:
+    if args.from_experiment or args.from_ensemble:
         # Load predictions from MLflow and re-ensemble (no training)
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
         if not tracking_uri:
-            logger.error("MLFLOW_TRACKING_URI must be set for --from-experiment")
+            logger.error(
+                "MLFLOW_TRACKING_URI must be set for --from-experiment/--from-ensemble"
+            )
             sys.exit(1)
 
-        logger.info(f"Loading predictions from experiments: {args.from_experiment}")
-        model_names, all_oof, all_holdout, all_test = _load_predictions_from_mlflow(
-            args.from_experiment, tracking_uri
-        )
+        if args.from_ensemble:
+            logger.info(f"Loading predictions from ensemble: {args.from_ensemble}")
+            model_names, all_oof, all_holdout, all_test = (
+                _load_predictions_from_ensemble(args.from_ensemble, tracking_uri)
+            )
+        else:
+            logger.info(f"Loading predictions from experiments: {args.from_experiment}")
+            model_names, all_oof, all_holdout, all_test = _load_predictions_from_mlflow(
+                args.from_experiment, tracking_uri
+            )
+
         if not model_names:
             logger.error("No predictions loaded, exiting")
             sys.exit(1)
@@ -1517,7 +1575,7 @@ def main():
     logger.info(f"Submission saved to {output_path}")
     logger.info(f"Mean prediction: {np.mean(best_test):.3f}")
 
-    if not args.from_experiment:
+    if not args.from_experiment and not args.from_ensemble:
         ray.shutdown()
 
 
