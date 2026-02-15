@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,6 +36,14 @@ from kego.train import train_model_split  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+_git_commit = subprocess.run(
+    ["git", "rev-parse", "--short", "HEAD"],
+    capture_output=True,
+    text=True,
+    cwd=project_root,
+).stdout.strip()
+logger.info(f"Git commit: {_git_commit}")
 
 DATA_DIR = (
     Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
@@ -1644,7 +1653,6 @@ def main():
     if args.submit:
         import csv
         import io
-        import subprocess
         import time
 
         competition = "playground-series-s6e2"
