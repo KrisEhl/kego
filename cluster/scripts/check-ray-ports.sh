@@ -8,7 +8,7 @@
 set -euo pipefail
 
 HEAD_IP="${1:-192.168.178.32}"
-HEAD_SSH="${2:-kristian@$HEAD_IP}"
+HEAD_SSH="${2:-kristian@omarchyd.fritz.box}"
 WORKER_IP=$(ip -4 route get 1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I 2>/dev/null | awk '{print $1}' || echo "unknown")
 
 echo "=== Ray Cluster Connectivity Check ==="
