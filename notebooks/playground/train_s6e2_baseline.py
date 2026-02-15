@@ -863,6 +863,7 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
             "kwargs": {
                 "cat_features": CAT_FEATURES,
                 "n_epochs": 256,
+                "batch_size": 4096,
                 "device": "cuda",
                 "hidden_sizes": [256, 256, 256],
             },
