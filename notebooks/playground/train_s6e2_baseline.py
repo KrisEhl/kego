@@ -1504,6 +1504,19 @@ def main():
         action="store_true",
         help="Submit to Kaggle after generating submission.csv and log LB score to MLflow",
     )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        metavar="MODEL",
+        help="Only train these models (e.g. --models catboost realmlp)",
+    )
+    parser.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        metavar="SEED",
+        help="Override seeds (e.g. --seeds 777)",
+    )
     args = parser.parse_args()
 
     if not args.from_experiment and not args.from_ensemble:
@@ -1558,6 +1571,15 @@ def main():
     n_features = len(features)
     models = get_models(n_features, fast=args.fast, neural=args.neural)
 
+    # Filter to specific models if requested
+    if args.models:
+        missing = [m for m in args.models if m not in models]
+        if missing:
+            logger.error(f"Unknown models: {missing}")
+            logger.info(f"Available: {list(models.keys())}")
+            sys.exit(1)
+        models = {k: v for k, v in models.items() if k in args.models}
+
     # Configure seeds and folds based on mode
     if args.debug:
         seeds, folds_n = SEEDS_FAST, 2
@@ -1565,6 +1587,10 @@ def main():
         seeds, folds_n = SEEDS_FAST, 5
     else:
         seeds, folds_n = SEEDS_FULL, 10
+
+    # Override seeds if requested
+    if args.seeds:
+        seeds = args.seeds
 
     mode_name = (
         "debug"
