@@ -32,7 +32,7 @@ TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://192.168.178.32:5000
 EXPERIMENT = "playground-s6e2-full"
 
 
-def load_oof_predictions():
+def load_oof_predictions(features=None):
     """Load OOF predictions from MLflow, averaged across seeds per model."""
     mlflow.set_tracking_uri(TRACKING_URI)
     client = mlflow.tracking.MlflowClient()
@@ -40,6 +40,9 @@ def load_oof_predictions():
     exp = mlflow.get_experiment_by_name(EXPERIMENT)
     runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
     runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
+
+    if features and "params.feature_set" in runs.columns:
+        runs = runs[runs["params.feature_set"] == features]
 
     oof_by_model = defaultdict(list)
     for _, run in runs.iterrows():
@@ -82,7 +85,7 @@ def load_labels():
     return train[TARGET].values
 
 
-def load_best_runs(folds, experiments=None):
+def load_best_runs(folds, experiments=None, features=None):
     """Find best experiment per model by avg holdout_auc.
 
     Returns dict: model_name -> {experiment, avg_holdout_auc, avg_oof_auc, n_seeds, runs}
@@ -115,6 +118,10 @@ def load_best_runs(folds, experiments=None):
     # Filter by folds
     if folds is not None:
         runs_df = runs_df[runs_df["params.folds_n"].astype(float) == folds]
+
+    # Filter by feature set
+    if features and "params.feature_set" in runs_df.columns:
+        runs_df = runs_df[runs_df["params.feature_set"] == features]
 
     # Only runs with prediction artifacts
     has_preds = []
@@ -197,19 +204,26 @@ def main():
         default=None,
         help="Experiment name(s) to search (default: all)",
     )
+    parser.add_argument(
+        "--features",
+        default=None,
+        help="Filter by feature set (e.g. ablation-pruned)",
+    )
     args = parser.parse_args()
 
-    print("Loading OOF predictions from MLflow...")
-    oof_preds = load_oof_predictions()
+    feat_str = f", features={args.features}" if args.features else ""
+    print(f"Loading OOF predictions from MLflow{feat_str}...")
+    oof_preds = load_oof_predictions(features=args.features)
 
     print("\nLoading labels...")
     labels = load_labels()
 
     print(
         f"\nLoading best runs per model "
-        f"(folds={args.folds}, experiments={'all' if not args.experiment else args.experiment})..."
+        f"(folds={args.folds}, experiments={'all' if not args.experiment else args.experiment}"
+        f"{feat_str})..."
     )
-    best_runs = load_best_runs(args.folds, args.experiment)
+    best_runs = load_best_runs(args.folds, args.experiment, features=args.features)
 
     print(f"\n{len(oof_preds)} models with OOF predictions, {len(labels)} samples")
 

@@ -204,8 +204,9 @@ def main():
         pid, ip, mname, seed = m.group(1), m.group(2), m.group(3), m.group(4)
         task_pids[(mname, seed)] = (pid, m.start(), ip)
 
-    # Count folds per running neural task
+    # Count folds and epoch durations per running neural task
     fold_counts = {}
+    task_epoch_secs = {}  # (model, seed) -> total seconds from epoch dur column
     for mname, seed in running:
         if not _is_neural(mname):
             continue
@@ -222,15 +223,51 @@ def main():
             cnt = max(0, cnt - 1)  # header printed at fold start, so -1
         fold_counts[(mname, seed)] = min(cnt, folds_n)
 
-    # Compute how long each running task has been running
+        # Sum actual epoch durations from the dur column for accurate elapsed time
+        dur_values = re.findall(
+            rf"pid={pid}.*?\d+\s+[\d.]+\s+[\d.]+\s+[\d.]+\s+([\d.]+)", after
+        )
+        if dur_values:
+            task_epoch_secs[(mname, seed)] = sum(float(d) for d in dur_values)
+
+    # Compute how long each running task has been running.
+    # Worker output has no timestamps, so _ts_at_pos is unreliable for workers.
+    # Instead, reconstruct the timeline per PID from actual task durations:
+    # tasks run sequentially on each PID, so task_start = job_start + sum(prior durations).
+
+    # Collect all tasks per PID in log order
+    pid_tasks = {}  # pid -> [(start_pos, model, seed), ...]
+    for (mname, seed), (pid, start_pos, ip) in task_pids.items():
+        pid_tasks.setdefault(pid, []).append((start_pos, mname, seed))
+    for pid in pid_tasks:
+        pid_tasks[pid].sort()
+
     task_elapsed = {}  # (model, seed) -> seconds running
     for mname, seed in running:
         pid_info = task_pids.get((mname, seed))
-        if pid_info:
-            _, start_pos, _ = pid_info
-            start_ts = _ts_at_pos(ts_index, start_pos)
-            if start_ts:
-                task_elapsed[(mname, seed)] = (now - start_ts).total_seconds()
+        if not pid_info:
+            continue
+        pid, start_pos, ip = pid_info
+
+        # Sum durations of all completed tasks before this one on same PID
+        prev_duration = 0
+        for pos, m, s in pid_tasks.get(pid, []):
+            if pos >= start_pos:
+                break
+            dur = task_durations.get((m, s))
+            if dur:
+                prev_duration += dur
+
+        if t_start:
+            from datetime import timedelta
+
+            task_start = t_start + timedelta(seconds=prev_duration)
+            task_elapsed[(mname, seed)] = (now - task_start).total_seconds()
+
+    # For neural models, also compute epoch-based elapsed for more accurate ETA
+    task_epoch_elapsed = {}
+    for key, epoch_secs in task_epoch_secs.items():
+        task_epoch_elapsed[key] = epoch_secs
 
     # Estimate remaining time per task
     task_remaining = {}
@@ -238,7 +275,7 @@ def main():
         elapsed_secs = task_elapsed.get((mname, seed))
         folds_done = fold_counts.get((mname, seed))
 
-        # For neural tasks with fold progress: extrapolate from elapsed time
+        # For neural tasks with fold progress: extrapolate from wall-clock elapsed
         if folds_done is not None and folds_done > 0 and elapsed_secs:
             total_est = elapsed_secs * folds_n / folds_done
             task_remaining[(mname, seed)] = max(0, total_est - elapsed_secs)
