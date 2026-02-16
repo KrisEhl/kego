@@ -180,8 +180,8 @@ def _print_runs_table(runs_df):
                 )
 
             for _, row in exp_group.iterrows():
-                seed = row.get("params.seed", "?")
-                folds = row.get("params.folds_n", "?")
+                seed = row.get("params.seed") or "?"
+                folds = row.get("params.folds_n") or "?"
                 holdout_auc = row.get("metrics.holdout_auc")
                 auc_str = f"{holdout_auc:.4f}" if holdout_auc is not None else "?"
                 rid = row["run_id"][:8]
