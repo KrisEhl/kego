@@ -215,10 +215,12 @@ def main():
         pid, start_pos, _ = pid_info
         after = text[start_pos:]
         if mname.startswith("realmlp"):
-            cnt = len(re.findall(rf"pid={pid}.*?LOCAL_RANK:", after))
+            # Count completed folds via Trainer.fit stopped (one per fold)
+            cnt = len(re.findall(rf"pid={pid}.*?Trainer\.fit.*stopped", after))
         else:
             cnt = len(re.findall(rf"pid={pid}.*?epoch\s+train_loss", after))
-        fold_counts[(mname, seed)] = min(max(0, cnt - 1), folds_n)
+            cnt = max(0, cnt - 1)  # header printed at fold start, so -1
+        fold_counts[(mname, seed)] = min(cnt, folds_n)
 
     # Compute how long each running task has been running
     task_elapsed = {}  # (model, seed) -> seconds running
