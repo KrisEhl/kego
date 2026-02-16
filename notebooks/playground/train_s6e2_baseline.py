@@ -622,7 +622,12 @@ def _hill_climbing(
     return best_weights
 
 
-def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dict:
+def get_models(
+    n_features: int,
+    fast: bool = False,
+    fast_full: bool = False,
+    neural: bool = False,
+) -> dict:
     """Build model configs with GPU acceleration for GBDT models."""
     all_models = {
         # === CPU models ===
@@ -990,6 +995,8 @@ def get_models(n_features: int, fast: bool = False, neural: bool = False) -> dic
                 all_models[name]["kwargs"]["n_epochs"] = 64
             elif name in ("resnet", "ft_transformer"):
                 all_models[name]["kwargs"]["max_epochs"] = 50
+    elif fast_full:
+        all_models = {k: v for k, v in all_models.items() if k in FAST_MODELS}
     elif neural:
         all_models = {k: v for k, v in all_models.items() if k in NEURAL_ONLY_MODELS}
         for name in all_models:
@@ -1547,6 +1554,11 @@ def main():
         help="Fast iteration: 5 folds, 1 seed, core models only (~3-5 min)",
     )
     parser.add_argument(
+        "--fast-full",
+        action="store_true",
+        help="Core models only with full CV: 10 folds, 3 seeds (~15-20 min)",
+    )
+    parser.add_argument(
         "--neural",
         action="store_true",
         help="Neural models only: 5 folds, 1 seed (resnet, ft_transformer, realmlp)",
@@ -1651,7 +1663,9 @@ def main():
     logger.info(f"Feature set: {args.features} ({len(features)} features)")
 
     n_features = len(features)
-    models = get_models(n_features, fast=args.fast, neural=args.neural)
+    models = get_models(
+        n_features, fast=args.fast, fast_full=args.fast_full, neural=args.neural
+    )
 
     # Filter to specific models if requested
     if args.models:
@@ -1681,6 +1695,8 @@ def main():
         seeds, folds_n = SEEDS_FAST, 2
     elif args.fast or args.neural:
         seeds, folds_n = SEEDS_FAST, 5
+    elif args.fast_full:
+        seeds, folds_n = SEEDS_FULL, 10
     else:
         seeds, folds_n = SEEDS_FULL, 10
 
@@ -1691,7 +1707,11 @@ def main():
     mode_name = (
         "debug"
         if args.debug
-        else "fast" if args.fast else "neural" if args.neural else "full"
+        else (
+            "fast"
+            if args.fast
+            else "fast-full" if args.fast_full else "neural" if args.neural else "full"
+        )
     )
     tag = args.tag or mode_name
 
