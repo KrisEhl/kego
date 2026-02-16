@@ -22,6 +22,7 @@ The original data is combined with the synthetic training data during training t
 
 - `train_s6e2_baseline.py` — 19-model ensemble with multi-seed averaging and Ridge stacking (runs on Ray cluster)
 - `compare_stacking.py` — Stacking comparison: simple average vs Ridge vs LightGBM meta-models
+- `select_features.py` — Fine-grained feature selection: per-feature ablation + forward selection with multi-seed averaging
 - `test_features_local.py` — Local CPU feature engineering comparison (LightGBM + LogReg)
 - `submit_s6e2.sh` — Submit predictions via Kaggle CLI
 - `explore_s6e2.py` — EDA and data exploration
@@ -129,3 +130,107 @@ Compared simple averaging vs learned meta-models on holdout AUC. Script: `compar
 6. **ST depression** / **Slope of ST**
 7. **Age**, **Sex** — moderate
 8. **BP**, **FBS over 120**, **Cholesterol** — near-zero value
+
+## Feature Selection (Fine-Grained)
+
+Script: `select_features.py` — per-feature ablation + forward selection, multi-seed averaged (seeds 42/123/777, 56K train, 14K holdout).
+
+### Method
+
+1. **Permutation importance** ranks features by how much shuffling them hurts AUC
+2. **Drop-one-at-a-time ablation** trains LightGBM on all-but-one feature (3 seeds), measures AUC delta vs baseline — identifies features that actively hurt
+3. **Forward selection** adds features one at a time in permutation importance order (3 seeds), finds the optimal count where adding more stops helping
+
+### Ablation Results (multi-seed baseline AUC: 0.95039)
+
+Features sorted by impact of removal (positive delta = removing it **improves** AUC):
+
+| Feature | AUC without | Delta | Verdict |
+|---|---|---|---|
+| maxhr_per_age | 0.95070 | +0.00031 | **HARMFUL** |
+| Max HR_dev_sex | 0.95051 | +0.00012 | **HARMFUL** |
+| thallium_x_chestpain | 0.95048 | +0.00008 | **HARMFUL** |
+| thallium_abnormal | 0.95045 | +0.00006 | **HARMFUL** |
+| thallium_x_stdep | 0.95045 | +0.00005 | **HARMFUL** |
+| heart_load | 0.95042 | +0.00003 | **HARMFUL** |
+| vessels_x_thallium | 0.95042 | +0.00003 | **HARMFUL** |
+| Exercise angina | 0.95041 | +0.00002 | **HARMFUL** |
+| age_x_maxhr | 0.95041 | +0.00001 | harmful-ish |
+| hr_reserve_pct | 0.95041 | +0.00001 | harmful-ish |
+| thallium_x_sex | 0.95040 | +0.00001 | harmful-ish |
+| Thallium | 0.95040 | +0.00001 | harmful-ish |
+| chestpain_x_angina | 0.95040 | +0.00001 | harmful-ish |
+| BP | 0.95039 | +0.00000 | neutral |
+| Number of vessels fluro | 0.95038 | -0.00001 | helpful |
+| age_x_stdep | 0.95038 | -0.00001 | helpful |
+| thallium_x_slope | 0.95038 | -0.00001 | helpful |
+| Cholesterol_dev_sex | 0.95037 | -0.00002 | helpful |
+| FBS over 120 | 0.95037 | -0.00002 | helpful |
+| BP_dev_sex | 0.95037 | -0.00002 | helpful |
+| signal_conflict | 0.95037 | -0.00002 | helpful |
+| abnormal_count | 0.95036 | -0.00003 | helpful |
+| risk_score | 0.95036 | -0.00003 | helpful |
+| ST depression_dev_sex | 0.95035 | -0.00004 | helpful |
+| angina_x_stdep | 0.95035 | -0.00004 | helpful |
+| chestpain_x_slope | 0.95034 | -0.00005 | helpful |
+| Cholesterol | 0.95033 | -0.00006 | helpful |
+| Sex | 0.95033 | -0.00006 | helpful |
+| ST depression | 0.95033 | -0.00006 | helpful |
+| Max HR | 0.95033 | -0.00006 | helpful |
+| Slope of ST | 0.95033 | -0.00006 | helpful |
+| top4_sum | 0.95029 | -0.00010 | helpful |
+| Chest pain type | 0.95026 | -0.00013 | helpful |
+| Age | 0.95024 | -0.00015 | helpful |
+| EKG results | 0.94940 | -0.00099 | **critical** |
+
+### Forward Selection (optimal feature count)
+
+Adding features in permutation importance order, AUC peaks at **16 features** (0.95068):
+
+| N | Added feature | AUC | Delta |
+|---|---|---|---|
+| 1 | abnormal_count | 0.91278 | — |
+| 2 | top4_sum | 0.93152 | +0.01875 |
+| 3 | Max HR | 0.94496 | +0.01344 |
+| 4 | Chest pain type | 0.94804 | +0.00307 |
+| 5 | maxhr_per_age | 0.94905 | +0.00102 |
+| 6 | EKG results | 0.95019 | +0.00113 |
+| 7-10 | thallium_x_chestpain, Sex, risk_score, ST depression | 0.95042 | +0.00023 |
+| 11-16 | vessels_fluro, chestpain_x_slope, Age, BP, Cholesterol, chestpain_x_angina | **0.95068** | +0.00026 |
+| 17-35 | remaining 19 features | 0.95041 | -0.00027 |
+
+The first 6 features get 99.5% of the way there. Features 17+ actively degrade AUC.
+
+### Feature Set Comparison (multi-seed, LightGBM + LogReg)
+
+| Feature set | LightGBM AUC | LogReg AUC |
+|---|---|---|
+| All features (35) | 0.95039 | 0.94725 |
+| Raw only (13) | 0.95097 | 0.83882 |
+| Forward-selected (16) | 0.95068 | 0.94701 |
+| **Ablation-pruned (21)** | **0.95122** | 0.94668 |
+
+### Why Features Help or Hurt
+
+**Most valuable features (removing them hurts significantly):**
+- **EKG results** (-0.00099): Strongest individual contribution. Carries unique signal about cardiac electrical activity that no other feature captures.
+- **Age** (-0.00015): Independent risk factor, interacts with everything.
+- **Chest pain type** (-0.00013): Core diagnostic feature, 4 categories with clear risk gradient.
+- **top4_sum** (-0.00010): Composite of Thallium + Chest pain + Vessels + Angina. Gives trees a pre-computed "overall risk" split point that's hard to reconstruct from individual features.
+
+**Harmful features (removing them improves AUC):**
+- **maxhr_per_age** (+0.00031, worst offender): Despite ranking #5 in permutation importance, it's redundant — Max HR and Age are both present, and trees can learn their ratio implicitly. The explicit ratio adds noise through correlated splits.
+- **Max HR_dev_sex** (+0.00012): Deviation from sex-group mean is just a linear transform of Max HR + Sex, both already present. Adds collinearity without new signal.
+- **thallium_x_chestpain** (+0.00008): Both Thallium and Chest pain type are categorical-ish — their product creates a noisy pseudo-continuous feature that trees handle worse than splitting on the originals separately.
+- **thallium_abnormal** (+0.00006): Binary threshold of Thallium >= 6. Strictly less informative than the original Thallium ordinal values.
+- **Thallium** (+0.00001): Surprising — the raw Thallium column is mildly harmful because `abnormal_count` and `top4_sum` already encode its signal more effectively in composite form. Trees don't need the raw column when the composites are present.
+- **Exercise angina** (+0.00002): Similarly absorbed into `abnormal_count` and `top4_sum`.
+- **heart_load** / **vessels_x_thallium** / **age_x_maxhr**: Interaction features that trees discover natively. Adding them explicitly just creates correlated split candidates that dilute feature sampling (`colsample_bytree=0.9`).
+
+**Key insight:** Permutation importance and ablation disagree on several features (e.g., `maxhr_per_age` ranks #5 by importance but is the #1 most harmful). This is because permutation importance measures how much *shuffling* a feature hurts predictions on a model that was *trained with it*, while ablation measures whether the model is *better off without it entirely*. A feature can be important to a model that learned to use it, yet harmful compared to a model that never saw it.
+
+### Recommendations
+
+- **For trees (LightGBM/XGBoost/CatBoost):** Use ablation-pruned (21 features) — it scored highest at 0.95122. Alternatively, raw-only (13) at 0.95097 is simpler and nearly as good.
+- **For NNs (ResNet/FTTransformer/RealMLP):** Use forward-selected (16 features) or raw-only. NNs benefit more from engineered composites (abnormal_count, top4_sum) since they struggle with discrete interactions. LogReg AUC (proxy for NNs) favors keeping engineered features.
+- **For ensemble diversity:** Train tree models on ablation-pruned and NNs on forward-selected to maximize prediction decorrelation.

@@ -53,7 +53,7 @@ make stop                 # Stop Ray on this node
 - **`datasets/`** — DataFrame utilities, `split_dataset()` (3-way split with optional stratification), `build_xy()`, normalization.
 - **`plotting/`** — Matplotlib wrappers: grid layouts (`create_axes_grid`), scatter, histograms, lines, heatmaps, timeseries.
 - **`competitions/`** — Competition-specific code (RNA models/datasets, Ariel features/metrics, PII tokenization, ARC images).
-- **`torch/`** — Device detection utilities (CUDA/CPU). Torch is an optional dependency—imported lazily via `imports.py`.
+- **`gpu/`** — Device detection utilities (CUDA/CPU). Torch is an optional dependency—imported lazily via `imports.py`.
 - **`constants.py`** — Type aliases, default paths. Data path overridden by `KEGO_PATH_DATA` env var.
 - **`parallelize.py`** — Multiprocessing wrapper.
 

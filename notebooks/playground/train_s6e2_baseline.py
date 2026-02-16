@@ -79,6 +79,76 @@ CAT_FEATURES = [
 ]
 TE_FEATURES = ["Thallium", "Chest pain type", "Slope of ST", "EKG results"]
 
+# Feature sets identified by select_features.py (multi-seed ablation + forward selection).
+# See notebooks/playground/README.md "Feature Selection (Fine-Grained)" for details.
+FEATURES_ABLATION_PRUNED = [
+    # Raw features that help (10)
+    "Age",
+    "Sex",
+    "Chest pain type",
+    "Cholesterol",
+    "FBS over 120",
+    "EKG results",
+    "Max HR",
+    "ST depression",
+    "Slope of ST",
+    "Number of vessels fluro",
+    # Engineered features that help (11)
+    "thallium_x_slope",
+    "chestpain_x_slope",
+    "angina_x_stdep",
+    "top4_sum",
+    "abnormal_count",
+    "risk_score",
+    "age_x_stdep",
+    "Cholesterol_dev_sex",
+    "BP_dev_sex",
+    "ST depression_dev_sex",
+    "signal_conflict",
+]
+
+FEATURES_FORWARD_SELECTED = [
+    "abnormal_count",
+    "top4_sum",
+    "Max HR",
+    "Chest pain type",
+    "maxhr_per_age",
+    "EKG results",
+    "thallium_x_chestpain",
+    "Sex",
+    "risk_score",
+    "ST depression",
+    "Number of vessels fluro",
+    "chestpain_x_slope",
+    "Age",
+    "BP",
+    "Cholesterol",
+    "chestpain_x_angina",
+]
+
+RAW_FEATURES = [
+    "Age",
+    "Sex",
+    "Chest pain type",
+    "BP",
+    "Cholesterol",
+    "FBS over 120",
+    "EKG results",
+    "Max HR",
+    "Exercise angina",
+    "ST depression",
+    "Slope of ST",
+    "Number of vessels fluro",
+    "Thallium",
+]
+
+FEATURE_SETS = {
+    "all": None,  # resolved at runtime from DataFrame columns
+    "raw": RAW_FEATURES,
+    "ablation-pruned": FEATURES_ABLATION_PRUNED,
+    "forward-selected": FEATURES_FORWARD_SELECTED,
+}
+
 
 def make_te_preprocess(te_features, drop_original=False):
     """Create a fold_preprocess callback that applies target encoding per CV fold.
@@ -1505,6 +1575,13 @@ def main():
         help="Submit to Kaggle after generating submission.csv and log LB score to MLflow",
     )
     parser.add_argument(
+        "--features",
+        type=str,
+        default="ablation-pruned",
+        choices=list(FEATURE_SETS.keys()),
+        help="Feature set to use (default: ablation-pruned)",
+    )
+    parser.add_argument(
         "--models",
         nargs="+",
         metavar="MODEL",
@@ -1566,8 +1643,13 @@ def main():
     holdout = _engineer_features(holdout)
     test = _engineer_features(test)
 
-    # Features = all columns except id and target
-    features = [c for c in train.columns if c not in ["id", TARGET]]
+    # Select feature set
+    if args.features == "all":
+        features = [c for c in train.columns if c not in ["id", TARGET]]
+    else:
+        features = FEATURE_SETS[args.features]
+    logger.info(f"Feature set: {args.features} ({len(features)} features)")
+
     n_features = len(features)
     models = get_models(n_features, fast=args.fast, neural=args.neural)
 
@@ -1579,6 +1661,20 @@ def main():
             logger.info(f"Available: {list(models.keys())}")
             sys.exit(1)
         models = {k: v for k, v in models.items() if k in args.models}
+
+    # Filter cat_features in model configs to match the active feature set
+    active_set = set(features)
+    for config in models.values():
+        if "cat_features" in config.get("kwargs", {}):
+            config["kwargs"]["cat_features"] = [
+                c for c in config["kwargs"]["cat_features"] if c in active_set
+            ]
+        if "categorical_feature" in config.get("kwargs_fit", {}):
+            config["kwargs_fit"]["categorical_feature"] = [
+                c
+                for c in config["kwargs_fit"]["categorical_feature"]
+                if c in active_set
+            ]
 
     # Configure seeds and folds based on mode
     if args.debug:
