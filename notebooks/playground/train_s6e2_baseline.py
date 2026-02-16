@@ -14,7 +14,11 @@ import xgboost as xgb
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
 from pytabkit import RealMLP_TD_Classifier
-from rtdl_num_embeddings import PeriodicEmbeddings
+from rtdl_num_embeddings import (
+    PeriodicEmbeddings,
+    PiecewiseLinearEmbeddings,
+    compute_bins,
+)
 from rtdl_revisiting_models import FTTransformer, ResNet
 from scipy.stats import rankdata
 from sklearn.calibration import CalibratedClassifierCV
@@ -63,6 +67,8 @@ FAST_MODELS = {
 NEURAL_ONLY_MODELS = {
     "resnet",
     "ft_transformer",
+    "resnet_ple",
+    "ft_transformer_ple",
     "realmlp",
 }
 GPU_MODEL_PREFIXES = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
@@ -271,17 +277,26 @@ class ResNetModule(nn.Module):
         frequency_init_scale=0.01,
         d_embedding=24,
         noise_std=0.01,
+        bins=None,
     ):
         super().__init__()
         self.noise = GaussianNoise(std=noise_std)
-        self.num_embeddings = PeriodicEmbeddings(
-            n_features=d_in,
-            d_embedding=d_embedding,
-            n_frequencies=n_frequencies,
-            frequency_init_scale=frequency_init_scale,
-            activation=True,
-            lite=False,
-        )
+        if bins is not None:
+            self.num_embeddings = PiecewiseLinearEmbeddings(
+                bins=bins,
+                d_embedding=d_embedding,
+                activation=True,
+                version="B",
+            )
+        else:
+            self.num_embeddings = PeriodicEmbeddings(
+                n_features=d_in,
+                d_embedding=d_embedding,
+                n_frequencies=n_frequencies,
+                frequency_init_scale=frequency_init_scale,
+                activation=True,
+                lite=False,
+            )
         self.net = ResNet(
             d_in=d_in * d_embedding,
             d_out=d_out,
@@ -333,7 +348,7 @@ class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
 
 
 class SkorchResNet:
-    """ResNet with QuantileTransformer + periodic embeddings + Gaussian noise."""
+    """ResNet with QuantileTransformer + periodic/PLE embeddings + Gaussian noise."""
 
     def __init__(
         self,
@@ -348,6 +363,8 @@ class SkorchResNet:
         batch_size=256,
         num_workers=0,
         random_state=42,
+        embedding_type="periodic",
+        n_bins=48,
     ):
         self.d_block = d_block
         self.n_blocks = n_blocks
@@ -360,6 +377,8 @@ class SkorchResNet:
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.random_state = random_state
+        self.embedding_type = embedding_type
+        self.n_bins = n_bins
 
     def fit(self, X, y, **kwargs):
         torch.manual_seed(self.random_state)
@@ -372,6 +391,18 @@ class SkorchResNet:
         y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
         d_in = X_np.shape[1]
 
+        bins = None
+        if self.embedding_type == "ple":
+            X_tensor = torch.from_numpy(X_np)
+            y_tensor = torch.from_numpy(y_np)
+            bins = compute_bins(
+                X_tensor,
+                n_bins=self.n_bins,
+                tree_kwargs={"min_samples_leaf": 64},
+                y=y_tensor,
+                regression=False,
+            )
+
         self.net = AMPNeuralNetBinaryClassifier(
             ResNetModule,
             module__d_in=d_in,
@@ -381,6 +412,7 @@ class SkorchResNet:
             module__d_hidden_multiplier=self.d_hidden_multiplier,
             module__dropout1=self.dropout1,
             module__dropout2=self.dropout2,
+            module__bins=bins,
             criterion=nn.BCEWithLogitsLoss,
             optimizer=torch.optim.AdamW,
             lr=self.lr,
@@ -434,6 +466,7 @@ class FTTransformerModule(nn.Module):
         n_frequencies=48,
         frequency_init_scale=0.01,
         noise_std=0.01,
+        bins=None,
     ):
         super().__init__()
         self.n_cont = n_cont_features
@@ -450,16 +483,24 @@ class FTTransformerModule(nn.Module):
             ffn_dropout=ffn_dropout,
             residual_dropout=residual_dropout,
         )
-        # Replace the default LinearEmbeddings with PeriodicEmbeddings
+        # Replace the default LinearEmbeddings with PLE or PeriodicEmbeddings
         if n_cont_features > 0:
-            self.net.cont_embeddings = PeriodicEmbeddings(
-                n_features=n_cont_features,
-                d_embedding=d_block,
-                n_frequencies=n_frequencies,
-                frequency_init_scale=frequency_init_scale,
-                activation=True,
-                lite=False,
-            )
+            if bins is not None:
+                self.net.cont_embeddings = PiecewiseLinearEmbeddings(
+                    bins=bins,
+                    d_embedding=d_block,
+                    activation=True,
+                    version="B",
+                )
+            else:
+                self.net.cont_embeddings = PeriodicEmbeddings(
+                    n_features=n_cont_features,
+                    d_embedding=d_block,
+                    n_frequencies=n_frequencies,
+                    frequency_init_scale=frequency_init_scale,
+                    activation=True,
+                    lite=False,
+                )
 
     def forward(self, X):
         x_cont = X[:, : self.n_cont]
@@ -487,6 +528,8 @@ class SkorchFTTransformer:
         batch_size=256,
         num_workers=0,
         random_state=42,
+        embedding_type="periodic",
+        n_bins=48,
     ):
         self.cat_features = cat_features or []
         self.n_blocks = n_blocks
@@ -502,6 +545,8 @@ class SkorchFTTransformer:
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.random_state = random_state
+        self.embedding_type = embedding_type
+        self.n_bins = n_bins
 
     def _prepare(self, X, fit=False):
         if isinstance(X, pd.DataFrame):
@@ -546,6 +591,19 @@ class SkorchFTTransformer:
         y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
         n_cont = len(self.cont_cols) if self.cont_cols else X_prep.shape[1]
 
+        bins = None
+        if self.embedding_type == "ple" and n_cont > 0:
+            X_cont = X_prep[:, :n_cont]
+            X_tensor = torch.from_numpy(X_cont)
+            y_tensor = torch.from_numpy(y_np)
+            bins = compute_bins(
+                X_tensor,
+                n_bins=self.n_bins,
+                tree_kwargs={"min_samples_leaf": 64},
+                y=y_tensor,
+                regression=False,
+            )
+
         self.net = AMPNeuralNetBinaryClassifier(
             FTTransformerModule,
             module__n_cont_features=n_cont,
@@ -558,6 +616,7 @@ class SkorchFTTransformer:
             module__ffn_d_hidden_multiplier=self.ffn_d_hidden_multiplier,
             module__ffn_dropout=self.ffn_dropout,
             module__residual_dropout=self.residual_dropout,
+            module__bins=bins,
             criterion=nn.BCEWithLogitsLoss,
             optimizer=torch.optim.AdamW,
             lr=self.lr,
@@ -985,6 +1044,45 @@ def get_models(
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(TE_FEATURES),
         },
+        "resnet_ple": {
+            "model": SkorchResNet,
+            "kwargs": {
+                "d_block": 192,
+                "n_blocks": 3,
+                "d_hidden_multiplier": 2.0,
+                "dropout1": 0.15,
+                "dropout2": 0.0,
+                "lr": 1e-3,
+                "max_epochs": 200,
+                "patience": 20,
+                "batch_size": 4096,
+                "embedding_type": "ple",
+                "n_bins": 48,
+            },
+            "seed_key": "random_state",
+            "use_eval_set": False,
+            "fold_preprocess": make_te_preprocess(TE_FEATURES, drop_original=True),
+        },
+        "ft_transformer_ple": {
+            "model": SkorchFTTransformer,
+            "kwargs": {
+                "cat_features": CAT_FEATURES,
+                "n_blocks": 3,
+                "d_block": 96,
+                "attention_n_heads": 8,
+                "attention_dropout": 0.2,
+                "ffn_dropout": 0.1,
+                "lr": 1e-4,
+                "max_epochs": 200,
+                "patience": 20,
+                "batch_size": 2048,
+                "embedding_type": "ple",
+                "n_bins": 48,
+            },
+            "seed_key": "random_state",
+            "use_eval_set": False,
+            "fold_preprocess": make_te_preprocess(TE_FEATURES),
+        },
     }
 
     if fast:
@@ -993,7 +1091,7 @@ def get_models(
         for name in all_models:
             if name.startswith("realmlp"):
                 all_models[name]["kwargs"]["n_epochs"] = 64
-            elif name in ("resnet", "ft_transformer"):
+            elif name.startswith(("resnet", "ft_transformer")):
                 all_models[name]["kwargs"]["max_epochs"] = 50
     elif fast_full:
         all_models = {k: v for k, v in all_models.items() if k in FAST_MODELS}
@@ -1002,7 +1100,7 @@ def get_models(
         for name in all_models:
             if name.startswith("realmlp"):
                 all_models[name]["kwargs"]["n_epochs"] = 64
-            elif name in ("resnet", "ft_transformer"):
+            elif name.startswith(("resnet", "ft_transformer")):
                 all_models[name]["kwargs"]["max_epochs"] = 100
 
     return all_models
@@ -1407,7 +1505,7 @@ def _train_ensemble(
                 opts = {"num_gpus": 1, "num_cpus": 1, "resources": {"heavy_gpu": 1}}
             elif model_name.startswith("realmlp"):
                 opts = {"num_gpus": 1, "num_cpus": 2, "resources": {"heavy_gpu": 1}}
-            elif model_name == "ft_transformer":
+            elif model_name.startswith("ft_transformer"):
                 opts = {"num_gpus": 1, "num_cpus": 2, "resources": {"heavy_gpu": 1}}
             elif is_neural:
                 opts = {"num_gpus": 0.5, "num_cpus": 2, "resources": {"heavy_gpu": 0.5}}
