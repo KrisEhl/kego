@@ -108,6 +108,17 @@ def _collect_and_filter(args):
             print(f"No runs for models: {args.model}")
             sys.exit(1)
 
+    if args.features:
+        col = "params.feature_set"
+        if col in runs_df.columns:
+            runs_df = runs_df[runs_df[col] == args.features]
+        else:
+            # Column missing means no runs have feature_set logged
+            runs_df = runs_df.iloc[0:0]
+        if runs_df.empty:
+            print(f"No runs with feature_set={args.features}")
+            sys.exit(1)
+
     return runs_df.sort_values(
         ["params.model", "metrics.holdout_auc"], ascending=[True, False]
     )
@@ -185,12 +196,14 @@ def _print_runs_table(runs_df):
                 holdout_auc = row.get("metrics.holdout_auc")
                 auc_str = f"{holdout_auc:.4f}" if holdout_auc is not None else "?"
                 rid = row["run_id"][:8]
+                feat = row.get("params.feature_set") or ""
+                feat_str = f"  feat: {feat}" if feat else ""
                 dim = "\033[2m" if not has_preds else ""
                 reset = "\033[0m" if not has_preds else ""
                 print(
                     f"  {dim}{'':<{max_exp_len}s}  "
                     f"  seed: {seed:<5s} folds: {folds:<4s} "
-                    f"holdout: {auc_str}  {rid}{reset}"
+                    f"holdout: {auc_str}  {rid}{feat_str}{reset}"
                 )
         print()
 
@@ -362,6 +375,11 @@ def _add_filter_args(parser):
     )
     parser.add_argument(
         "--model", nargs="+", default=None, help="Only consider these model types"
+    )
+    parser.add_argument(
+        "--features",
+        default=None,
+        help="Only consider runs with this feature set (e.g. ablation-pruned)",
     )
 
 

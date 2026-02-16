@@ -1093,7 +1093,16 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
 @ray.remote
 def _train_single_model(
-    train, test, holdout, features, target, model_name, model_config, seed, folds_n=10
+    train,
+    test,
+    holdout,
+    features,
+    target,
+    model_name,
+    model_config,
+    seed,
+    folds_n=10,
+    feature_set="all",
 ):
     """Train one model with one seed on a Ray worker."""
     import os
@@ -1144,6 +1153,7 @@ def _train_single_model(
             "model": model_name,
             "seed": seed,
             "folds_n": folds_n,
+            "feature_set": feature_set,
             **{
                 k: v
                 for k, v in model_config["kwargs"].items()
@@ -1367,7 +1377,15 @@ def _load_predictions_from_ensemble(ensemble_name, tracking_uri):
 
 
 def _train_ensemble(
-    train, holdout, test, features, models, seeds, tag="full", folds_n=10
+    train,
+    holdout,
+    test,
+    features,
+    models,
+    seeds,
+    tag="full",
+    folds_n=10,
+    feature_set="all",
 ):
     """Train all models with multiple seeds via Ray and return ensemble predictions."""
     # Share data via Ray object store (stored once, shared across all tasks)
@@ -1407,6 +1425,7 @@ def _train_ensemble(
                 config,
                 seed,
                 folds_n,
+                feature_set,
             )
             futures.append(future)
             device = f"GPU {opts['num_gpus']}" if is_gpu else "CPU"
@@ -1795,6 +1814,7 @@ def main():
             seeds=seeds,
             folds_n=folds_n,
             tag=tag,
+            feature_set=args.features,
         )
 
     # Generate submission

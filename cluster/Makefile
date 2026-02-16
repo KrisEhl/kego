@@ -114,7 +114,7 @@ promote:
 auto-promote:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make auto-promote ENSEMBLE=submit-v1 EXPERIMENT='full-v1 gbdt-v1' [FOLDS=10]"; echo "       make auto-promote ENSEMBLE=submit-v1 ALL=1 [FOLDS=10]"; exit 1)
 	@test -n "$(EXPERIMENT)$(ALL)" || (echo "Error: set EXPERIMENT='...' or ALL=1"; exit 1)
-	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py auto $(ENSEMBLE) $(if $(ALL),--all,--experiment $(EXPERIMENT)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS))
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py auto $(ENSEMBLE) $(if $(ALL),--all,--experiment $(EXPERIMENT)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(FEATURES),--features $(FEATURES))
 
 list-ensemble:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make list-ensemble ENSEMBLE=submit-v1"; exit 1)
@@ -125,4 +125,4 @@ clear-ensemble:
 	@MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py clear $(ENSEMBLE)
 
 search-runs:
-	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py search $(if $(ALL),--all,$(if $(EXPERIMENT),--experiment $(EXPERIMENT),--all)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(SEEDS),--seeds $(SEEDS))
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py search $(if $(ALL),--all,$(if $(EXPERIMENT),--experiment $(EXPERIMENT),--all)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(SEEDS),--seeds $(SEEDS)) $(if $(FEATURES),--features $(FEATURES))
