@@ -44,20 +44,28 @@ The original data is combined with the synthetic training data during training t
 
 The holdout AUC consistently overestimates the leaderboard score by ~0.0026. This gap is stable across runs, so holdout improvements should translate 1:1 to LB improvements.
 
-### Individual Model Holdout AUC (Run 6, in progress)
+### Individual Model Holdout AUC (ablation-pruned, 21 features, 3 seeds, 10 folds)
 
-| Model | Holdout AUC | Type |
-|-------|-------------|------|
-| xgboost_reg | 0.9559 | GPU GBDT |
-| xgboost_shallow | 0.9559 | GPU GBDT |
+| Model | Avg Holdout AUC | Type |
+|-------|-----------------|------|
+| catboost | 0.9560 | GPU GBDT |
+| catboost_shallow | 0.9560 | GPU GBDT |
+| lightgbm | 0.9560 | CPU GBDT |
+| xgboost_reg | 0.9560 | GPU GBDT |
+| xgboost_shallow | 0.9560 | GPU GBDT |
 | lightgbm_small | 0.9559 | CPU GBDT |
-| xgboost | 0.9558 | GPU GBDT |
-| xgboost_deep | 0.9554 | GPU GBDT |
-| logistic_regression | 0.9514 | CPU linear |
-| extra_trees | 0.9509 | CPU tree |
-| random_forest | 0.9504 | CPU tree |
-
-*24/57 tasks done. CatBoost, remaining LightGBM, neural models pending.*
+| xgboost | 0.9559 | GPU GBDT |
+| lightgbm_large | 0.9558 | CPU GBDT |
+| catboost_deep | 0.9558 | GPU GBDT |
+| xgboost_dart | 0.9558 | GPU GBDT |
+| xgboost_deep | 0.9555 | GPU GBDT |
+| realmlp | 0.9547 | GPU neural |
+| ft_transformer | 0.9545 | GPU neural |
+| lightgbm_dart | 0.9540 | CPU GBDT |
+| resnet | 0.9539 | GPU neural |
+| logistic_regression | 0.9529 | CPU linear |
+| random_forest | 0.9528 | CPU tree |
+| extra_trees | 0.9513 | CPU tree |
 
 ## Experiment Log
 
@@ -68,9 +76,9 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | 3 | StandardScaler for LogisticRegression | 0.9562 | 0.95359 | +0.00000 | Fixed convergence warnings but Ridge already compensated for scale |
 | 4 | Pseudo-labeling (high-confidence test preds as extra training data) | 0.9562 | 0.95359 | +0.00000 | 136k confident samples added, no improvement. Reverted |
 | 5 | Multi-seed ensembling (3 seeds x 8 models) | 0.9562 | 0.95360 | +0.00001 | Tiny variance reduction |
-| 6 | 19 models on Ray cluster (+ neural + GBDT variants) | — | — | — | Completed, individual runs in MLflow |
+| 6 | 19 models on Ray cluster (+ neural + GBDT variants), 35 features | — | — | — | Completed, individual runs in MLflow |
 | submit-v1 | Curated ensemble, 14 models x 3 seeds, 10 folds | — | 0.95341 | -0.00019 | 40 runs; missing ft_transformer/realmlp (not finished), catboost only 1 seed |
-| 7 | Categorical handling + new Thallium FE + risk scores | — | — | — | Queued |
+| 7 | Feature selection: ablation-pruned (21 features), 18 models x 3 seeds x 10 folds | — | — | — | All models complete. Top GBDTs at 0.9560, neural models 0.9539-0.9547 |
 
 ### Local Feature Validation (5-fold CV on full train, CPU, single LightGBM/LogReg)
 
@@ -114,10 +122,12 @@ Compared simple averaging vs learned meta-models on holdout AUC. Script: `compar
 
 ## Key Observations
 
-- The top GBDT models (XGB, XGB-reg, LGB, CB) all plateau at ~0.9559 holdout AUC individually
-- Weaker models (LR: 0.9514, RF: 0.9504, ET: 0.9509) still contribute to the ensemble through diversity
+- The top GBDT models (XGB, LGB, CB variants) all plateau at ~0.9560 holdout AUC individually with ablation-pruned features
+- Neural models (RealMLP: 0.9547, FT-Transformer: 0.9545, ResNet: 0.9539) are weaker individually but contribute ensemble diversity
+- Weaker models (LR: 0.9529, RF: 0.9528, ET: 0.9513) still contribute to the ensemble through diversity
 - Hill climbing tends to put nearly all weight on the strongest models, making it equivalent to just using those models
 - Ridge stacking is more robust, finding useful signal even in weaker models
+- Ablation-pruned (21 features) slightly outperforms all-35 features for LightGBM (0.95122 vs 0.95039 on local validation)
 - Improvements are in the 5th decimal place — this competition has a very tight leaderboard
 
 ## Feature Importance
