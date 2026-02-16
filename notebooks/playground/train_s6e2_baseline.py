@@ -642,8 +642,8 @@ def get_models(
             "model": RandomForestClassifier,
             "kwargs": {
                 "n_estimators": 500,
-                "max_depth": None,
-                "min_samples_leaf": 2,
+                "max_depth": 20,
+                "min_samples_leaf": 5,
                 "random_state": 42,
                 "n_jobs": -1,
             },
@@ -654,8 +654,8 @@ def get_models(
             "model": ExtraTreesClassifier,
             "kwargs": {
                 "n_estimators": 500,
-                "max_depth": None,
-                "min_samples_leaf": 2,
+                "max_depth": 20,
+                "min_samples_leaf": 5,
                 "random_state": 42,
                 "n_jobs": -1,
             },
