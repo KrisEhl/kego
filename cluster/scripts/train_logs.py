@@ -121,13 +121,21 @@ def main():
             gpu_amounts[key] = float(m.group(3))
     started = set(re.findall(rf"\[({LID})\] Starting seed=(\d+)", text))
     finished = set(re.findall(rf"\[({LID})\] Finished seed=(\d+)", text))
-    running = started - finished
-    unscheduled = all_planned - started - finished
 
-    # Completed tasks with AUC
+    # Completed tasks with AUC (driver-side — always present even if worker logs
+    # are truncated by Ray's log stream for fast-completing tasks)
     completed = re.findall(
         rf"\[(\d+)/(\d+)\] ({LID}) seed=(\d+).*?Holdout AUC: ([\d.]+)", text
     )
+
+    # Supplement worker-side sets with driver-side completions to avoid
+    # overcounting unscheduled when Ray truncates fast worker output
+    driver_completed = {(c[2], c[3]) for c in completed}
+    started = started | driver_completed
+    finished = finished | driver_completed
+
+    running = started - finished
+    unscheduled = all_planned - started
 
     # Per-task durations and IPs from worker Finished lines
     task_durations = {}
