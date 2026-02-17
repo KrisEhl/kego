@@ -22,6 +22,7 @@ The original data is combined with the synthetic training data during training t
 
 - `train_s6e2_baseline.py` — 19-model ensemble with multi-seed averaging and Ridge stacking (runs on Ray cluster)
 - `compare_stacking.py` — Stacking comparison: simple average vs Ridge vs LightGBM meta-models
+- `analyze_ensemble.py` — Greedy forward selection and leave-one-out analysis of ensemble members
 - `select_features.py` — Fine-grained feature selection: per-feature ablation + forward selection with multi-seed averaging
 - `test_features_local.py` — Local CPU feature engineering comparison (LightGBM + LogReg)
 - `submit_s6e2.sh` — Submit predictions via Kaggle CLI
@@ -156,6 +157,39 @@ Neural models transform each scalar feature into a higher-dimensional embedding 
 **PLE vs Periodic**: PLE uses `compute_bins(X, y, regression=False)` to find bin edges supervised by the target, so bins concentrate where the feature-target relationship changes most. Periodic embeddings are unsupervised — they learn frequency representations during backpropagation. PLE variants use identical hyperparameters to their periodic counterparts for clean A/B comparison.
 
 **Gaussian noise** (`std=0.01`) is added to numerical features during training only (both ResNet and FT-Transformer) as regularization for synthetic data.
+
+## Ensemble Member Analysis
+
+Script: `analyze_ensemble.py` — greedy forward selection and leave-one-out analysis on the 18-model ensemble from `playground-s6e2-full` (ablation-pruned features, 3 seeds, 10 folds).
+
+### Greedy Forward Selection
+
+Starting from empty, adds models one at a time picking the highest holdout AUC gain:
+
+| Step | Model Added | Ensemble AUC | Delta | Spearman r |
+|------|-------------|-------------|-------|------------|
+| 1 | xgboost_reg | 0.95603 | — | — |
+| 2 | catboost_shallow | 0.95606 | +0.00003 | 0.999 |
+| — | *16 models rejected* | — | -0.00002 to -0.00065 | 0.983–1.000 |
+
+Only 2 of 18 models survive. The greedy 2-model ensemble (0.95606) beats the full 18-model average (0.95558).
+
+### Leave-One-Out (full 18-model ensemble, AUC 0.95558)
+
+| Model | AUC without | Delta | Spearman r | Verdict |
+|-------|------------|-------|------------|---------|
+| extra_trees | 0.95566 | -0.00008 | 0.990 | HARMFUL |
+| random_forest | 0.95565 | -0.00007 | 0.987 | HARMFUL |
+| resnet | 0.95562 | -0.00004 | 0.996 | neutral |
+| ... 13 more neutral ... | | | | neutral |
+| xgboost_dart | 0.95553 | +0.00004 | 0.997 | helpful-ish |
+| xgboost_reg | 0.95553 | +0.00004 | 0.998 | helpful-ish |
+
+### Key Finding
+
+All 18 models are extremely correlated (Spearman r = 0.983–1.000), meaning the ensemble gets almost no diversity benefit. Adding models beyond the top 2 dilutes the best predictions rather than improving them. The extra_trees and random_forest models actively hurt — they are the least accurate and most different, but different in the wrong direction.
+
+**Implication:** To improve the ensemble, new models need to be genuinely diverse (different feature sets, different preprocessing, different problem formulations), not just more hyperparameter variants of the same GBDT recipe.
 
 ## What Worked
 
