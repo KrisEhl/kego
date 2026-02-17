@@ -1440,7 +1440,7 @@ def _run_optuna_study(
     elif any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES):
         resource_opts = {"num_gpus": 0.25, "num_cpus": 1}
     else:
-        resource_opts = {"num_cpus": 2}
+        resource_opts = {"num_cpus": 8}
 
     # Put data into Ray object store once
     train_ref = ray.put(train)
