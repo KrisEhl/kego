@@ -31,6 +31,16 @@ import mlflow
 TAG_PREFIX = "ensemble"
 
 
+def _learner_id(row):
+    """Build learner ID from a run row. Falls back to bare model name."""
+    model = row.get("params.model", "")
+    feat = row.get("params.feature_set", "")
+    folds = row.get("params.folds_n", "")
+    if feat and folds:
+        return f"{model}/{feat}/{folds}f"
+    return model
+
+
 def _get_client():
     uri = os.environ.get("MLFLOW_TRACKING_URI", "")
     if not uri:
@@ -119,13 +129,17 @@ def _collect_and_filter(args):
             print(f"No runs with feature_set={args.features}")
             sys.exit(1)
 
+    # Build learner ID for grouping
+    runs_df = runs_df.copy()
+    runs_df["_learner_id"] = runs_df.apply(_learner_id, axis=1)
+
     return runs_df.sort_values(
-        ["params.model", "metrics.holdout_auc"], ascending=[True, False]
+        ["_learner_id", "metrics.holdout_auc"], ascending=[True, False]
     )
 
 
 def _print_runs_table(runs_df):
-    """Print runs grouped by (model, experiment), showing seeds per experiment."""
+    """Print runs grouped by (learner_id, experiment), showing seeds per experiment."""
     exp_cache = {}
 
     def _exp_name(eid):
@@ -136,6 +150,8 @@ def _print_runs_table(runs_df):
 
     runs_df = runs_df.copy()
     runs_df["_exp_name"] = runs_df["experiment_id"].map(_exp_name)
+    if "_learner_id" not in runs_df.columns:
+        runs_df["_learner_id"] = runs_df.apply(_learner_id, axis=1)
 
     # Check prediction artifacts if not already done
     if "_has_predictions" not in runs_df.columns:
@@ -148,17 +164,17 @@ def _print_runs_table(runs_df):
     # Find max experiment name length for alignment
     max_exp_len = max(len(n) for n in runs_df["_exp_name"].unique())
 
-    for model_name, model_group in sorted(
-        runs_df.groupby("params.model"), key=lambda x: x[0]
+    for lid, learner_group in sorted(
+        runs_df.groupby("_learner_id"), key=lambda x: x[0]
     ):
-        avg_all = model_group["metrics.holdout_auc"].mean()
+        avg_all = learner_group["metrics.holdout_auc"].mean()
         avg_all_str = f"{avg_all:.4f}" if avg_all == avg_all else "?"
         print(
-            f"\033[1m{model_name}\033[0m  (avg holdout={avg_all_str} across all experiments)"
+            f"\033[1m{lid}\033[0m  (avg holdout={avg_all_str} across all experiments)"
         )
 
         exp_groups = sorted(
-            model_group.groupby("_exp_name"),
+            learner_group.groupby("_exp_name"),
             key=lambda x: -x[1]["metrics.holdout_auc"].mean(),
         )
         # Best avg only among experiments with predictions
@@ -192,18 +208,15 @@ def _print_runs_table(runs_df):
 
             for _, row in exp_group.iterrows():
                 seed = row.get("params.seed") or "?"
-                folds = row.get("params.folds_n") or "?"
                 holdout_auc = row.get("metrics.holdout_auc")
                 auc_str = f"{holdout_auc:.4f}" if holdout_auc is not None else "?"
                 rid = row["run_id"][:8]
-                feat = row.get("params.feature_set") or ""
-                feat_str = f"  feat: {feat}" if feat else ""
                 dim = "\033[2m" if not has_preds else ""
                 reset = "\033[0m" if not has_preds else ""
                 print(
                     f"  {dim}{'':<{max_exp_len}s}  "
-                    f"  seed: {seed:<5s} folds: {folds:<4s} "
-                    f"holdout: {auc_str}  {rid}{feat_str}{reset}"
+                    f"  seed: {seed:<5s} "
+                    f"holdout: {auc_str}  {rid}{reset}"
                 )
         print()
 
@@ -247,15 +260,21 @@ def cmd_auto(args):
     if skipped:
         print(f"  Skipping {skipped} runs without prediction artifacts\n")
 
+    if "_learner_id" not in valid_df.columns:
+        valid_df = valid_df.copy()
+        valid_df["_learner_id"] = valid_df.apply(_learner_id, axis=1)
+
     promoted = 0
-    for model_name, model_group in sorted(
-        valid_df.groupby("params.model"), key=lambda x: x[0]
+    for lid, learner_group in sorted(
+        valid_df.groupby("_learner_id"), key=lambda x: x[0]
     ):
-        # Find experiment with best avg holdout AUC for this model
+        # Find experiment with best avg holdout AUC for this learner
         best_exp_id = (
-            model_group.groupby("experiment_id")["metrics.holdout_auc"].mean().idxmax()
+            learner_group.groupby("experiment_id")["metrics.holdout_auc"]
+            .mean()
+            .idxmax()
         )
-        best_runs = model_group[model_group["experiment_id"] == best_exp_id]
+        best_runs = learner_group[learner_group["experiment_id"] == best_exp_id]
 
         for _, row in best_runs.iterrows():
             client.set_tag(row["run_id"], tag_key, "true")
@@ -264,10 +283,7 @@ def cmd_auto(args):
         avg_auc = best_runs["metrics.holdout_auc"].mean()
         avg_str = f"{avg_auc:.4f}" if avg_auc == avg_auc else "?"
         exp = _exp_name(best_exp_id)
-        print(
-            f"  {model_name}: {len(best_runs)} seeds from {exp} "
-            f"(avg holdout={avg_str})"
-        )
+        print(f"  {lid}: {len(best_runs)} seeds from {exp} " f"(avg holdout={avg_str})")
 
     print(f"\nPromoted {promoted} runs to ensemble '{args.ensemble}'")
 
