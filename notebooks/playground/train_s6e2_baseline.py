@@ -1290,9 +1290,28 @@ def _suggest_ft_transformer(trial):
     }
 
 
+def _suggest_xgboost(trial):
+    return {
+        "n_estimators": 2000,
+        "max_depth": trial.suggest_int("max_depth", 3, 10),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "min_child_weight": trial.suggest_int("min_child_weight", 1, 30),
+        "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.4, 1.0),
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+        "eval_metric": "auc",
+        "early_stopping_rounds": 100,
+        "tree_method": "hist",
+        "device": "cpu",
+        "enable_categorical": True,
+    }
+
+
 TUNE_SEARCH_SPACES = {
     "catboost": _suggest_catboost,
     "lightgbm": _suggest_lightgbm,
+    "xgboost": _suggest_xgboost,
     "ft_transformer": _suggest_ft_transformer,
 }
 
