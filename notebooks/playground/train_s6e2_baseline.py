@@ -1437,8 +1437,11 @@ def _run_optuna_study(
     import mlflow
     import optuna
 
-    # Determine Ray resource options (same logic as _train_ensemble)
-    if model_name.startswith("catboost"):
+    # Determine Ray resource options for tuning.
+    # XGBoost tuning uses CPU mode (device: "cpu" in search space).
+    if model_name.startswith("xgboost"):
+        resource_opts = {"num_cpus": 8}
+    elif model_name.startswith("catboost"):
         resource_opts = {
             "num_gpus": 1,
             "num_cpus": 1,
