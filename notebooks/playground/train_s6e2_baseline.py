@@ -1222,6 +1222,81 @@ def _filter_model_config(config: dict, active_features: set[str]) -> dict:
     return config
 
 
+# ---------------------------------------------------------------------------
+# Optuna search spaces
+# ---------------------------------------------------------------------------
+
+
+def _suggest_catboost(trial):
+    bootstrap_type = trial.suggest_categorical(
+        "bootstrap_type", ["Bayesian", "Bernoulli"]
+    )
+    params = {
+        "iterations": 5000,
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "depth": trial.suggest_int("depth", 3, 10),
+        "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1.0, 30.0, log=True),
+        "random_strength": trial.suggest_float("random_strength", 0.0, 10.0),
+        "bootstrap_type": bootstrap_type,
+        "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.5, 1.0),
+        "early_stopping_rounds": 100,
+        "eval_metric": "AUC",
+        "task_type": "GPU",
+        "gpu_ram_part": 0.5,
+        "verbose": 0,
+    }
+    if bootstrap_type == "Bayesian":
+        params["bagging_temperature"] = trial.suggest_float(
+            "bagging_temperature", 0.0, 10.0
+        )
+    else:
+        params["subsample"] = trial.suggest_float("subsample", 0.5, 1.0)
+    return params
+
+
+def _suggest_lightgbm(trial):
+    return {
+        "n_estimators": 2000,
+        "num_leaves": trial.suggest_int("num_leaves", 7, 127),
+        "max_depth": trial.suggest_int("max_depth", 3, 12),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "min_child_samples": trial.suggest_int("min_child_samples", 5, 100),
+        "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+        "subsample_freq": 1,
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.4, 1.0),
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 10.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
+        "path_smooth": trial.suggest_float("path_smooth", 0.0, 100.0),
+        "min_split_gain": trial.suggest_float("min_split_gain", 0.0, 1.0),
+        "metric": "auc",
+        "verbosity": -1,
+    }
+
+
+def _suggest_ft_transformer(trial):
+    return {
+        "n_blocks": trial.suggest_int("n_blocks", 1, 4),
+        "d_block": trial.suggest_int("d_block", 64, 256, step=8),
+        "attention_n_heads": 8,
+        "attention_dropout": trial.suggest_float("attention_dropout", 0.0, 0.5),
+        "ffn_dropout": trial.suggest_float("ffn_dropout", 0.0, 0.5),
+        "ffn_d_hidden_multiplier": trial.suggest_float(
+            "ffn_d_hidden_multiplier", 1.0, 2.667
+        ),
+        "lr": trial.suggest_float("lr", 1e-5, 1e-3, log=True),
+        "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256, 512]),
+        "max_epochs": 200,
+        "patience": 20,
+    }
+
+
+TUNE_SEARCH_SPACES = {
+    "catboost": _suggest_catboost,
+    "lightgbm": _suggest_lightgbm,
+    "ft_transformer": _suggest_ft_transformer,
+}
+
+
 @ray.remote
 def _train_single_model(
     train,
@@ -1320,6 +1395,200 @@ def _train_single_model(
         feature_set,
         folds_n,
     )
+
+
+def _run_optuna_study(
+    model_name,
+    base_config,
+    suggest_fn,
+    train,
+    holdout,
+    test,
+    features,
+    feature_set,
+    folds_n,
+    seed,
+    n_trials,
+    tag,
+):
+    """Run Optuna HP tuning for a single model with MLflow logging."""
+    import copy
+    import time
+
+    import mlflow
+    import optuna
+
+    # Determine Ray resource options (same logic as _train_ensemble)
+    if model_name.startswith("catboost"):
+        resource_opts = {
+            "num_gpus": 1,
+            "num_cpus": 1,
+            "resources": {"heavy_gpu": 1},
+        }
+    elif model_name.startswith(("ft_transformer", "realmlp")):
+        resource_opts = {
+            "num_gpus": 1,
+            "num_cpus": 2,
+            "resources": {"heavy_gpu": 1},
+        }
+    elif any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES):
+        resource_opts = {
+            "num_gpus": 0.5,
+            "num_cpus": 2,
+            "resources": {"heavy_gpu": 0.5},
+        }
+    elif any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES):
+        resource_opts = {"num_gpus": 0.25, "num_cpus": 1}
+    else:
+        resource_opts = {"num_cpus": 2}
+
+    # Put data into Ray object store once
+    train_ref = ray.put(train)
+    test_ref = ray.put(test)
+    holdout_ref = ray.put(holdout)
+
+    # Setup MLflow experiment
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+    mlflow_ready = False
+    experiment_name = (
+        f"playground-s6e2-tune-{tag}-{model_name}"
+        if tag
+        else f"playground-s6e2-tune-{model_name}"
+    )
+    if tracking_uri:
+        try:
+            mlflow.set_tracking_uri(tracking_uri)
+            mlflow.set_experiment(experiment_name)
+            mlflow_ready = True
+            logger.info(f"MLflow: logging to experiment '{experiment_name}'")
+        except Exception as e:
+            logger.warning(f"MLflow setup failed (non-fatal): {e}")
+
+    # Filter config for active features
+    active_set = set(features)
+
+    # Create Optuna study
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=seed),
+    )
+
+    logger.info(
+        f"Starting Optuna study for '{model_name}': "
+        f"{n_trials} trials, {folds_n} folds, feature_set={feature_set}"
+    )
+
+    def objective(trial):
+        t0 = time.time()
+
+        # Get suggested params
+        suggested_params = suggest_fn(trial)
+
+        # Build trial config from base config
+        trial_config = copy.deepcopy(base_config)
+        trial_config["kwargs"].update(suggested_params)
+
+        # Prune invalid combos for LightGBM
+        if model_name.startswith("lightgbm"):
+            num_leaves = trial_config["kwargs"].get("num_leaves", 31)
+            max_depth = trial_config["kwargs"].get("max_depth", -1)
+            if max_depth > 0 and num_leaves >= 2**max_depth:
+                raise optuna.TrialPruned()
+
+        # Filter cat_features to match active feature set
+        trial_config = _filter_model_config(trial_config, active_set)
+
+        # Train via Ray task (sequential — block on ray.get() for TPE)
+        future = _train_single_model.options(**resource_opts).remote(
+            train_ref,
+            test_ref,
+            holdout_ref,
+            features,
+            TARGET,
+            model_name,
+            trial_config,
+            seed,
+            folds_n,
+            feature_set,
+        )
+        result = ray.get(future)
+        _, _, _, _, _, logging_data, _, _ = result
+
+        oof_auc = logging_data["metrics"]["oof_auc"]
+        holdout_auc = logging_data["metrics"]["holdout_auc"]
+        elapsed = time.time() - t0
+
+        # Log to MLflow
+        if mlflow_ready:
+            try:
+                with mlflow.start_run(run_name=f"trial_{trial.number}"):
+                    mlflow.log_params(
+                        {
+                            "model": model_name,
+                            "feature_set": feature_set,
+                            "folds_n": folds_n,
+                            "seed": seed,
+                            "trial_number": trial.number,
+                            **{
+                                k: v
+                                for k, v in trial.params.items()
+                                if isinstance(v, (int, float, str, bool))
+                            },
+                        }
+                    )
+                    mlflow.log_metrics(
+                        {
+                            "oof_auc": oof_auc,
+                            "holdout_auc": holdout_auc,
+                            "duration_seconds": elapsed,
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"MLflow logging failed for trial {trial.number}: {e}")
+
+        best_so_far = (
+            study.best_value if len(study.trials) > 0 and study.best_trial else oof_auc
+        )
+        print(
+            f"Trial {trial.number + 1}/{n_trials}: "
+            f"oof_auc={oof_auc:.4f} holdout_auc={holdout_auc:.4f} "
+            f"(best={best_so_far:.4f}) [{elapsed:.0f}s]",
+            flush=True,
+        )
+
+        return oof_auc
+
+    study.optimize(objective, n_trials=n_trials)
+
+    # Print best params
+    logger.info(f"\n{'='*50}")
+    logger.info(f"Best trial for {model_name}: #{study.best_trial.number}")
+    logger.info(f"  OOF AUC: {study.best_value:.4f}")
+    logger.info(f"  Params: {study.best_trial.params}")
+    logger.info(f"{'='*50}")
+
+    # Log best trial summary to MLflow
+    if mlflow_ready:
+        try:
+            with mlflow.start_run(run_name=f"best_trial_{model_name}"):
+                mlflow.log_params(
+                    {
+                        "model": model_name,
+                        "feature_set": feature_set,
+                        "folds_n": folds_n,
+                        "seed": seed,
+                        "best_trial_number": study.best_trial.number,
+                        **{
+                            k: v
+                            for k, v in study.best_trial.params.items()
+                            if isinstance(v, (int, float, str, bool))
+                        },
+                    }
+                )
+                mlflow.log_metric("oof_auc", study.best_value)
+                mlflow.set_tag("best_trial", "true")
+        except Exception as e:
+            logger.warning(f"MLflow best-trial logging failed: {e}")
 
 
 def _ensemble_predictions(
@@ -1834,10 +2103,30 @@ def main():
         default=None,
         help="Seeds per learner (rotating from pool). Default: all seeds.",
     )
+    parser.add_argument(
+        "--tune",
+        nargs="+",
+        metavar="MODEL",
+        help="Run Optuna HP tuning for these models (e.g. --tune catboost lightgbm)",
+    )
+    parser.add_argument(
+        "--tune-trials",
+        type=int,
+        default=50,
+        help="Number of Optuna trials per model (default: 50)",
+    )
+    parser.add_argument(
+        "--tune-sample",
+        type=int,
+        default=None,
+        help="Subsample training data to N rows for tuning (useful for neural models)",
+    )
     args = parser.parse_args()
 
     if not args.from_experiment and not args.from_ensemble:
         ray.init()
+        optuna_logging = __import__("logging").getLogger("optuna")
+        optuna_logging.setLevel(__import__("logging").WARNING)
 
     # Load data
     train_full = pd.read_csv(DATA_DIR / "train.csv")
@@ -1998,6 +2287,50 @@ def main():
             logger.info(f"MLflow: logged ensemble run '{run_name}' to 'ensemble'")
         except Exception as e:
             logger.warning(f"MLflow ensemble logging failed (non-fatal): {e}")
+    elif args.tune:
+        # Optuna hyperparameter tuning mode
+        for m in args.tune:
+            if m not in TUNE_SEARCH_SPACES:
+                logger.error(
+                    f"No search space for '{m}'. "
+                    f"Available: {list(TUNE_SEARCH_SPACES.keys())}"
+                )
+                sys.exit(1)
+
+        # Subsample training data if requested
+        train_tune = train
+        if args.tune_sample and args.tune_sample < len(train):
+            train_tune = train.sample(n=args.tune_sample, random_state=42).reset_index(
+                drop=True
+            )
+            logger.info(f"Tuning on {len(train_tune)}/{len(train)} subsampled rows")
+
+        feature_set_name = args.features[0]
+        features = feature_sets_map[feature_set_name]
+        folds_n = folds_list[0]
+        tune_seed = seed_pool[0]
+
+        for model_name in args.tune:
+            base_config = models[model_name]
+            _run_optuna_study(
+                model_name=model_name,
+                base_config=base_config,
+                suggest_fn=TUNE_SEARCH_SPACES[model_name],
+                train=train_tune,
+                holdout=holdout,
+                test=test,
+                features=features,
+                feature_set=feature_set_name,
+                folds_n=folds_n,
+                seed=tune_seed,
+                n_trials=args.tune_trials,
+                tag=tag,
+            )
+
+        # No submission generated in tune mode
+        if not args.from_experiment and not args.from_ensemble:
+            ray.shutdown()
+        return
     else:
         n_learners = len(models) * len(feature_sets_map) * len(folds_list)
         logger.info(

@@ -17,6 +17,8 @@ dependencies = [
     "skorch>=0.15.0",
     "ray[default]>=2.9.0",
     "rtdl-num-embeddings>=0.0.12",
+    "optuna>=3.6.0",
+    "mlflow>=2.0.0",
 ]
 
 [tool.uv.sources]

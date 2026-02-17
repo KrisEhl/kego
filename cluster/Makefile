@@ -98,6 +98,13 @@ submit-neural:
 submit-debug:
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
 
+TUNE_MODELS ?= catboost lightgbm
+TUNE_TRIALS ?= 50
+TUNE_SAMPLE ?=
+
+submit-tune:
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --tune $(TUNE_MODELS) --tune-trials $(TUNE_TRIALS) $(if $(TUNE_SAMPLE),--tune-sample $(TUNE_SAMPLE)) $(if $(FEATURES),--features $(FEATURES),--features ablation-pruned) $(if $(FOLDS),--folds $(FOLDS),--folds 5) $(if $(TAG),--tag $(TAG))'
+
 DIVERSE_MODELS ?= catboost lightgbm logistic_regression ft_transformer
 DIVERSE_FEATURES ?= ablation-pruned raw forward-selected
 DIVERSE_FOLDS ?= 5 10
