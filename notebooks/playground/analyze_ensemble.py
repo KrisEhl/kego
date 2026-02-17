@@ -18,11 +18,13 @@ import argparse
 import logging
 import os
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.stats import rankdata, spearmanr
+from sklearn.linear_model import RidgeCV
 from sklearn.metrics import roc_auc_score
 
 project_root = Path(__file__).resolve().parents[2]
@@ -160,12 +162,99 @@ def _load_predictions_from_ensemble(ensemble_name, tracking_uri):
 # ---------------------------------------------------------------------------
 
 
-def greedy_forward_selection(model_names, all_oof, all_holdout, holdout_labels):
-    """Greedy forward selection: add models one at a time by highest AUC gain."""
+def _hill_climbing(oof_matrix, labels, n_iterations=50):
+    """Find ensemble weights by greedy hill climbing on AUC.
+
+    Uses a larger step size (0.05) for faster convergence with many models.
+    """
+    n_models = oof_matrix.shape[1]
+    best_weights = np.ones(n_models) / n_models
+    best_preds = oof_matrix @ best_weights
+    best_auc = roc_auc_score(labels, best_preds)
+    step = 0.05
+
+    for _ in range(n_iterations):
+        improved = False
+        for i in range(n_models):
+            for j in range(i + 1, n_models):
+                # Try shifting weight from j to i
+                for di, dj in [(step, -step), (-step, step)]:
+                    weights = best_weights.copy()
+                    weights[i] += di
+                    weights[j] += dj
+                    if weights[i] < 0 or weights[j] < 0:
+                        continue
+                    weights /= weights.sum()
+                    preds = oof_matrix @ weights
+                    if not np.all(np.isfinite(preds)):
+                        continue
+                    auc = roc_auc_score(labels, preds)
+                    if auc > best_auc:
+                        best_auc = auc
+                        best_weights = weights
+                        improved = True
+        if not improved:
+            break
+
+    return best_weights
+
+
+def _rank_blend(matrix):
+    """Convert predictions to percentile ranks per model, then average."""
+    n = matrix.shape[0]
+    ranked = np.column_stack(
+        [rankdata(matrix[:, i]) / n for i in range(matrix.shape[1])]
+    )
+    return np.mean(ranked, axis=1)
+
+
+def _evaluate_strategies(oof_matrix, holdout_matrix, holdout_labels, oof_labels):
+    """Evaluate all blending strategies and return {strategy: auc} dict."""
+    with (
+        warnings.catch_warnings(),
+        np.errstate(divide="ignore", over="ignore", invalid="ignore"),
+    ):
+        warnings.simplefilter("ignore", RuntimeWarning)
+
+        strategies = {}
+
+        # 1. Simple mean (always)
+        strategies["mean"] = roc_auc_score(holdout_labels, holdout_matrix.mean(axis=1))
+
+        # 2. Rank mean (always)
+        strategies["rank"] = roc_auc_score(holdout_labels, _rank_blend(holdout_matrix))
+
+        # 3 & 4: only with oof_labels and >=2 models
+        n_models = holdout_matrix.shape[1]
+        if oof_labels is not None and n_models >= 2:
+            # Ridge stacking (fit on OOF, evaluate on holdout)
+            ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
+            ridge.fit(oof_matrix, oof_labels)
+            ridge_preds = ridge.predict(holdout_matrix)
+            if np.all(np.isfinite(ridge_preds)):
+                strategies["ridge"] = roc_auc_score(holdout_labels, ridge_preds)
+
+            # Hill climbing (optimize weights on OOF, apply to holdout)
+            # Skip for large ensembles — O(n^2) per iteration is too expensive
+            if n_models <= 15:
+                weights = _hill_climbing(oof_matrix, oof_labels)
+                holdout_preds = holdout_matrix @ weights
+                if np.all(np.isfinite(holdout_preds)):
+                    strategies["hill"] = roc_auc_score(holdout_labels, holdout_preds)
+
+        return strategies
+
+
+def greedy_forward_selection(
+    model_names, all_oof, all_holdout, holdout_labels, oof_labels=None
+):
+    """Greedy forward selection: add models one at a time by highest AUC gain.
+
+    Evaluates multiple blending strategies (mean, rank, ridge, hill climbing)
+    at each step and picks the (candidate, strategy) pair with highest AUC.
+    """
     available = set(model_names)
     ensemble = []
-    ensemble_oof = None
-    ensemble_holdout = None
     current_auc = 0.0
 
     selected_rows = []
@@ -176,105 +265,100 @@ def greedy_forward_selection(model_names, all_oof, all_holdout, holdout_labels):
         best_candidate = None
         best_auc = current_auc
         best_corr = None
+        best_strategy = None
         candidate_results = []
 
         for candidate in sorted(available):
-            n = len(ensemble)
-            if n == 0:
-                blended_oof = all_oof[candidate]
-                blended_holdout = all_holdout[candidate]
-            else:
-                blended_oof = (ensemble_oof * n + all_oof[candidate]) / (n + 1)
-                blended_holdout = (ensemble_holdout * n + all_holdout[candidate]) / (
-                    n + 1
-                )
+            members = ensemble + [candidate]
+            oof_matrix = np.column_stack([all_oof[m] for m in members])
+            holdout_matrix = np.column_stack([all_holdout[m] for m in members])
 
-            auc = roc_auc_score(holdout_labels, blended_holdout)
+            strategies = _evaluate_strategies(
+                oof_matrix, holdout_matrix, holdout_labels, oof_labels
+            )
+
+            # Pick best strategy for this candidate
+            cand_strategy = max(strategies, key=strategies.get)
+            auc = strategies[cand_strategy]
             delta = auc - current_auc
 
-            if n == 0:
+            if len(ensemble) == 0:
                 corr = None
             else:
-                r, _ = spearmanr(rankdata(all_oof[candidate]), rankdata(ensemble_oof))
+                ens_oof = np.column_stack([all_oof[m] for m in ensemble])
+                r, _ = spearmanr(
+                    rankdata(all_oof[candidate]), rankdata(ens_oof.mean(axis=1))
+                )
                 corr = r
 
-            candidate_results.append((candidate, auc, delta, corr))
+            candidate_results.append((candidate, auc, delta, corr, cand_strategy))
 
             if auc > best_auc:
                 best_candidate = candidate
                 best_auc = auc
                 best_corr = corr
+                best_strategy = cand_strategy
 
         if best_candidate is not None:
             step += 1
-            n = len(ensemble)
-            if n == 0:
-                ensemble_oof = all_oof[best_candidate].copy()
-                ensemble_holdout = all_holdout[best_candidate].copy()
-            else:
-                ensemble_oof = (ensemble_oof * n + all_oof[best_candidate]) / (n + 1)
-                ensemble_holdout = (
-                    ensemble_holdout * n + all_holdout[best_candidate]
-                ) / (n + 1)
-
             ensemble.append(best_candidate)
             available.remove(best_candidate)
+            prev_auc = current_auc
             current_auc = best_auc
 
             selected_rows.append(
                 (
                     step,
                     best_candidate,
+                    best_strategy,
                     best_auc,
-                    best_auc
-                    - (
-                        current_auc
-                        if step == 1
-                        else selected_rows[-2][2] if len(selected_rows) >= 2 else 0
-                    ),
+                    best_auc - prev_auc if step > 1 else best_auc,
                     best_corr,
                     len(ensemble),
                 )
             )
         else:
             # No model improves the ensemble — record all remaining as rejected
-            for candidate, auc, delta, corr in candidate_results:
-                rejected_rows.append((candidate, delta, corr))
+            for candidate, auc, delta, corr, strat in candidate_results:
+                rejected_rows.append((candidate, delta, corr, strat))
             break
 
-    # Recalculate deltas properly for display
-    display_rows = []
-    for i, (step_n, name, auc, _, corr, n_models) in enumerate(selected_rows):
-        if i == 0:
-            delta = auc  # first model: delta is the AUC itself
-        else:
-            delta = auc - selected_rows[i - 1][2]
-        display_rows.append((step_n, name, auc, delta, corr, n_models))
-
-    return display_rows, rejected_rows
+    return selected_rows, rejected_rows
 
 
-def leave_one_out_analysis(model_names, all_oof, all_holdout, holdout_labels):
-    """Leave-one-out: remove each model and measure AUC change."""
+def leave_one_out_analysis(
+    model_names, all_oof, all_holdout, holdout_labels, oof_labels=None
+):
+    """Leave-one-out: remove each model and measure AUC change.
+
+    Evaluates all blending strategies on the full ensemble to find the best one,
+    then measures each model's contribution under that strategy.
+    """
     n = len(model_names)
 
-    # Full ensemble
-    full_holdout = np.mean(
-        np.column_stack([all_holdout[name] for name in model_names]), axis=1
+    # Full ensemble — find best strategy
+    full_oof_matrix = np.column_stack([all_oof[name] for name in model_names])
+    full_holdout_matrix = np.column_stack([all_holdout[name] for name in model_names])
+    full_strategies = _evaluate_strategies(
+        full_oof_matrix, full_holdout_matrix, holdout_labels, oof_labels
     )
-    full_auc = roc_auc_score(holdout_labels, full_holdout)
+    best_full_strategy = max(full_strategies, key=full_strategies.get)
+    full_auc = full_strategies[best_full_strategy]
 
     rows = []
     for name in model_names:
         others = [m for m in model_names if m != name]
-        reduced_holdout = np.mean(
-            np.column_stack([all_holdout[m] for m in others]), axis=1
+        reduced_oof_matrix = np.column_stack([all_oof[m] for m in others])
+        reduced_holdout_matrix = np.column_stack([all_holdout[m] for m in others])
+
+        reduced_strategies = _evaluate_strategies(
+            reduced_oof_matrix, reduced_holdout_matrix, holdout_labels, oof_labels
         )
-        reduced_auc = roc_auc_score(holdout_labels, reduced_holdout)
+        reduced_auc = reduced_strategies[best_full_strategy]
         delta = full_auc - reduced_auc  # positive = model helps
 
         # Spearman between this model's OOF ranks and ensemble-without-it OOF ranks
-        reduced_oof = np.mean(np.column_stack([all_oof[m] for m in others]), axis=1)
+        reduced_oof = reduced_oof_matrix.mean(axis=1)
         r, _ = spearmanr(rankdata(all_oof[name]), rankdata(reduced_oof))
 
         if delta > 0.00005:
@@ -289,7 +373,7 @@ def leave_one_out_analysis(model_names, all_oof, all_holdout, holdout_labels):
     # Sort by delta ascending (most harmful first, most helpful last)
     rows.sort(key=lambda x: x[2])
 
-    return full_auc, n, rows
+    return full_auc, best_full_strategy, n, rows
 
 
 # ---------------------------------------------------------------------------
@@ -299,46 +383,53 @@ def leave_one_out_analysis(model_names, all_oof, all_holdout, holdout_labels):
 
 def print_forward_selection(display_rows, rejected_rows):
     """Print greedy forward selection results."""
-    print(f"\n{'='*90}")
-    print("GREEDY FORWARD SELECTION")
-    print(f"{'='*90}")
+    w = 100
+    print(f"\n{'=' * w}")
+    print("GREEDY FORWARD SELECTION (multi-strategy)")
+    print(f"{'=' * w}")
     print(
-        f"{'Step':<6}{'Learner Added':<35}{'Ensemble AUC':>14}"
+        f"{'Step':<6}{'Learner Added':<30}{'Strategy':>10}{'Ensemble AUC':>14}"
         f"{'Delta':>11}{'Spearman r':>12}{'Models':>8}"
     )
-    print("-" * 90)
+    print("-" * w)
 
-    for step_n, name, auc, delta, corr, n_models in display_rows:
+    for step_n, name, strategy, auc, delta, corr, n_models in display_rows:
         corr_str = f"{corr:.3f}" if corr is not None else "\u2014"
         print(
-            f"{step_n:<6}{name:<35}{auc:>14.5f}"
+            f"{step_n:<6}{name:<30}{strategy:>10}{auc:>14.5f}"
             f"{delta:>+11.5f}{corr_str:>12}{n_models:>8}"
         )
 
     if rejected_rows:
-        print("-" * 90)
-        for name, delta, corr in rejected_rows:
+        print("-" * w)
+        for name, delta, corr, strat in rejected_rows:
             corr_str = f"{corr:.3f}" if corr is not None else "\u2014"
             print(
-                f"{'x':<6}{name:<35}{'\u2014':>14}"
+                f"{'x':<6}{name:<30}{strat:>10}{'\u2014':>14}"
                 f"{delta:>+11.5f}{corr_str:>12}{'(rejected)':>12}"
             )
 
-    print(f"{'='*90}")
+    print(f"{'=' * w}")
 
     if display_rows:
         final = display_rows[-1]
-        print(f"\nFinal ensemble: {final[5]} models, AUC: {final[2]:.5f}")
+        print(
+            f"\nFinal ensemble: {final[6]} models, AUC: {final[3]:.5f}"
+            f" (strategy: {final[2]})"
+        )
         if rejected_rows:
             print(f"Rejected: {len(rejected_rows)} models (would decrease AUC)")
 
 
-def print_leave_one_out(full_auc, n_models, rows):
+def print_leave_one_out(full_auc, strategy, n_models, rows):
     """Print leave-one-out analysis results."""
     print(f"\n{'='*90}")
     print("LEAVE-ONE-OUT ANALYSIS")
     print(f"{'='*90}")
-    print(f"Full ensemble AUC: {full_auc:.5f} ({n_models} models)\n")
+    print(
+        f"Full ensemble AUC: {full_auc:.5f} ({n_models} models,"
+        f" strategy: {strategy})\n"
+    )
     print(
         f"{'Learner':<35}{'AUC without':>13}{'Delta':>11}"
         f"{'Spearman r':>12}{'Verdict':>10}"
@@ -424,7 +515,7 @@ def main():
     original["id"] = -1
     train_full = pd.concat([train_full, original], ignore_index=True)
 
-    _, holdout, _ = split_dataset(
+    train_split, holdout, _ = split_dataset(
         train_full,
         train_size=0.8,
         validate_size=0.2,
@@ -432,16 +523,17 @@ def main():
     )
     holdout = holdout.reset_index(drop=True)
     holdout_labels = holdout[TARGET].values
+    oof_labels = train_split[TARGET].values
 
     # --- Run analysis ---
     if args.check:
-        full_auc, n_models, rows = leave_one_out_analysis(
-            model_names, all_oof, all_holdout, holdout_labels
+        full_auc, strategy, n_models, rows = leave_one_out_analysis(
+            model_names, all_oof, all_holdout, holdout_labels, oof_labels=oof_labels
         )
-        print_leave_one_out(full_auc, n_models, rows)
+        print_leave_one_out(full_auc, strategy, n_models, rows)
     else:
         display_rows, rejected_rows = greedy_forward_selection(
-            model_names, all_oof, all_holdout, holdout_labels
+            model_names, all_oof, all_holdout, holdout_labels, oof_labels=oof_labels
         )
         print_forward_selection(display_rows, rejected_rows)
 
