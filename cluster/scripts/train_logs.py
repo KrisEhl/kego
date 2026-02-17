@@ -8,6 +8,9 @@ from datetime import datetime
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 TS_PAT = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+")
 
+# Learner ID pattern: e.g. "catboost/ablation-pruned/5f" or bare "catboost"
+LID = r"[\w][\w/.-]*"
+
 
 def _parse_start_time(text):
     """Extract job start timestamp from Ray log lines.
@@ -74,6 +77,11 @@ NODE_GPUS = {
 }
 
 
+def _base_model(learner_id):
+    """Extract base model name from learner ID (e.g. 'catboost' from 'catboost/raw/5f')."""
+    return learner_id.split("/")[0]
+
+
 def _is_gpu_model(model_name):
     """Check if model runs on GPU based on name prefix."""
     return any(model_name.startswith(p) for p in GPU_MODELS)
@@ -81,7 +89,7 @@ def _is_gpu_model(model_name):
 
 def _is_neural(model_name):
     """Check if model is a neural model (fold-based progress tracking)."""
-    return model_name in NEURAL_MODELS
+    return _base_model(model_name) in NEURAL_MODELS
 
 
 def _device_label(model_name, color=True, gpu_amount=None):
@@ -106,28 +114,26 @@ def main():
     # Track task lifecycle
     all_planned = set()
     gpu_amounts = {}  # (model, seed) -> float
-    for m in re.finditer(
-        r"- (\w[\w_]*) seed=(\d+) \((?:CPU|GPU(?: ([\d.]+))?)\)", text
-    ):
+    for m in re.finditer(rf"- ({LID}) seed=(\d+) \((?:CPU|GPU(?: ([\d.]+))?)\)", text):
         key = (m.group(1), m.group(2))
         all_planned.add(key)
         if m.group(3):
             gpu_amounts[key] = float(m.group(3))
-    started = set(re.findall(r"\[(\w+)\] Starting seed=(\d+)", text))
-    finished = set(re.findall(r"\[(\w+)\] Finished seed=(\d+)", text))
+    started = set(re.findall(rf"\[({LID})\] Starting seed=(\d+)", text))
+    finished = set(re.findall(rf"\[({LID})\] Finished seed=(\d+)", text))
     running = started - finished
     unscheduled = all_planned - started - finished
 
     # Completed tasks with AUC
     completed = re.findall(
-        r"\[(\d+)/(\d+)\].*?(\w[\w_]+) seed=(\d+).*?Holdout AUC: ([\d.]+)", text
+        rf"\[(\d+)/(\d+)\] ({LID}) seed=(\d+).*?Holdout AUC: ([\d.]+)", text
     )
 
     # Per-task durations and IPs from worker Finished lines
     task_durations = {}
     task_ips = {}  # (model, seed) -> ip or None
     for m in re.finditer(
-        r"ip=([\d.]+)\).*?\[(\w[\w_]*)\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
+        rf"ip=([\d.]+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
     ):
         key = (m.group(2), m.group(3))
         mins, secs = int(m.group(4)), int(m.group(5))
@@ -135,7 +141,7 @@ def main():
         task_ips[key] = m.group(1)
     # Also match head node tasks (no ip= in prefix)
     for m in re.finditer(
-        r"pid=(\d+)\).*?\[(\w[\w_]*)\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
+        rf"pid=(\d+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
     ):
         key = (m.group(2), m.group(3))
         if key not in task_durations:
@@ -143,10 +149,11 @@ def main():
             task_durations[key] = mins * 60 + secs
             task_ips[key] = None
 
-    # Average duration per model type from completed tasks
+    # Average duration per base model type from completed tasks
     model_durations = {}
     for (model, seed), dur in task_durations.items():
-        model_durations.setdefault(model, []).append(dur)
+        base = _base_model(model)
+        model_durations.setdefault(base, []).append(dur)
     model_avg_dur = {m: sum(ds) / len(ds) for m, ds in model_durations.items()}
 
     # Build timestamp index for position-based lookups
@@ -191,15 +198,20 @@ def main():
         print(f"  Elapsed: {_fmt_duration(elapsed_min)}, no tasks completed yet")
 
     # --- Per-task timing and fold progress ---
-    folds_n = 5
+    default_folds_n = 5
     folds_match = re.search(r"(\d+) folds", text)
     if folds_match:
-        folds_n = int(folds_match.group(1))
+        default_folds_n = int(folds_match.group(1))
+
+    def _folds_for(learner_id):
+        """Extract fold count from learner ID (e.g. 'catboost/raw/5f' -> 5)."""
+        m = re.search(r"/(\d+)f$", learner_id)
+        return int(m.group(1)) if m else default_folds_n
 
     # Parse Starting messages → (model, seed) -> (pid, start_pos, ip)
     task_pids = {}
     for m in re.finditer(
-        r"pid=(\d+)(?:, ip=([\d.]+))?.*?\[(\w[\w_]*)\] Starting seed=(\d+)", text
+        rf"pid=(\d+)(?:, ip=([\d.]+))?.*?\[({LID})\] Starting seed=(\d+)", text
     ):
         pid, ip, mname, seed = m.group(1), m.group(2), m.group(3), m.group(4)
         task_pids[(mname, seed)] = (pid, m.start(), ip)
@@ -221,6 +233,7 @@ def main():
         else:
             cnt = len(re.findall(rf"pid={pid}.*?epoch\s+train_loss", after))
             cnt = max(0, cnt - 1)  # header printed at fold start, so -1
+        folds_n = _folds_for(mname)
         fold_counts[(mname, seed)] = min(cnt, folds_n)
 
         # Sum actual epoch durations from the dur column for accurate elapsed time
@@ -277,15 +290,16 @@ def main():
 
         # For neural tasks with fold progress: extrapolate from wall-clock elapsed
         if folds_done is not None and folds_done > 0 and elapsed_secs:
-            total_est = elapsed_secs * folds_n / folds_done
+            task_folds = _folds_for(mname)
+            total_est = elapsed_secs * task_folds / folds_done
             task_remaining[(mname, seed)] = max(0, total_est - elapsed_secs)
         elif folds_done is not None and folds_done == 0:
             # Neural but no folds done yet — use model avg or None
-            avg = model_avg_dur.get(mname)
+            avg = model_avg_dur.get(_base_model(mname))
             task_remaining[(mname, seed)] = avg
         else:
             # Non-neural: use model average minus elapsed
-            avg = model_avg_dur.get(mname)
+            avg = model_avg_dur.get(_base_model(mname))
             if avg and elapsed_secs:
                 task_remaining[(mname, seed)] = max(0, avg - elapsed_secs)
             else:
@@ -311,12 +325,14 @@ def main():
                         dur = (finish_ts - start_ts).total_seconds()
                         if dur > 0:
                             task_durations[(mname, seed)] = dur
-                            model_durations.setdefault(mname, []).append(dur)
+                            model_durations.setdefault(_base_model(mname), []).append(
+                                dur
+                            )
         # Rebuild averages
         model_avg_dur = {m: sum(ds) / len(ds) for m, ds in model_durations.items()}
 
     for mname, seed in unscheduled:
-        avg = model_avg_dur.get(mname)
+        avg = model_avg_dur.get(_base_model(mname))
         unsched_est[(mname, seed)] = avg
 
     # --- Print running tasks with elapsed time and ETA ---
@@ -342,7 +358,7 @@ def main():
             if elapsed_secs:
                 parts.append(f"running {_fmt_secs(elapsed_secs)}")
             if folds_done is not None:
-                parts.append(f"fold {folds_done}/{folds_n}")
+                parts.append(f"fold {folds_done}/{_folds_for(m)}")
             if remaining is not None:
                 parts.append(f"~{_fmt_secs(remaining)} left")
 
@@ -356,7 +372,7 @@ def main():
         print(f"  Unscheduled ({len(unscheduled)}):")
         for m, s in sorted(unscheduled):
             dev = _device_label(m, gpu_amount=gpu_amounts.get((m, s)))
-            est = unsched_est.get((m, s)) or model_avg_dur.get(m)
+            est = unsched_est.get((m, s)) or model_avg_dur.get(_base_model(m))
             est_str = f"  (~{_fmt_secs(est)} est)" if est else ""
             print(f"    {m:<{max_name_len}}  seed={s:<4} {dev}{est_str}")
 
@@ -372,14 +388,16 @@ def main():
             for mname, seed in running:
                 rem = task_remaining.get((mname, seed))
                 if rem is None:
-                    rem = model_avg_dur.get(mname, 300)
+                    rem = model_avg_dur.get(_base_model(mname), 300)
                 if _is_gpu_model(mname):
                     gpu_remaining.append(rem)
                 else:
                     cpu_remaining.append(rem)
 
             for mname, seed in unscheduled:
-                est = unsched_est.get((mname, seed)) or model_avg_dur.get(mname, 300)
+                est = unsched_est.get((mname, seed)) or model_avg_dur.get(
+                    _base_model(mname), 300
+                )
                 if _is_gpu_model(mname):
                     gpu_remaining.append(est)
                 else:
