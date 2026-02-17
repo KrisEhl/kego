@@ -48,7 +48,11 @@ TARGET = "Heart Disease"
 
 
 def _load_predictions_from_runs(runs_df, tracking_uri):
-    """Load and average predictions from a DataFrame of MLflow runs."""
+    """Load and average predictions from a DataFrame of MLflow runs.
+
+    Groups by learner ID (model/feature_set/folds_nf) when params are available,
+    falls back to bare model_name for backward compatibility.
+    """
     import mlflow
 
     mlflow.set_tracking_uri(tracking_uri)
@@ -64,24 +68,32 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
         if model_name is None:
             continue
 
+        # Build learner ID from params (backward compat: fall back to model_name)
+        feature_set = run.get("params.feature_set", "")
+        folds_n = run.get("params.folds_n", "")
+        if feature_set and folds_n:
+            learner_id = f"{model_name}/{feature_set}/{folds_n}f"
+        else:
+            learner_id = model_name
+
         artifact_dir = client.download_artifacts(run.run_id, "predictions")
         oof = np.load(os.path.join(artifact_dir, "oof.npy"))
         holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
         test = np.load(os.path.join(artifact_dir, "test.npy"))
 
-        if model_name not in all_oof:
-            all_oof[model_name] = np.zeros_like(oof)
-            all_holdout[model_name] = np.zeros_like(holdout)
-            all_test[model_name] = np.zeros_like(test)
-            seed_counts[model_name] = 0
+        if learner_id not in all_oof:
+            all_oof[learner_id] = np.zeros_like(oof)
+            all_holdout[learner_id] = np.zeros_like(holdout)
+            all_test[learner_id] = np.zeros_like(test)
+            seed_counts[learner_id] = 0
 
-        all_oof[model_name] += oof
-        all_holdout[model_name] += holdout
-        all_test[model_name] += test
-        seed_counts[model_name] += 1
+        all_oof[learner_id] += oof
+        all_holdout[learner_id] += holdout
+        all_test[learner_id] += test
+        seed_counts[learner_id] += 1
 
         seed = run.get("params.seed", "?")
-        logger.info(f"  Loaded {model_name} seed={seed}")
+        logger.info(f"  Loaded {learner_id} seed={seed}")
 
     # Average across seeds
     for name in all_oof:
@@ -91,9 +103,9 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
         all_test[name] /= n
         logger.info(f"{name}: averaged over {n} seed(s)")
 
-    model_names = list(all_oof.keys())
-    logger.info(f"Total models loaded: {len(model_names)}")
-    return model_names, all_oof, all_holdout, all_test
+    learner_names = list(all_oof.keys())
+    logger.info(f"Total learners loaded: {len(learner_names)}")
+    return learner_names, all_oof, all_holdout, all_test
 
 
 def _load_predictions_from_mlflow(experiment_names, tracking_uri):
@@ -287,32 +299,32 @@ def leave_one_out_analysis(model_names, all_oof, all_holdout, holdout_labels):
 
 def print_forward_selection(display_rows, rejected_rows):
     """Print greedy forward selection results."""
-    print(f"\n{'='*80}")
+    print(f"\n{'='*90}")
     print("GREEDY FORWARD SELECTION")
-    print(f"{'='*80}")
+    print(f"{'='*90}")
     print(
-        f"{'Step':<6}{'Model Added':<25}{'Ensemble AUC':>14}"
+        f"{'Step':<6}{'Learner Added':<35}{'Ensemble AUC':>14}"
         f"{'Delta':>11}{'Spearman r':>12}{'Models':>8}"
     )
-    print("-" * 80)
+    print("-" * 90)
 
     for step_n, name, auc, delta, corr, n_models in display_rows:
         corr_str = f"{corr:.3f}" if corr is not None else "\u2014"
         print(
-            f"{step_n:<6}{name:<25}{auc:>14.5f}"
+            f"{step_n:<6}{name:<35}{auc:>14.5f}"
             f"{delta:>+11.5f}{corr_str:>12}{n_models:>8}"
         )
 
     if rejected_rows:
-        print("-" * 80)
+        print("-" * 90)
         for name, delta, corr in rejected_rows:
             corr_str = f"{corr:.3f}" if corr is not None else "\u2014"
             print(
-                f"{'x':<6}{name:<25}{'\u2014':>14}"
+                f"{'x':<6}{name:<35}{'\u2014':>14}"
                 f"{delta:>+11.5f}{corr_str:>12}{'(rejected)':>12}"
             )
 
-    print(f"{'='*80}")
+    print(f"{'='*90}")
 
     if display_rows:
         final = display_rows[-1]
@@ -323,23 +335,23 @@ def print_forward_selection(display_rows, rejected_rows):
 
 def print_leave_one_out(full_auc, n_models, rows):
     """Print leave-one-out analysis results."""
-    print(f"\n{'='*80}")
+    print(f"\n{'='*90}")
     print("LEAVE-ONE-OUT ANALYSIS")
-    print(f"{'='*80}")
+    print(f"{'='*90}")
     print(f"Full ensemble AUC: {full_auc:.5f} ({n_models} models)\n")
     print(
-        f"{'Model':<25}{'AUC without':>13}{'Delta':>11}"
+        f"{'Learner':<35}{'AUC without':>13}{'Delta':>11}"
         f"{'Spearman r':>12}{'Verdict':>10}"
     )
-    print("-" * 80)
+    print("-" * 90)
 
     for name, reduced_auc, delta, corr, verdict in rows:
         print(
-            f"{name:<25}{reduced_auc:>13.5f}{delta:>+11.5f}"
+            f"{name:<35}{reduced_auc:>13.5f}{delta:>+11.5f}"
             f"{corr:>12.3f}{verdict:>10}"
         )
 
-    print(f"{'='*80}")
+    print(f"{'='*90}")
 
     harmful = [r for r in rows if r[4] == "HARMFUL"]
     helpful = [r for r in rows if r[4] == "helpful"]

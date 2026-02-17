@@ -33,7 +33,11 @@ EXPERIMENT = "playground-s6e2-full"
 
 
 def load_oof_predictions(features=None):
-    """Load OOF predictions from MLflow, averaged across seeds per model."""
+    """Load OOF predictions from MLflow, averaged across seeds per learner.
+
+    Groups by learner ID (model/feature_set/folds_nf) when params are available,
+    falls back to bare model_name for backward compatibility.
+    """
     mlflow.set_tracking_uri(TRACKING_URI)
     client = mlflow.tracking.MlflowClient()
 
@@ -44,18 +48,27 @@ def load_oof_predictions(features=None):
     if features and "params.feature_set" in runs.columns:
         runs = runs[runs["params.feature_set"] == features]
 
-    oof_by_model = defaultdict(list)
+    oof_by_learner = defaultdict(list)
     for _, run in runs.iterrows():
         model_name = run.get("params.model")
         if model_name is None:
             continue
+
+        # Build learner ID from params (backward compat: fall back to model_name)
+        feature_set = run.get("params.feature_set", "")
+        folds_n = run.get("params.folds_n", "")
+        if feature_set and folds_n:
+            learner_id = f"{model_name}/{feature_set}/{folds_n}f"
+        else:
+            learner_id = model_name
+
         artifact_dir = client.download_artifacts(run.run_id, "predictions")
         oof = np.load(os.path.join(artifact_dir, "oof.npy"))
-        oof_by_model[model_name].append(oof)
+        oof_by_learner[learner_id].append(oof)
 
     # Average across seeds
     averaged = {}
-    for name, arrays in oof_by_model.items():
+    for name, arrays in oof_by_learner.items():
         averaged[name] = np.mean(arrays, axis=0)
         print(f"  {name}: {len(arrays)} seeds")
 
@@ -144,10 +157,21 @@ def load_best_runs(folds, experiments=None, features=None):
 
     runs_df["_exp_name"] = runs_df["experiment_id"].map(_exp_name)
 
-    # For each model, find best experiment by avg holdout_auc
+    # Build learner ID for grouping
+    def _learner_id(row):
+        model_name = row.get("params.model", "")
+        feature_set = row.get("params.feature_set", "")
+        folds_n = row.get("params.folds_n", "")
+        if feature_set and folds_n:
+            return f"{model_name}/{feature_set}/{folds_n}f"
+        return model_name
+
+    runs_df["_learner_id"] = runs_df.apply(_learner_id, axis=1)
+
+    # For each learner, find best experiment by avg holdout_auc
     best = {}
-    for model_name, model_group in runs_df.groupby("params.model"):
-        exp_avgs = model_group.groupby("_exp_name").agg(
+    for learner_id, learner_group in runs_df.groupby("_learner_id"):
+        exp_avgs = learner_group.groupby("_exp_name").agg(
             avg_holdout=("metrics.holdout_auc", "mean"),
             avg_oof=("metrics.oof_auc", "mean"),
             n_seeds=("run_id", "count"),
@@ -156,9 +180,9 @@ def load_best_runs(folds, experiments=None, features=None):
         best_row = exp_avgs.loc[best_exp]
 
         # Collect individual run details for the best experiment
-        best_runs = model_group[model_group["_exp_name"] == best_exp]
+        best_runs = learner_group[learner_group["_exp_name"] == best_exp]
 
-        best[model_name] = {
+        best[learner_id] = {
             "experiment": best_exp,
             "avg_holdout_auc": best_row["avg_holdout"],
             "avg_oof_auc": best_row["avg_oof"],
@@ -239,10 +263,10 @@ def main():
     # === Combined summary table ===
     print("\n=== Model Summary ===")
     print(
-        f"  {'model':25s}  {'OOF acc':>8s}  {'holdout':>8s}  "
+        f"  {'model':35s}  {'OOF acc':>8s}  {'holdout':>8s}  "
         f"{'oof_auc':>8s}  {'seeds':>5s}  {'unique':>6s}  {'experiment'}"
     )
-    print("-" * 105)
+    print("-" * 115)
 
     # Sort by holdout AUC descending (fall back to OOF accuracy if no runs)
     def sort_key(name):
@@ -256,13 +280,13 @@ def main():
         if name in best_runs:
             info = best_runs[name]
             print(
-                f"  {name:25s}  {acc:8.4f}  {info['avg_holdout_auc']:8.4f}  "
+                f"  {name:35s}  {acc:8.4f}  {info['avg_holdout_auc']:8.4f}  "
                 f"{info['avg_oof_auc']:8.4f}  {info['n_seeds']:5d}  "
                 f"{uniq:6d}  {info['experiment']}"
             )
         else:
             print(
-                f"  {name:25s}  {acc:8.4f}  {'—':>8s}  "
+                f"  {name:35s}  {acc:8.4f}  {'—':>8s}  "
                 f"{'—':>8s}  {'—':>5s}  {uniq:6d}  (no matching runs)"
             )
 
@@ -273,7 +297,7 @@ def main():
         for name in sorted(extra):
             info = best_runs[name]
             print(
-                f"  {name:25s}  {'—':>8s}  {info['avg_holdout_auc']:8.4f}  "
+                f"  {name:35s}  {'—':>8s}  {info['avg_holdout_auc']:8.4f}  "
                 f"{info['avg_oof_auc']:8.4f}  {info['n_seeds']:5d}  "
                 f"{'—':>6s}  {info['experiment']}"
             )
@@ -324,16 +348,16 @@ def main():
             pairs.append((model_names[i], model_names[j], sym_matrix[i, j]))
     pairs.sort(key=lambda x: x[2], reverse=True)
     for name_i, name_j, count in pairs[:10]:
-        print(f"  {name_i:25s} vs {name_j:25s}  {count:5d} disagreements")
+        print(f"  {name_i:35s} vs {name_j:35s}  {count:5d} disagreements")
 
     print("\n=== Top 10 Most Redundant Pairs ===")
     for name_i, name_j, count in pairs[-10:]:
-        print(f"  {name_i:25s} vs {name_j:25s}  {count:5d} disagreements")
+        print(f"  {name_i:35s} vs {name_j:35s}  {count:5d} disagreements")
 
     # Unique correct (already computed)
     print("\n=== Unique Correct Predictions (right when ALL others are wrong) ===")
     for name in model_names:
-        print(f"  {name:25s}  {unique_correct[name]:4d} unique correct")
+        print(f"  {name:35s}  {unique_correct[name]:4d} unique correct")
 
 
 if __name__ == "__main__":

@@ -135,7 +135,11 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _load_predictions_from_runs(runs_df, tracking_uri):
-    """Load and average predictions from a DataFrame of MLflow runs."""
+    """Load and average predictions from a DataFrame of MLflow runs.
+
+    Groups by learner ID (model/feature_set/folds_nf) when params are available,
+    falls back to bare model_name for backward compatibility.
+    """
     import mlflow
 
     mlflow.set_tracking_uri(tracking_uri)
@@ -151,24 +155,32 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
         if model_name is None:
             continue
 
+        # Build learner ID from params (backward compat: fall back to model_name)
+        feature_set = run.get("params.feature_set", "")
+        folds_n = run.get("params.folds_n", "")
+        if feature_set and folds_n:
+            learner_id = f"{model_name}/{feature_set}/{folds_n}f"
+        else:
+            learner_id = model_name
+
         artifact_dir = client.download_artifacts(run.run_id, "predictions")
         oof = np.load(os.path.join(artifact_dir, "oof.npy"))
         holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
         test = np.load(os.path.join(artifact_dir, "test.npy"))
 
-        if model_name not in all_oof:
-            all_oof[model_name] = np.zeros_like(oof)
-            all_holdout[model_name] = np.zeros_like(holdout)
-            all_test[model_name] = np.zeros_like(test)
-            seed_counts[model_name] = 0
+        if learner_id not in all_oof:
+            all_oof[learner_id] = np.zeros_like(oof)
+            all_holdout[learner_id] = np.zeros_like(holdout)
+            all_test[learner_id] = np.zeros_like(test)
+            seed_counts[learner_id] = 0
 
-        all_oof[model_name] += oof
-        all_holdout[model_name] += holdout
-        all_test[model_name] += test
-        seed_counts[model_name] += 1
+        all_oof[learner_id] += oof
+        all_holdout[learner_id] += holdout
+        all_test[learner_id] += test
+        seed_counts[learner_id] += 1
 
         seed = run.get("params.seed", "?")
-        logger.info(f"  Loaded {model_name} seed={seed}")
+        logger.info(f"  Loaded {learner_id} seed={seed}")
 
     # Average across seeds
     for name in all_oof:
@@ -178,9 +190,9 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
         all_test[name] /= n
         logger.info(f"{name}: averaged over {n} seed(s)")
 
-    model_names = list(all_oof.keys())
-    logger.info(f"Total models loaded: {len(model_names)}")
-    return model_names, all_oof, all_holdout, all_test
+    learner_names = list(all_oof.keys())
+    logger.info(f"Total learners loaded: {len(learner_names)}")
+    return learner_names, all_oof, all_holdout, all_test
 
 
 def _load_predictions_from_mlflow(experiment_names, tracking_uri, folds=None):

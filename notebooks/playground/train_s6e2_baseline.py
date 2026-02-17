@@ -1189,6 +1189,39 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _make_learner_id(model_name: str, feature_set: str, folds_n: int) -> str:
+    return f"{model_name}/{feature_set}/{folds_n}f"
+
+
+def _get_seeds_for_learner(
+    learner_index: int, seed_pool: list[int], n_seeds: int | None
+) -> list[int]:
+    """Rotate through the seed pool so each learner gets a different subset."""
+    if n_seeds is None or n_seeds >= len(seed_pool):
+        return seed_pool  # all seeds, no rotation (backward compat)
+    offset = learner_index % len(seed_pool)
+    rotated = seed_pool[offset:] + seed_pool[:offset]
+    return rotated[:n_seeds]
+
+
+def _filter_model_config(config: dict, active_features: set[str]) -> dict:
+    """Deep-copy config and filter cat_features to match a feature set."""
+    import copy
+
+    config = copy.deepcopy(config)
+    if "cat_features" in config.get("kwargs", {}):
+        config["kwargs"]["cat_features"] = [
+            c for c in config["kwargs"]["cat_features"] if c in active_features
+        ]
+    if "categorical_feature" in config.get("kwargs_fit", {}):
+        config["kwargs_fit"]["categorical_feature"] = [
+            c
+            for c in config["kwargs_fit"]["categorical_feature"]
+            if c in active_features
+        ]
+    return config
+
+
 @ray.remote
 def _train_single_model(
     train,
@@ -1210,7 +1243,8 @@ def _train_single_model(
     os.environ["PYTHONUNBUFFERED"] = "1"
     sys.stdout.reconfigure(line_buffering=True)
     t0 = time.time()
-    print(f"[{model_name}] Starting seed={seed}", flush=True)
+    learner_id = _make_learner_id(model_name, feature_set, folds_n)
+    print(f"[{learner_id}] Starting seed={seed}", flush=True)
 
     # Convert cat features to pandas category dtype for models that need it (XGBoost)
     if model_config.get("convert_cat_dtype"):
@@ -1270,13 +1304,22 @@ def _train_single_model(
     elapsed = time.time() - t0
     mins, secs = divmod(int(elapsed), 60)
     print(
-        f"[{model_name}] Finished seed={seed} "
+        f"[{learner_id}] Finished seed={seed} "
         f"— OOF AUC: {oof_auc:.4f}, Holdout AUC: {holdout_auc:.4f} "
         f"({mins}m{secs:02d}s)",
         flush=True,
     )
     logging_data["metrics"]["duration_seconds"] = elapsed
-    return model_name, seed, oof, holdout_pred, test_pred, logging_data
+    return (
+        model_name,
+        seed,
+        oof,
+        holdout_pred,
+        test_pred,
+        logging_data,
+        feature_set,
+        folds_n,
+    )
 
 
 def _ensemble_predictions(
@@ -1375,6 +1418,8 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
     """Load and average predictions from a DataFrame of MLflow runs.
 
     Shared logic for --from-experiment and --from-ensemble.
+    Groups by learner ID (model/feature_set/folds_nf) when params are available,
+    falls back to bare model_name for backward compatibility.
     """
     import mlflow
 
@@ -1391,24 +1436,32 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
         if model_name is None:
             continue
 
+        # Build learner ID from params (backward compat: fall back to model_name)
+        feature_set = run.get("params.feature_set", "")
+        folds_n = run.get("params.folds_n", "")
+        if feature_set and folds_n:
+            learner_id = f"{model_name}/{feature_set}/{folds_n}f"
+        else:
+            learner_id = model_name
+
         artifact_dir = client.download_artifacts(run.run_id, "predictions")
         oof = np.load(os.path.join(artifact_dir, "oof.npy"))
         holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
         test = np.load(os.path.join(artifact_dir, "test.npy"))
 
-        if model_name not in all_oof:
-            all_oof[model_name] = np.zeros_like(oof)
-            all_holdout[model_name] = np.zeros_like(holdout)
-            all_test[model_name] = np.zeros_like(test)
-            seed_counts[model_name] = 0
+        if learner_id not in all_oof:
+            all_oof[learner_id] = np.zeros_like(oof)
+            all_holdout[learner_id] = np.zeros_like(holdout)
+            all_test[learner_id] = np.zeros_like(test)
+            seed_counts[learner_id] = 0
 
-        all_oof[model_name] += oof
-        all_holdout[model_name] += holdout
-        all_test[model_name] += test
-        seed_counts[model_name] += 1
+        all_oof[learner_id] += oof
+        all_holdout[learner_id] += holdout
+        all_test[learner_id] += test
+        seed_counts[learner_id] += 1
 
         seed = run.get("params.seed", "?")
-        logger.info(f"  Loaded {model_name} seed={seed}")
+        logger.info(f"  Loaded {learner_id} seed={seed}")
 
     # Average across seeds
     for name in all_oof:
@@ -1418,9 +1471,9 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
         all_test[name] /= n
         logger.info(f"{name}: averaged over {n} seed(s)")
 
-    model_names = list(all_oof.keys())
-    logger.info(f"Total models loaded: {len(model_names)}")
-    return model_names, all_oof, all_holdout, all_test
+    learner_names = list(all_oof.keys())
+    logger.info(f"Total learners loaded: {len(learner_names)}")
+    return learner_names, all_oof, all_holdout, all_test
 
 
 def _load_predictions_from_mlflow(experiment_names, tracking_uri):
@@ -1478,14 +1531,14 @@ def _train_ensemble(
     train,
     holdout,
     test,
-    features,
+    feature_sets_map,
     models,
-    seeds,
+    seed_pool,
+    seeds_per_learner,
+    folds_list,
     tag="full",
-    folds_n=10,
-    feature_set="all",
 ):
-    """Train all models with multiple seeds via Ray and return ensemble predictions."""
+    """Train all learners (model x feature_set x folds) with rotating seeds via Ray."""
     # Share data via Ray object store (stored once, shared across all tasks)
     train_ref = ray.put(train)
     test_ref = ray.put(test)
@@ -1494,42 +1547,73 @@ def _train_ensemble(
     train_labels = train[TARGET].values
     holdout_labels = holdout[TARGET].values
 
-    # Launch all (model, seed) tasks in parallel
+    # Launch tasks: enumerate learners and assign rotating seeds
     futures = []
     task_info = []
-    for model_name, config in models.items():
-        is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
-        is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
-        for seed in seeds:
-            if model_name.startswith("catboost"):
-                opts = {"num_gpus": 1, "num_cpus": 1, "resources": {"heavy_gpu": 1}}
-            elif model_name.startswith("realmlp"):
-                opts = {"num_gpus": 1, "num_cpus": 2, "resources": {"heavy_gpu": 1}}
-            elif model_name.startswith("ft_transformer"):
-                opts = {"num_gpus": 1, "num_cpus": 2, "resources": {"heavy_gpu": 1}}
-            elif is_neural:
-                opts = {"num_gpus": 0.5, "num_cpus": 2, "resources": {"heavy_gpu": 0.5}}
-            elif is_gpu:
-                opts = {"num_gpus": 0.25, "num_cpus": 1}
-            else:
-                opts = {"num_cpus": 2}
-            future = _train_single_model.options(**opts).remote(
-                train_ref,
-                test_ref,
-                holdout_ref,
-                features,
-                TARGET,
-                model_name,
-                config,
-                seed,
-                folds_n,
-                feature_set,
-            )
-            futures.append(future)
-            device = f"GPU {opts['num_gpus']}" if is_gpu else "CPU"
-            task_info.append(f"{model_name} seed={seed} ({device})")
+    seeds_per_lid = {}  # learner_id -> number of seeds assigned
 
-    logger.info(f"Launched {len(futures)} Ray tasks:")
+    learner_index = 0
+    for fs_name, fs_features in feature_sets_map.items():
+        active_set = set(fs_features)
+        for folds_n in folds_list:
+            for model_name, config in models.items():
+                filtered_config = _filter_model_config(config, active_set)
+                learner_id = _make_learner_id(model_name, fs_name, folds_n)
+                learner_seeds = _get_seeds_for_learner(
+                    learner_index, seed_pool, seeds_per_learner
+                )
+                seeds_per_lid[learner_id] = len(learner_seeds)
+                learner_index += 1
+
+                is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
+                is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
+
+                for seed in learner_seeds:
+                    if model_name.startswith("catboost"):
+                        opts = {
+                            "num_gpus": 1,
+                            "num_cpus": 1,
+                            "resources": {"heavy_gpu": 1},
+                        }
+                    elif model_name.startswith("realmlp"):
+                        opts = {
+                            "num_gpus": 1,
+                            "num_cpus": 2,
+                            "resources": {"heavy_gpu": 1},
+                        }
+                    elif model_name.startswith("ft_transformer"):
+                        opts = {
+                            "num_gpus": 1,
+                            "num_cpus": 2,
+                            "resources": {"heavy_gpu": 1},
+                        }
+                    elif is_neural:
+                        opts = {
+                            "num_gpus": 0.5,
+                            "num_cpus": 2,
+                            "resources": {"heavy_gpu": 0.5},
+                        }
+                    elif is_gpu:
+                        opts = {"num_gpus": 0.25, "num_cpus": 1}
+                    else:
+                        opts = {"num_cpus": 2}
+                    future = _train_single_model.options(**opts).remote(
+                        train_ref,
+                        test_ref,
+                        holdout_ref,
+                        fs_features,
+                        TARGET,
+                        model_name,
+                        filtered_config,
+                        seed,
+                        folds_n,
+                        fs_name,
+                    )
+                    futures.append(future)
+                    device = f"GPU {opts['num_gpus']}" if is_gpu else "CPU"
+                    task_info.append(f"{learner_id} seed={seed} ({device})")
+
+    logger.info(f"Launched {len(futures)} Ray tasks ({learner_index} learners):")
     for info in task_info:
         logger.info(f"  - {info}")
 
@@ -1567,34 +1651,43 @@ def _train_ensemble(
             )
             continue
         try:
-            model_name, seed, oof, holdout_pred, test_pred, logging_data = ray.get(
-                done[0]
-            )
+            (
+                model_name,
+                seed,
+                oof,
+                holdout_pred,
+                test_pred,
+                logging_data,
+                fs_name,
+                folds_n_val,
+            ) = ray.get(done[0])
         except Exception as e:
             completed += 1
             logger.error(f"[{completed}/{len(futures)}] Task failed: {e}")
             continue
         completed += 1
 
-        if model_name not in all_oof_preds:
-            all_oof_preds[model_name] = np.zeros(len(train))
-            all_holdout_preds[model_name] = np.zeros(len(holdout))
-            all_test_preds[model_name] = np.zeros(len(test))
+        learner_id = _make_learner_id(model_name, fs_name, folds_n_val)
 
-        all_oof_preds[model_name] += oof
-        all_holdout_preds[model_name] += holdout_pred
-        all_test_preds[model_name] += test_pred
+        if learner_id not in all_oof_preds:
+            all_oof_preds[learner_id] = np.zeros(len(train))
+            all_holdout_preds[learner_id] = np.zeros(len(holdout))
+            all_test_preds[learner_id] = np.zeros(len(test))
+
+        all_oof_preds[learner_id] += oof
+        all_holdout_preds[learner_id] += holdout_pred
+        all_test_preds[learner_id] += test_pred
 
         auc = roc_auc_score(holdout_labels, holdout_pred)
         logger.info(
-            f"[{completed}/{len(futures)}] {model_name} seed={seed} "
+            f"[{completed}/{len(futures)}] {learner_id} seed={seed} "
             f"— Holdout AUC: {auc:.4f}"
         )
 
         # Log to MLflow immediately
         if mlflow_ready:
             try:
-                run_name = f"{model_name}_seed{seed}"
+                run_name = f"{learner_id}_seed{seed}"
                 with mlflow.start_run(run_name=run_name):
                     mlflow.log_params(logging_data["params"])
                     mlflow.log_metrics(logging_data["metrics"])
@@ -1608,29 +1701,29 @@ def _train_ensemble(
                             np.save(path, arr)
                         mlflow.log_artifacts(tmp, artifact_path="predictions")
             except Exception as e:
-                logger.warning(f"MLflow logging failed for {model_name}: {e}")
+                logger.warning(f"MLflow logging failed for {learner_id}: {e}")
 
-    # Average across seeds and log per-model results
-    for name in all_oof_preds:
-        all_oof_preds[name] /= len(seeds)
-        all_holdout_preds[name] /= len(seeds)
-        all_test_preds[name] /= len(seeds)
+    # Average across seeds per learner and log results
+    for lid in all_oof_preds:
+        n = seeds_per_lid[lid]
+        all_oof_preds[lid] /= n
+        all_holdout_preds[lid] /= n
+        all_test_preds[lid] /= n
 
-        auc = roc_auc_score(holdout_labels, all_holdout_preds[name])
+        auc = roc_auc_score(holdout_labels, all_holdout_preds[lid])
         acc = accuracy_score(
-            holdout_labels, (all_holdout_preds[name] >= 0.5).astype(int)
+            holdout_labels, (all_holdout_preds[lid] >= 0.5).astype(int)
         )
         logger.info(
-            f"{name} (avg {len(seeds)} seeds) — "
-            f"Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
+            f"{lid} (avg {n} seeds) — " f"Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
         )
 
-    # Build stacking matrices (only models that succeeded)
-    model_names = [n for n in models.keys() if n in all_oof_preds]
-    logger.info(f"Models with predictions: {len(model_names)}/{len(models)}")
+    # Build ensemble from all learners that succeeded
+    learner_names = list(all_oof_preds.keys())
+    logger.info(f"Learners with predictions: {len(learner_names)}/{learner_index}")
 
     best_test, best_name, auc, all_aucs = _ensemble_predictions(
-        model_names,
+        learner_names,
         all_oof_preds,
         all_holdout_preds,
         all_test_preds,
@@ -1650,8 +1743,12 @@ def _train_ensemble(
                     mlflow.log_metric(f"auc_{method}", method_auc)
                 mlflow.log_metric("auc_best", auc)
                 mlflow.log_param("best_method", best_name)
-                mlflow.log_param("n_models", len(model_names))
-                mlflow.log_param("n_seeds", len(seeds))
+                mlflow.log_param("n_learners", len(learner_names))
+                mlflow.log_param("n_seed_pool", len(seed_pool))
+                mlflow.log_param(
+                    "seeds_per_learner",
+                    seeds_per_learner if seeds_per_learner else len(seed_pool),
+                )
                 mlflow.log_param("source", f"training_{tag}")
             logger.info("MLflow: logged ensemble run to 'ensemble'")
         except Exception as e:
@@ -1705,10 +1802,16 @@ def main():
     )
     parser.add_argument(
         "--features",
-        type=str,
-        default="ablation-pruned",
+        nargs="+",
+        default=["ablation-pruned"],
         choices=list(FEATURE_SETS.keys()),
-        help="Feature set to use (default: ablation-pruned)",
+        help="Feature set(s) to use (default: ablation-pruned)",
+    )
+    parser.add_argument(
+        "--folds",
+        nargs="+",
+        type=int,
+        help="Number of CV folds (e.g. --folds 5 10). Default depends on mode.",
     )
     parser.add_argument(
         "--models",
@@ -1717,11 +1820,19 @@ def main():
         help="Only train these models (e.g. --models catboost realmlp)",
     )
     parser.add_argument(
+        "--seed-pool",
         "--seeds",
         nargs="+",
         type=int,
+        dest="seed_pool",
         metavar="SEED",
-        help="Override seeds (e.g. --seeds 777)",
+        help="Seed pool (e.g. --seed-pool 42 123 777)",
+    )
+    parser.add_argument(
+        "--seeds-per-learner",
+        type=int,
+        default=None,
+        help="Seeds per learner (rotating from pool). Default: all seeds.",
     )
     args = parser.parse_args()
 
@@ -1772,14 +1883,20 @@ def main():
     holdout = _engineer_features(holdout)
     test = _engineer_features(test)
 
-    # Select feature set
-    if args.features == "all":
-        features = [c for c in train.columns if c not in ["id", TARGET]]
-    else:
-        features = FEATURE_SETS[args.features]
-    logger.info(f"Feature set: {args.features} ({len(features)} features)")
+    # Build feature sets map from args
+    feature_sets_map = {}
+    for fs_name in args.features:
+        if fs_name == "all":
+            feature_sets_map["all"] = [
+                c for c in train.columns if c not in ["id", TARGET]
+            ]
+        else:
+            feature_sets_map[fs_name] = FEATURE_SETS[fs_name]
+    first_fs = next(iter(feature_sets_map.values()))
+    for fs_name, fs_features in feature_sets_map.items():
+        logger.info(f"Feature set '{fs_name}': {len(fs_features)} features")
 
-    n_features = len(features)
+    n_features = len(first_fs)
     models = get_models(
         n_features, fast=args.fast, fast_full=args.fast_full, neural=args.neural
     )
@@ -1793,33 +1910,20 @@ def main():
             sys.exit(1)
         models = {k: v for k, v in models.items() if k in args.models}
 
-    # Filter cat_features in model configs to match the active feature set
-    active_set = set(features)
-    for config in models.values():
-        if "cat_features" in config.get("kwargs", {}):
-            config["kwargs"]["cat_features"] = [
-                c for c in config["kwargs"]["cat_features"] if c in active_set
-            ]
-        if "categorical_feature" in config.get("kwargs_fit", {}):
-            config["kwargs_fit"]["categorical_feature"] = [
-                c
-                for c in config["kwargs_fit"]["categorical_feature"]
-                if c in active_set
-            ]
+    # Cat feature filtering now happens inside _train_ensemble via _filter_model_config
 
-    # Configure seeds and folds based on mode
+    # Configure seed pool and folds list based on mode
     if args.debug:
-        seeds, folds_n = SEEDS_FAST, 2
+        default_seed_pool, default_folds = SEEDS_FAST, [2]
     elif args.fast or args.neural:
-        seeds, folds_n = SEEDS_FAST, 5
+        default_seed_pool, default_folds = SEEDS_FAST, [5]
     elif args.fast_full:
-        seeds, folds_n = SEEDS_FULL, 10
+        default_seed_pool, default_folds = SEEDS_FULL, [10]
     else:
-        seeds, folds_n = SEEDS_FULL, 10
+        default_seed_pool, default_folds = SEEDS_FULL, [10]
 
-    # Override seeds if requested
-    if args.seeds:
-        seeds = args.seeds
+    seed_pool = args.seed_pool if args.seed_pool else default_seed_pool
+    folds_list = args.folds if args.folds else default_folds
 
     mode_name = (
         "debug"
@@ -1895,24 +1999,31 @@ def main():
         except Exception as e:
             logger.warning(f"MLflow ensemble logging failed (non-fatal): {e}")
     else:
-        n_tasks = len(models) * len(seeds)
+        n_learners = len(models) * len(feature_sets_map) * len(folds_list)
         logger.info(
             f"Mode: {mode_name} "
-            f"— {len(models)} models × {len(seeds)} seeds × {folds_n} folds "
-            f"= {n_tasks} tasks"
+            f"— {len(models)} models × {len(feature_sets_map)} feature sets "
+            f"× {len(folds_list)} folds = {n_learners} learners"
         )
+        if args.seeds_per_learner:
+            logger.info(
+                f"  Rotating seeds: {args.seeds_per_learner} per learner "
+                f"from pool of {len(seed_pool)}"
+            )
+        else:
+            logger.info(f"  All learners share {len(seed_pool)} seed(s)")
 
         # Train ensemble with multi-seed averaging via Ray
         best_test, best_method, best_auc, ensemble_run_id = _train_ensemble(
             train,
             holdout,
             test,
-            features,
+            feature_sets_map,
             models,
-            seeds=seeds,
-            folds_n=folds_n,
+            seed_pool=seed_pool,
+            seeds_per_learner=args.seeds_per_learner,
+            folds_list=folds_list,
             tag=tag,
-            feature_set=args.features,
         )
 
     # Generate submission
