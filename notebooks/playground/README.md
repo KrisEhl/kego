@@ -103,12 +103,66 @@ Compared simple averaging vs learned meta-models on holdout AUC. Script: `compar
 
 **Verdict**: Gap < 0.001 — stacking is not worth the added complexity over simple averaging. Ridge weights reveal catboost (+0.61) and xgboost_reg (+0.40) dominate; original features add negligible signal beyond what base models capture.
 
+## Ensemble Prediction
+
+After training all models (multi-seed averaged), the final submission is produced by the best of four ensemble methods, selected automatically by holdout AUC:
+
+1. **Simple Average** — equal-weight mean of all model predictions
+2. **Ridge Stacking** — `RidgeCV` (alphas 0.01–100) trained on OOF predictions, learns per-model weights
+3. **Hill Climbing** — greedy weight optimization on OOF AUC (step size 0.01, up to 100 iterations)
+4. **Rank Blending** — converts each model's predictions to percentile ranks, then averages. Robust to different calibration scales across models.
+
+The method with the highest holdout AUC wins. The winning predictions are then optionally post-processed with **isotonic calibration** (fit on OOF, applied to holdout/test) — only used if it improves holdout AUC.
+
+## Encoding Strategy
+
+Each model family uses a different combination of categorical encoding, numerical preprocessing, and numerical embeddings. Target encoding and bin computation happen **per CV fold** to prevent data leakage.
+
+### Categorical Features
+
+8 categorical columns: Sex, Chest pain type, FBS over 120, EKG results, Exercise angina, Slope of ST, Number of vessels fluro, Thallium.
+
+| Model family | Encoding method |
+|---|---|
+| XGBoost | pandas `category` dtype (`enable_categorical=True`) |
+| CatBoost | native `cat_features` parameter |
+| LightGBM | native `categorical_feature` in fit kwargs |
+| Random Forest / Extra Trees | ordinal integers (no special handling) |
+| LogisticRegression | target encoding (`drop_original=True`) — replaces categoricals with per-fold mean target |
+| ResNet / ResNet-PLE | target encoding (`drop_original=True`) — can't handle categoricals natively |
+| FT-Transformer / FT-Transformer-PLE | label encoding (integer mapping) → learned categorical embeddings, plus target encoding for TE features |
+| RealMLP | pandas `category` dtype (native handling), plus target encoding for TE features |
+
+**Target encoding** is applied to 4 high-cardinality categoricals (Thallium, Chest pain type, Slope of ST, EKG results) via `make_te_preprocess`. It creates `{col}_te` columns with the mean target value per category, computed from fold training data only.
+
+### Numerical Preprocessing
+
+| Model family | Preprocessing |
+|---|---|
+| Tree models (XGB, LGB, CB, RF, ET) | None (trees are invariant to monotonic transforms) |
+| LogisticRegression | `StandardScaler` |
+| ResNet, FT-Transformer, RealMLP | `QuantileTransformer(output_distribution="normal")` |
+
+### Numerical Embeddings (Neural Models)
+
+Neural models transform each scalar feature into a higher-dimensional embedding before feeding it to the network backbone. Two strategies:
+
+| Embedding | Models | How it works | Key params |
+|---|---|---|---|
+| **PeriodicEmbeddings** | `resnet`, `ft_transformer` | Learned sinusoidal basis functions. Each feature is mapped to `d_embedding` dimensions via `n_frequencies` learned sine/cosine pairs. | `n_frequencies=48`, `d_embedding=24` (ResNet) or `d_block=96` (FT-Transformer) |
+| **PiecewiseLinearEmbeddings (PLE)** | `resnet_ple`, `ft_transformer_ple` | Target-aware binning via decision trees, then piecewise linear interpolation within bins. Bin boundaries are learned per fold from training data + labels. | `n_bins=48`, `version="B"`, `tree_kwargs={"min_samples_leaf": 64}` |
+| Internal (RealMLP) | `realmlp` | RealMLP's built-in embedding scheme (not configurable) | — |
+
+**PLE vs Periodic**: PLE uses `compute_bins(X, y, regression=False)` to find bin edges supervised by the target, so bins concentrate where the feature-target relationship changes most. Periodic embeddings are unsupervised — they learn frequency representations during backpropagation. PLE variants use identical hyperparameters to their periodic counterparts for clean A/B comparison.
+
+**Gaussian noise** (`std=0.01`) is added to numerical features during training only (both ResNet and FT-Transformer) as regularization for synthetic data.
+
 ## What Worked
 
 - **Model diversity**: Adding sklearn models (LR, RF, ET) and GBDT variants (XGB-reg, LGB-dart) alongside the original XGB/LGB/CB improved the ensemble
 - **Original UCI data**: Combining 270 real samples with 630k synthetic rows helped slightly
 - **Ridge stacking**: Consistently outperforms simple averaging and hill climbing
-- **Multi-seed averaging**: Small but real improvement from training each model with 3 different KFold seeds
+- **Multi-seed averaging**: Small but real improvement from training each model with 3 different StratifiedKFold seeds
 
 ## What Didn't Work
 
