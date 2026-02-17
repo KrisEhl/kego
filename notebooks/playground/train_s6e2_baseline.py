@@ -1546,9 +1546,10 @@ def _run_optuna_study(
             except Exception as e:
                 logger.warning(f"MLflow logging failed for trial {trial.number}: {e}")
 
-        best_so_far = (
-            study.best_value if len(study.trials) > 0 and study.best_trial else oof_auc
-        )
+        try:
+            best_so_far = study.best_value
+        except ValueError:
+            best_so_far = oof_auc
         print(
             f"Trial {trial.number + 1}/{n_trials}: "
             f"oof_auc={oof_auc:.4f} holdout_auc={holdout_auc:.4f} "
