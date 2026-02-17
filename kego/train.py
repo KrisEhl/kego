@@ -3,7 +3,7 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +43,13 @@ def train_model_split(
     kfold_seed: int = 42,
     fold_preprocess=None,
 ):
-    kf = KFold(n_splits=folds_n, shuffle=True, random_state=kfold_seed)
+    kf = StratifiedKFold(n_splits=folds_n, shuffle=True, random_state=kfold_seed)
 
     oof_xgb = np.zeros(len(train))
     pred_xgb = np.zeros(len(test))
     holdout_xgb = np.zeros(len(holdout))
     model_trained = None
-    for i, (train_index, test_index) in enumerate(kf.split(train)):
+    for i, (train_index, test_index) in enumerate(kf.split(train, train[target])):
 
         logger.info("#" * 25)
         logger.info(f"### Fold {i+1}")
