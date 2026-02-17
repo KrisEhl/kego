@@ -98,6 +98,14 @@ submit-neural:
 submit-debug:
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
 
+DIVERSE_MODELS ?= catboost lightgbm logistic_regression ft_transformer
+DIVERSE_FEATURES ?= ablation-pruned raw forward-selected
+DIVERSE_FOLDS ?= 5 10
+DIVERSE_SEED_POOL ?= 42 123 777 999 2024
+DIVERSE_SEEDS_PER ?= 3
+submit-diverse:
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG))'
+
 submit-ensemble:
 	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble ENSEMBLE=submit-v1"; echo "       make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
