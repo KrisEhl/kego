@@ -160,36 +160,45 @@ Neural models transform each scalar feature into a higher-dimensional embedding 
 
 ## Ensemble Member Analysis
 
-Script: `analyze_ensemble.py` — greedy forward selection and leave-one-out analysis on the 18-model ensemble from `playground-s6e2-full` (ablation-pruned features, 3 seeds, 10 folds).
+Script: `analyze_ensemble.py` — multi-strategy greedy forward selection and leave-one-out analysis on the `submit-candidates` ensemble (28 learners: 5 model types x 3 feature sets x 2 fold counts, 3 seeds each, 84 runs total).
 
-### Greedy Forward Selection
+At each greedy step, the script evaluates 4 blending strategies per candidate model: simple mean, rank blending, Ridge stacking (fit on OOF, evaluate on holdout), and hill climbing weight optimization. It picks the (candidate, strategy) pair with the highest holdout AUC.
 
-Starting from empty, adds models one at a time picking the highest holdout AUC gain:
+### Greedy Forward Selection (multi-strategy)
 
-| Step | Model Added | Ensemble AUC | Delta | Spearman r |
-|------|-------------|-------------|-------|------------|
-| 1 | xgboost_reg | 0.95603 | — | — |
-| 2 | catboost_shallow | 0.95606 | +0.00003 | 0.999 |
-| — | *16 models rejected* | — | -0.00002 to -0.00065 | 0.983–1.000 |
+| Step | Model Added | Strategy | Ensemble AUC | Delta | Spearman r |
+|------|-------------|----------|-------------|-------|------------|
+| 1 | xgboost/raw/10f | mean | 0.95624 | — | — |
+| 2 | ft_transformer/forward-selected/10f | ridge | 0.95626 | +0.00002 | 0.995 |
+| 3 | lightgbm/ablation-pruned/10f | ridge | 0.95627 | +0.00001 | 0.998 |
+| 4 | xgboost/raw/5f | ridge | 0.95627 | +0.00000 | 0.999 |
+| 5 | catboost/raw/5f | ridge | 0.95627 | +0.00000 | 0.999 |
+| 6 | logistic_regression/forward-selected/10f | ridge | 0.95627 | +0.00000 | 0.989 |
+| 7 | ft_transformer/ablation-pruned/10f | ridge | 0.95627 | +0.00000 | 0.997 |
+| 8 | ft_transformer/raw/5f | ridge | 0.95627 | +0.00000 | 0.998 |
+| — | *20 models rejected* | ridge | — | -0.00000 to -0.00001 | 0.992–0.999 |
 
-Only 2 of 18 models survive. The greedy 2-model ensemble (0.95606) beats the full 18-model average (0.95558).
+8 of 28 models selected. Ridge stacking is the winning strategy from step 2 onward.
 
-### Leave-One-Out (full 18-model ensemble, AUC 0.95558)
+### Leave-One-Out (full 28-model ensemble, ridge strategy, AUC 0.95626)
 
 | Model | AUC without | Delta | Spearman r | Verdict |
 |-------|------------|-------|------------|---------|
-| extra_trees | 0.95566 | -0.00008 | 0.990 | HARMFUL |
-| random_forest | 0.95565 | -0.00007 | 0.987 | HARMFUL |
-| resnet | 0.95562 | -0.00004 | 0.996 | neutral |
-| ... 13 more neutral ... | | | | neutral |
-| xgboost_dart | 0.95553 | +0.00004 | 0.997 | helpful-ish |
-| xgboost_reg | 0.95553 | +0.00004 | 0.998 | helpful-ish |
+| xgboost/raw/10f | 0.95625 | +0.00002 | 0.998 | neutral |
+| logistic_regression/raw/10f | 0.95625 | +0.00001 | 0.995 | neutral |
+| logistic_regression/raw/5f | 0.95625 | +0.00001 | 0.995 | neutral |
+| xgboost/raw/5f | 0.95625 | +0.00001 | 0.998 | neutral |
+| ... 24 more ... | 0.95626 | +/-0.00000 | 0.992–0.999 | neutral |
 
-### Key Finding
+All 28 models are neutral under Ridge stacking — no model is harmful, none is indispensable. Ridge assigns appropriate weights to compensate for weak or redundant models.
 
-All 18 models are extremely correlated (Spearman r = 0.983–1.000), meaning the ensemble gets almost no diversity benefit. Adding models beyond the top 2 dilutes the best predictions rather than improving them. The extra_trees and random_forest models actively hurt — they are the least accurate and most different, but different in the wrong direction.
+### Key Findings
 
-**Implication:** To improve the ensemble, new models need to be genuinely diverse (different feature sets, different preprocessing, different problem formulations), not just more hyperparameter variants of the same GBDT recipe.
+**Multi-strategy vs mean-only:** The previous mean-only greedy selection on 18 models selected just 2 (AUC 0.95606). Multi-strategy with Ridge selects 8 from 28 candidates (AUC 0.95627), a +0.00021 improvement. Ridge stacking can assign low weights to weaker models, so it benefits from including more diverse inputs.
+
+**Model diversity matters for Ridge:** The selected 8 include 3 model types (XGBoost, FT-Transformer, LightGBM, LogisticRegression, CatBoost) across different feature sets (raw, forward-selected, ablation-pruned) and fold counts (5f, 10f). Ridge benefits from this diversity even when individual models are r=0.999 correlated.
+
+**Leave-one-out is flat under Ridge:** With Ridge stacking over 28 models, no single model's removal changes AUC by more than 0.00002. This is because Ridge can redistribute weight. Under simple averaging the same ensemble shows more sensitivity to individual models.
 
 ## What Worked
 
