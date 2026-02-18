@@ -1347,8 +1347,8 @@ def _suggest_ft_transformer(trial):
         ),
         "lr": trial.suggest_float("lr", 1e-5, 1e-3, log=True),
         "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256, 512]),
-        "max_epochs": 100,
-        "patience": 10,
+        "max_epochs": 50,
+        "patience": 5,
     }
 
 
