@@ -753,7 +753,7 @@ def get_models(
             "kwargs": {
                 "cat_features": CAT_FEATURES,
                 "max_train_rows": 10000,
-                "n_estimators": 16,
+                "n_estimators": 4,
                 "device": "cuda",
                 "random_state": 42,
             },
