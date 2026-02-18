@@ -1528,6 +1528,11 @@ def _run_optuna_study(
         trial_config = copy.deepcopy(base_config)
         trial_config["kwargs"].update(suggested_params)
 
+        # CatBoost: Bayesian bootstrap doesn't support subsample
+        if model_name.startswith("catboost"):
+            if trial_config["kwargs"].get("bootstrap_type") == "Bayesian":
+                trial_config["kwargs"].pop("subsample", None)
+
         # Prune invalid combos for LightGBM
         if model_name.startswith("lightgbm"):
             num_leaves = trial_config["kwargs"].get("num_leaves", 31)
