@@ -1347,8 +1347,8 @@ def _suggest_ft_transformer(trial):
         ),
         "lr": trial.suggest_float("lr", 1e-5, 1e-3, log=True),
         "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256, 512]),
-        "max_epochs": 200,
-        "patience": 20,
+        "max_epochs": 100,
+        "patience": 10,
     }
 
 
@@ -1587,93 +1587,125 @@ def _run_optuna_study(
         f"{n_trials} trials, {folds_n} folds, feature_set={feature_set}"
     )
 
-    def objective(trial):
-        t0 = time.time()
+    # Determine max parallelism based on resource type.
+    # heavy_gpu models (FT-Transformer, CatBoost, etc.): 3 GPUs available.
+    max_parallel = 3 if resource_opts.get("resources", {}).get("heavy_gpu") else 1
+    logger.info(f"Optuna parallelism: max_parallel={max_parallel}")
 
-        # Get suggested params
-        suggested_params = suggest_fn(trial)
+    completed = 0
+    running = {}  # {ray_future: (trial, t0)}
 
-        # Build trial config from base config
-        trial_config = copy.deepcopy(base_config)
-        trial_config["kwargs"].update(suggested_params)
+    while completed < n_trials:
+        # Launch new trials up to max_parallel
+        while len(running) < max_parallel and completed + len(running) < n_trials:
+            trial = study.ask()
+            t0 = time.time()
 
-        # CatBoost: Bayesian bootstrap doesn't support subsample
-        if model_name.startswith("catboost"):
-            if trial_config["kwargs"].get("bootstrap_type") == "Bayesian":
-                trial_config["kwargs"].pop("subsample", None)
+            # Get suggested params
+            suggested_params = suggest_fn(trial)
 
-        # Prune invalid combos for LightGBM
-        if model_name.startswith("lightgbm"):
-            num_leaves = trial_config["kwargs"].get("num_leaves", 31)
-            max_depth = trial_config["kwargs"].get("max_depth", -1)
-            if max_depth > 0 and num_leaves >= 2**max_depth:
-                raise optuna.TrialPruned()
+            # Build trial config from base config
+            trial_config = copy.deepcopy(base_config)
+            trial_config["kwargs"].update(suggested_params)
 
-        # Filter cat_features to match active feature set
-        trial_config = _filter_model_config(trial_config, active_set)
+            # CatBoost: Bayesian bootstrap doesn't support subsample
+            if model_name.startswith("catboost"):
+                if trial_config["kwargs"].get("bootstrap_type") == "Bayesian":
+                    trial_config["kwargs"].pop("subsample", None)
 
-        # Train via Ray task (sequential — block on ray.get() for TPE)
-        future = _train_single_model.options(**resource_opts).remote(
-            train_ref,
-            test_ref,
-            holdout_ref,
-            features,
-            TARGET,
-            model_name,
-            trial_config,
-            seed,
-            folds_n,
-            feature_set,
-        )
-        result = ray.get(future)
-        _, _, _, _, _, logging_data, _, _ = result
+            # Prune invalid combos for LightGBM
+            if model_name.startswith("lightgbm"):
+                num_leaves = trial_config["kwargs"].get("num_leaves", 31)
+                max_depth = trial_config["kwargs"].get("max_depth", -1)
+                if max_depth > 0 and num_leaves >= 2**max_depth:
+                    study.tell(trial, state=optuna.trial.TrialState.PRUNED)
+                    completed += 1
+                    continue
 
-        oof_auc = logging_data["metrics"]["oof_auc"]
-        holdout_auc = logging_data["metrics"]["holdout_auc"]
-        elapsed = time.time() - t0
+            # Filter cat_features to match active feature set
+            trial_config = _filter_model_config(trial_config, active_set)
 
-        # Log to MLflow
-        if mlflow_ready:
+            # Submit Ray task (non-blocking)
+            future = _train_single_model.options(**resource_opts).remote(
+                train_ref,
+                test_ref,
+                holdout_ref,
+                features,
+                TARGET,
+                model_name,
+                trial_config,
+                seed,
+                folds_n,
+                feature_set,
+            )
+            running[future] = (trial, t0)
+
+        if not running:
+            break
+
+        # Wait for any trial to complete
+        done, _ = ray.wait(list(running.keys()), num_returns=1)
+
+        for future in done:
+            trial, t0 = running.pop(future)
             try:
-                with mlflow.start_run(run_name=f"trial_{trial.number}"):
-                    mlflow.log_params(
-                        {
-                            "model": model_name,
-                            "feature_set": feature_set,
-                            "folds_n": folds_n,
-                            "seed": seed,
-                            "trial_number": trial.number,
-                            **{
-                                k: v
-                                for k, v in trial.params.items()
-                                if isinstance(v, (int, float, str, bool))
-                            },
-                        }
-                    )
-                    mlflow.log_metrics(
-                        {
-                            "oof_auc": oof_auc,
-                            "holdout_auc": holdout_auc,
-                            "duration_seconds": elapsed,
-                        }
-                    )
+                result = ray.get(future)
             except Exception as e:
-                logger.warning(f"MLflow logging failed for trial {trial.number}: {e}")
+                logger.warning(f"Trial {trial.number} failed: {e}")
+                study.tell(trial, state=optuna.trial.TrialState.FAIL)
+                completed += 1
+                continue
 
-        try:
-            best_so_far = study.best_value
-        except ValueError:
-            best_so_far = oof_auc
-        print(
-            f"Trial {trial.number + 1}/{n_trials}: "
-            f"oof_auc={oof_auc:.4f} holdout_auc={holdout_auc:.4f} "
-            f"(best={best_so_far:.4f}) [{elapsed:.0f}s]",
-            flush=True,
-        )
+            _, _, _, _, _, logging_data, _, _ = result
 
-        return oof_auc
+            oof_auc = logging_data["metrics"]["oof_auc"]
+            holdout_auc = logging_data["metrics"]["holdout_auc"]
+            elapsed = time.time() - t0
 
-    study.optimize(objective, n_trials=n_trials)
+            # Report result to Optuna
+            study.tell(trial, oof_auc)
+            completed += 1
+
+            # Log to MLflow
+            if mlflow_ready:
+                try:
+                    with mlflow.start_run(run_name=f"trial_{trial.number}"):
+                        mlflow.log_params(
+                            {
+                                "model": model_name,
+                                "feature_set": feature_set,
+                                "folds_n": folds_n,
+                                "seed": seed,
+                                "trial_number": trial.number,
+                                **{
+                                    k: v
+                                    for k, v in trial.params.items()
+                                    if isinstance(v, (int, float, str, bool))
+                                },
+                            }
+                        )
+                        mlflow.log_metrics(
+                            {
+                                "oof_auc": oof_auc,
+                                "holdout_auc": holdout_auc,
+                                "duration_seconds": elapsed,
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"MLflow logging failed for trial {trial.number}: {e}"
+                    )
+
+            try:
+                best_so_far = study.best_value
+            except ValueError:
+                best_so_far = oof_auc
+            print(
+                f"Trial {completed}/{n_trials}: "
+                f"oof_auc={oof_auc:.4f} holdout_auc={holdout_auc:.4f} "
+                f"(best={best_so_far:.4f}) [{elapsed:.0f}s]",
+                flush=True,
+            )
 
     # Print best params
     logger.info(f"\n{'='*50}")
