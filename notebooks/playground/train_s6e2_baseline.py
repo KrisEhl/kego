@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 import ray
@@ -26,6 +27,7 @@ from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression, RidgeCV
 from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import QuantileTransformer, StandardScaler
 from skorch import NeuralNetBinaryClassifier
@@ -701,7 +703,7 @@ def _hill_climbing(
     oof_matrix: np.ndarray,
     labels: np.ndarray,
     model_names: list[str],
-    n_iterations: int = 100,
+    n_iterations: int = 10,
 ) -> np.ndarray:
     """Find ensemble weights by greedy hill climbing on AUC."""
     n_models = oof_matrix.shape[1]
@@ -1740,6 +1742,56 @@ def _run_optuna_study(
             logger.warning(f"MLflow best-trial logging failed: {e}")
 
 
+def _l2_stacking(
+    oof_matrix,
+    holdout_matrix,
+    test_matrix,
+    train_labels,
+    train_features=None,
+    holdout_features=None,
+    test_features=None,
+    n_splits=5,
+    seed=42,
+):
+    """L2 stacking: train LightGBM meta-model with K-fold CV on L1 predictions."""
+    if train_features is not None:
+        X_train = np.hstack([oof_matrix, train_features])
+        X_holdout = np.hstack([holdout_matrix, holdout_features])
+        X_test = np.hstack([test_matrix, test_features])
+    else:
+        X_train = oof_matrix
+        X_holdout = holdout_matrix
+        X_test = test_matrix
+
+    l2_oof = np.zeros(len(X_train))
+    l2_holdout = np.zeros(len(X_holdout))
+    l2_test = np.zeros(len(X_test))
+
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    for fold_idx, (in_idx, out_idx) in enumerate(skf.split(X_train, train_labels)):
+        lgb = LGBMClassifier(
+            n_estimators=500,
+            num_leaves=15,
+            learning_rate=0.05,
+            min_child_samples=50,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=seed + fold_idx,
+            verbose=-1,
+        )
+        lgb.fit(
+            X_train[in_idx],
+            train_labels[in_idx],
+            eval_set=[(X_train[out_idx], train_labels[out_idx])],
+            callbacks=[lgbm.early_stopping(50, verbose=False)],
+        )
+        l2_oof[out_idx] = lgb.predict_proba(X_train[out_idx])[:, 1]
+        l2_holdout += lgb.predict_proba(X_holdout)[:, 1] / n_splits
+        l2_test += lgb.predict_proba(X_test)[:, 1] / n_splits
+
+    return l2_oof, l2_holdout, l2_test
+
+
 def _ensemble_predictions(
     model_names,
     all_oof_preds,
@@ -1748,6 +1800,9 @@ def _ensemble_predictions(
     train_labels,
     holdout_labels,
     tag="",
+    train_df=None,
+    holdout_df=None,
+    test_df=None,
 ):
     """Run ensemble methods on collected predictions and return best test preds."""
     oof_matrix = np.column_stack([all_oof_preds[n] for n in model_names])
@@ -1793,7 +1848,6 @@ def _ensemble_predictions(
     rb_test = _rank_blend(test_matrix)
     auc = roc_auc_score(holdout_labels, rb_holdout)
     logger.info(f"{tag}Rank Blending — Holdout AUC: {auc:.4f}")
-    logger.info(f"{'='*50}")
 
     # Pick best ensemble method
     results = {
@@ -1802,6 +1856,38 @@ def _ensemble_predictions(
         "hill_climbing": (hc_holdout, hc_test, oof_matrix @ best_weights),
         "rank_blending": (rb_holdout, rb_test, rb_oof),
     }
+
+    # --- L2 Stacking: LightGBM meta-model with K-fold CV ---
+    l2_feature_sets = [("preds_only", None)]
+    if train_df is not None:
+        l2_feature_sets += [
+            ("raw", RAW_FEATURES),
+            ("ablation-pruned", FEATURES_ABLATION_PRUNED),
+            ("forward-selected", FEATURES_FORWARD_SELECTED),
+        ]
+
+    for fs_name, fs_features in l2_feature_sets:
+        train_feat = train_df[fs_features].values if fs_features else None
+        holdout_feat = holdout_df[fs_features].values if fs_features else None
+        test_feat = (
+            test_df[fs_features].values if fs_features and test_df is not None else None
+        )
+
+        l2_oof, l2_holdout, l2_test = _l2_stacking(
+            oof_matrix,
+            holdout_matrix,
+            test_matrix,
+            train_labels,
+            train_feat,
+            holdout_feat,
+            test_feat,
+        )
+        label = f"L2 LightGBM ({fs_name})"
+        l2_auc = roc_auc_score(holdout_labels, l2_holdout)
+        logger.info(f"{tag}{label} — Holdout AUC: {l2_auc:.4f}")
+        results[f"l2_{fs_name}"] = (l2_holdout, l2_test, l2_oof)
+
+    logger.info(f"{'='*50}")
     all_aucs = {k: roc_auc_score(holdout_labels, v[0]) for k, v in results.items()}
     best_name = max(all_aucs, key=all_aucs.get)
     best_holdout, best_test, best_oof = results[best_name]
@@ -2154,6 +2240,9 @@ def _train_ensemble(
         train_labels,
         holdout_labels,
         tag,
+        train_df=train,
+        holdout_df=holdout,
+        test_df=test,
     )
 
     # --- Log ensemble to MLflow ---
@@ -2419,6 +2508,9 @@ def main():
             all_test,
             train_labels,
             holdout_labels,
+            train_df=train,
+            holdout_df=holdout,
+            test_df=test,
         )
 
         # Log ensemble to MLflow

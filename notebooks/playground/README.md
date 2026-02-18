@@ -113,12 +113,16 @@ Compared simple averaging vs learned meta-models on holdout AUC. Script: `compar
 
 ## Ensemble Prediction
 
-After training all models (multi-seed averaged), the final submission is produced by the best of four ensemble methods, selected automatically by holdout AUC:
+After training all models (multi-seed averaged), the final submission is produced by the best of eight ensemble methods, selected automatically by holdout AUC:
 
 1. **Simple Average** — equal-weight mean of all model predictions
 2. **Ridge Stacking** — `RidgeCV` (alphas 0.01–100) trained on OOF predictions, learns per-model weights
-3. **Hill Climbing** — greedy weight optimization on OOF AUC (step size 0.01, up to 100 iterations)
+3. **Hill Climbing** — greedy weight optimization on OOF AUC (step size 0.01, 10 iterations)
 4. **Rank Blending** — converts each model's predictions to percentile ranks, then averages. Robust to different calibration scales across models.
+5. **L2 LightGBM (preds_only)** — 5-fold StratifiedKFold LightGBM meta-model on L1 OOF predictions
+6. **L2 LightGBM (raw)** — L2 meta-model on L1 predictions + 13 raw features
+7. **L2 LightGBM (ablation-pruned)** — L2 meta-model on L1 predictions + 21 ablation-pruned features
+8. **L2 LightGBM (forward-selected)** — L2 meta-model on L1 predictions + 16 forward-selected features
 
 The method with the highest holdout AUC wins. The winning predictions are then optionally post-processed with **isotonic calibration** (fit on OOF, applied to holdout/test) — only used if it improves holdout AUC.
 
@@ -216,7 +220,7 @@ All 28 models are neutral under Ridge stacking — no model is harmful, none is 
 
 ## What Didn't Work
 
-- **Stacking meta-models**: Ridge, LightGBM (preds-only), and LightGBM (preds+features) all gain < 0.001 AUC over simple averaging — not worth the complexity
+- **Stacking meta-models**: Ridge, LightGBM (preds-only), and LightGBM (preds+features) all gain < 0.001 AUC over simple averaging. L2 LightGBM stacking (5-fold CV, 4 feature set variants) ties Ridge at 0.9562 — no non-linear signal to exploit
 - **StandardScaler for LR**: Ridge stacking already handles different prediction scales, so normalizing LR inputs had no effect on the ensemble
 - **Pseudo-labeling**: Even with 136k confident test predictions (prob > 0.95 or < 0.05), the second training round didn't improve. Likely because the synthetic data is already large enough and pseudo-labels don't add new signal
 - **Neural models on CPU**: RealMLP, FTTransformer, ResNet were too slow to train on CPU (hours per model). Now running on GPU cluster.
@@ -357,13 +361,12 @@ Researched from Playground Series winner writeups and top solutions. Ranked by e
 
 | # | Idea | Expected Gain | Effort | Notes |
 |---|------|---------------|--------|-------|
-| 1 | **2-level stacking** | Medium | Medium | Use L1 OOF predictions + original features as input to L2 GBDT/Ridge. Chris Deotte's 1st place (S5E4) used 3-level stacking with 75 models. |
-| 2 | **More feature engineering** | Small-Medium | Medium | Groupby stats (mean/std of numerics per categorical), frequency/count encoding, log transforms on BP/Cholesterol, binned continuous features. Generate hundreds of candidates, let selection prune. |
-| 3 | **Retrain on full data** for final submission | Small | Low | After selecting hyperparameters via CV, retrain on train+holdout for submission. Common in top solutions. |
-| 4 | **Adversarial validation** | Diagnostic | Low | Train classifier to distinguish train vs test. May reveal distribution shift issues. |
-| 5 | **Revisit pseudo-labeling** | Small | Medium | Previous attempt (136k hard labels) failed. Try: soft labels, higher confidence threshold (0.99), per-fold pseudo-labels, ensemble-generated labels. |
-| 6 | **KNN / SVM** for diversity | Small | Low | Different inductive bias from trees/NNs, adds stacking diversity. |
-| 7 | **FT-Transformer HP tuning** | Small | In progress | Optuna tuning with 5 trials (patience=5, max_epochs=50). Currently running. |
+| 1 | **More feature engineering** | Small-Medium | Medium | Groupby stats (mean/std of numerics per categorical), frequency/count encoding, log transforms on BP/Cholesterol, binned continuous features. Generate hundreds of candidates, let selection prune. |
+| 2 | **Retrain on full data** for final submission | Small | Low | After selecting hyperparameters via CV, retrain on train+holdout for submission. Common in top solutions. |
+| 3 | **Adversarial validation** | Diagnostic | Low | Train classifier to distinguish train vs test. May reveal distribution shift issues. |
+| 4 | **Revisit pseudo-labeling** | Small | Medium | Previous attempt (136k hard labels) failed. Try: soft labels, higher confidence threshold (0.99), per-fold pseudo-labels, ensemble-generated labels. |
+| 5 | **KNN / SVM** for diversity | Small | Low | Different inductive bias from trees/NNs, adds stacking diversity. |
+| 6 | **FT-Transformer HP tuning** | Small | In progress | Optuna tuning with 5 trials (patience=5, max_epochs=50). Currently running. |
 
 ### Already tried / won't help
 
@@ -372,3 +375,4 @@ Researched from Playground Series winner writeups and top solutions. Ranked by e
 - **StandardScaler for LogReg**: No effect, Ridge already compensates
 - **TabPFN**: Added to ensemble (6 learners across 3 feature sets x 2 fold counts, 18 runs). Ridge assigns near-zero/negative weights. Greedy forward selection picks it at step 11 of 65 with <0.0001 AUC gain. LB unchanged at 0.95372. Not helpful for this dataset (630K rows — TabPFN is designed for smaller datasets)
 - **Massive ensemble (65 learners, 19 model types)**: submit-v2 with 223 runs from `full` + `diverse-v1` scores identically to submit-v9 (8 learners). More models ≠ better LB when Ridge stacking is already optimal
+- **2-level stacking (L2 LightGBM)**: Tested 4 variants — preds-only, +raw features, +ablation-pruned, +forward-selected. All tie Ridge at 0.9562 holdout AUC. The 65-model L1 predictions are already well-captured by linear combination; LightGBM meta-model can't find non-linear interactions to exploit on this dataset
