@@ -64,7 +64,7 @@ def _fmt_secs(secs):
     return f"{h}h{m:02d}m"
 
 
-GPU_MODELS = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
+GPU_MODELS = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer", "tabpfn"}
 NEURAL_MODELS = {"realmlp", "realmlp_large", "resnet", "ft_transformer"}
 N_GPU_WORKERS = 3
 
