@@ -30,6 +30,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import QuantileTransformer, StandardScaler
 from skorch import NeuralNetBinaryClassifier
 from skorch.callbacks import EarlyStopping
+from tabpfn import TabPFNClassifier
 from xgboost import XGBClassifier
 
 project_root = Path(__file__).resolve().parents[2]
@@ -63,6 +64,7 @@ FAST_MODELS = {
     "xgboost",
     "lightgbm",
     "catboost",
+    "tabpfn",
 }
 NEURAL_ONLY_MODELS = {
     "resnet",
@@ -71,7 +73,14 @@ NEURAL_ONLY_MODELS = {
     "ft_transformer_ple",
     "realmlp",
 }
-GPU_MODEL_PREFIXES = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer"}
+GPU_MODEL_PREFIXES = {
+    "xgboost",
+    "catboost",
+    "realmlp",
+    "resnet",
+    "ft_transformer",
+    "tabpfn",
+}
 NEURAL_MODEL_PREFIXES = {"realmlp", "resnet", "ft_transformer"}
 CAT_FEATURES = [
     "Sex",
@@ -198,6 +207,48 @@ class ScaledLogisticRegression:
 
     def predict(self, X):
         return self.pipe.predict(X)
+
+
+class SubsampledTabPFN:
+    """TabPFN with stratified subsampling for large datasets."""
+
+    def __init__(
+        self, cat_features=None, max_train_rows=10000, random_state=42, **kwargs
+    ):
+        self.cat_features = cat_features or []
+        self.max_train_rows = max_train_rows
+        self.random_state = random_state
+        self.kwargs = kwargs
+
+    def _prepare(self, X):
+        if isinstance(X, pd.DataFrame) and self.cat_features:
+            X = X.copy()
+            for c in self.cat_features:
+                if c in X.columns:
+                    X[c] = X[c].astype("category")
+        return X
+
+    def fit(self, X, y, **kwargs):
+        X = self._prepare(X)
+        if len(X) > self.max_train_rows:
+            from sklearn.model_selection import train_test_split
+
+            X, _, y, _ = train_test_split(
+                X,
+                y,
+                train_size=self.max_train_rows,
+                stratify=y,
+                random_state=self.random_state,
+            )
+        self.model = TabPFNClassifier(random_state=self.random_state, **self.kwargs)
+        self.model.fit(X, y)
+        return self
+
+    def predict_proba(self, X):
+        return self.model.predict_proba(self._prepare(X))
+
+    def predict(self, X):
+        return self.model.predict(self._prepare(X))
 
 
 class GPUXGBClassifier(XGBClassifier):
@@ -696,6 +747,18 @@ def get_models(
             "seed_key": "random_state",
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(TE_FEATURES, drop_original=True),
+        },
+        "tabpfn": {
+            "model": SubsampledTabPFN,
+            "kwargs": {
+                "cat_features": CAT_FEATURES,
+                "max_train_rows": 10000,
+                "n_estimators": 16,
+                "device": "cuda",
+                "random_state": 42,
+            },
+            "seed_key": "random_state",
+            "use_eval_set": False,
         },
         "random_forest": {
             "model": RandomForestClassifier,
@@ -1465,6 +1528,8 @@ def _run_optuna_study(
             "num_cpus": 1,
             "resources": {"heavy_gpu": 1},
         }
+    elif model_name.startswith("tabpfn"):
+        resource_opts = {"num_gpus": 0.5, "num_cpus": 2}
     elif model_name.startswith(("ft_transformer", "realmlp")):
         resource_opts = {
             "num_gpus": 1,
@@ -1890,6 +1955,8 @@ def _train_ensemble(
                             "num_cpus": 1,
                             "resources": {"heavy_gpu": 1},
                         }
+                    elif model_name.startswith("tabpfn"):
+                        opts = {"num_gpus": 0.5, "num_cpus": 1}
                     elif model_name.startswith("realmlp"):
                         opts = {
                             "num_gpus": 1,

@@ -18,6 +18,7 @@ dependencies = [
     "rtdl-num-embeddings",
     "skorch",
     "mlflow>=2.10.0",
+    "tabpfn",
 ]
 
 [tool.uv.sources]

@@ -30,9 +30,9 @@ The original data is combined with the synthetic training data during training t
 
 ## Current Best
 
-- **Leaderboard (public)**: 0.95360
-- **Holdout AUC (ensemble)**: 0.9562
-- **Method**: Ridge stacking over 8 models x 3 seeds
+- **Leaderboard (public)**: 0.95372
+- **Holdout AUC (ensemble)**: 0.9563
+- **Method**: Ridge stacking over 8 greedy-selected models x 3 seeds (submit-v9)
 
 ## Local Validation vs Leaderboard
 
@@ -42,6 +42,7 @@ The original data is combined with the synthetic training data during training t
 | 2 | Ridge stacking, 8 models | 0.9562 | 0.95359 | -0.0026 |
 | 5 | Ridge stacking, 8 models x 3 seeds | 0.9562 | 0.95360 | -0.0026 |
 | submit-v1 | Ridge stacking, all models, 10 folds | — | 0.95341 | — |
+| submit-v9 | Ridge stacking, 8 greedy-selected models x 3 seeds | 0.9563 | 0.95372 | -0.0026 |
 
 The holdout AUC consistently overestimates the leaderboard score by ~0.0026. This gap is stable across runs, so holdout improvements should translate 1:1 to LB improvements.
 
@@ -80,6 +81,7 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | 6 | 19 models on Ray cluster (+ neural + GBDT variants), 35 features | — | — | — | Completed, individual runs in MLflow |
 | submit-v1 | Curated ensemble, 14 models x 3 seeds, 10 folds | — | 0.95341 | -0.00019 | 40 runs; missing ft_transformer/realmlp (not finished), catboost only 1 seed |
 | 7 | Feature selection: ablation-pruned (21 features), 18 models x 3 seeds x 10 folds | — | — | — | All models complete. Top GBDTs at 0.9560, neural models 0.9539-0.9547 |
+| submit-v9 | Greedy-selected 8 of 28 learners, Ridge stacking, 3 seeds | 0.9563 | 0.95372 | +0.00012 | Best 8 from multi-strategy greedy forward selection. XGB, FT-Transformer, LGB, CatBoost, LogReg across raw/ablation-pruned/forward-selected features |
 
 ### Local Feature Validation (5-fold CV on full train, CPU, single LightGBM/LogReg)
 
@@ -341,3 +343,23 @@ The first 6 features get 99.5% of the way there. Features 17+ actively degrade A
 - **For trees (LightGBM/XGBoost/CatBoost):** Use ablation-pruned (21 features) — it scored highest at 0.95122. Alternatively, raw-only (13) at 0.95097 is simpler and nearly as good.
 - **For NNs (ResNet/FTTransformer/RealMLP):** Use forward-selected (16 features) or raw-only. NNs benefit more from engineered composites (abnormal_count, top4_sum) since they struggle with discrete interactions. LogReg AUC (proxy for NNs) favors keeping engineered features.
 - **For ensemble diversity:** Train tree models on ablation-pruned and NNs on forward-selected to maximize prediction decorrelation.
+
+## Ideas To Try
+
+Researched from Playground Series winner writeups and top solutions. Ranked by expected impact.
+
+| # | Idea | Expected Gain | Effort | Notes |
+|---|------|---------------|--------|-------|
+| 1 | **Add TabPFN** to ensemble | Medium | Low | Tabular foundation model, strong on small/medium datasets, genuine diversity (not tree-based). Standard ingredient in PS medal solutions. |
+| 2 | **2-level stacking** | Medium | Medium | Use L1 OOF predictions + original features as input to L2 GBDT/Ridge. Chris Deotte's 1st place (S5E4) used 3-level stacking with 75 models. |
+| 3 | **More feature engineering** | Small-Medium | Medium | Groupby stats (mean/std of numerics per categorical), frequency/count encoding, log transforms on BP/Cholesterol, binned continuous features. Generate hundreds of candidates, let selection prune. |
+| 4 | **Retrain on full data** for final submission | Small | Low | After selecting hyperparameters via CV, retrain on train+holdout for submission. Common in top solutions. |
+| 5 | **Adversarial validation** | Diagnostic | Low | Train classifier to distinguish train vs test. May reveal distribution shift issues. |
+| 6 | **Revisit pseudo-labeling** | Small | Medium | Previous attempt (136k hard labels) failed. Try: soft labels, higher confidence threshold (0.99), per-fold pseudo-labels, ensemble-generated labels. |
+| 7 | **KNN / SVM** for diversity | Small | Low | Different inductive bias from trees/NNs, adds stacking diversity. |
+
+### Already tried / won't help
+
+- **More seeds (>3)**: Tested — only +0.00001 LB going from 1→3 seeds, diminishing returns
+- **Pseudo-labeling (hard labels)**: Tried 136k confident predictions, no improvement
+- **StandardScaler for LogReg**: No effect, Ridge already compensates
