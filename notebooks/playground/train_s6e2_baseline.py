@@ -1238,7 +1238,6 @@ def _suggest_catboost(trial):
         "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1.0, 30.0, log=True),
         "random_strength": trial.suggest_float("random_strength", 0.0, 10.0),
         "bootstrap_type": bootstrap_type,
-        "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.5, 1.0),
         "early_stopping_rounds": 100,
         "eval_metric": "AUC",
         "task_type": "GPU",
