@@ -1588,16 +1588,18 @@ def _run_optuna_study(
     )
 
     # Determine max parallelism based on resource type.
-    # heavy_gpu models: 2 parallel (head node has 2 GPUs; 3090 + 2080Ti).
-    max_parallel = 2 if resource_opts.get("resources", {}).get("heavy_gpu") else 1
+    max_parallel = 1
     logger.info(f"Optuna parallelism: max_parallel={max_parallel}")
 
     completed = 0
+    failed = 0
     running = {}  # {ray_future: (trial, t0)}
 
     while completed < n_trials:
         # Launch new trials up to max_parallel
-        while len(running) < max_parallel and completed + len(running) < n_trials:
+        while (
+            len(running) < max_parallel and completed + failed + len(running) < n_trials
+        ):
             trial = study.ask()
             t0 = time.time()
 
@@ -1653,7 +1655,7 @@ def _run_optuna_study(
             except Exception as e:
                 logger.warning(f"Trial {trial.number} failed: {e}")
                 study.tell(trial, state=optuna.trial.TrialState.FAIL)
-                completed += 1
+                failed += 1
                 continue
 
             _, _, _, _, _, logging_data, _, _ = result
