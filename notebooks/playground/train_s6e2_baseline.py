@@ -1588,8 +1588,8 @@ def _run_optuna_study(
     )
 
     # Determine max parallelism based on resource type.
-    # heavy_gpu models (FT-Transformer, CatBoost, etc.): 3 GPUs available.
-    max_parallel = 3 if resource_opts.get("resources", {}).get("heavy_gpu") else 1
+    # heavy_gpu models: 2 parallel (head node has 2 GPUs; 3090 + 2080Ti).
+    max_parallel = 2 if resource_opts.get("resources", {}).get("heavy_gpu") else 1
     logger.info(f"Optuna parallelism: max_parallel={max_parallel}")
 
     completed = 0
