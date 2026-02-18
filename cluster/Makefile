@@ -4,6 +4,7 @@ RAY_DASHBOARD ?= http://$(RAY_HEAD_IP):8265
 MLFLOW_PORT ?= 5000
 MLFLOW_DIR ?= $(HOME)/mlflow
 MLFLOW_TRACKING_URI ?= http://$(RAY_HEAD_IP):$(MLFLOW_PORT)
+HF_TOKEN ?= $(shell cat ../.env 2>/dev/null | grep HF_TOKEN | sed 's/^[^=]*=//' | tr -d '"' | tr -d "'")
 
 start-head:
 	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 RAY_JOB_START_TIMEOUT_SECONDS=1800 uv run ray start --head --port=$(RAY_HEAD_PORT) --node-ip-address $(RAY_HEAD_IP) --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=$$(expr $$(nproc --all) - 2) --resources '{"heavy_gpu": 2}'
@@ -84,26 +85,26 @@ log-score:
 	print(f'Logged public_lb_score=$(SCORE) to run \"{name}\" in experiment \"{exp}\"')"
 
 submit-fast:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --fast $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --fast $(if $(TAG),--tag $(TAG))'
 
 submit-fast-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --fast-full $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --fast-full $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES))'
 
 submit-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES))'
 
 submit-neural:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --neural $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --neural $(if $(TAG),--tag $(TAG))'
 
 submit-debug:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
 
 TUNE_MODELS ?= catboost lightgbm
 TUNE_TRIALS ?= 50
 TUNE_SAMPLE ?=
 
 submit-tune:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --tune $(TUNE_MODELS) --tune-trials $(TUNE_TRIALS) $(if $(TUNE_SAMPLE),--tune-sample $(TUNE_SAMPLE)) $(if $(FEATURES),--features $(FEATURES),--features ablation-pruned) $(if $(FOLDS),--folds $(FOLDS),--folds 5) $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --tune $(TUNE_MODELS) --tune-trials $(TUNE_TRIALS) $(if $(TUNE_SAMPLE),--tune-sample $(TUNE_SAMPLE)) $(if $(FEATURES),--features $(FEATURES),--features ablation-pruned) $(if $(FOLDS),--folds $(FOLDS),--folds 5) $(if $(TAG),--tag $(TAG))'
 
 DIVERSE_MODELS ?= catboost lightgbm logistic_regression ft_transformer
 DIVERSE_FEATURES ?= ablation-pruned raw forward-selected
@@ -111,15 +112,15 @@ DIVERSE_FOLDS ?= 5 10
 DIVERSE_SEED_POOL ?= 42 123 777 999 2024
 DIVERSE_SEEDS_PER ?= 3
 submit-diverse:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG))'
 
 submit-ensemble:
 	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble ENSEMBLE=submit-v1"; echo "       make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
 
 submit-kaggle:
 	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-kaggle ENSEMBLE=submit-v1"; echo "       make submit-kaggle EXPERIMENTS='exp1 exp2'"; exit 1)
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && python ../notebooks/playground/train_s6e2_baseline.py --submit $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --submit $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
 
 promote:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make promote ENSEMBLE=submit-v1 RUN_ID='id1 id2'"; exit 1)
