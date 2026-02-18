@@ -1308,11 +1308,30 @@ def _suggest_xgboost(trial):
     }
 
 
+def _suggest_logistic_regression(trial):
+    solver = trial.suggest_categorical("solver", ["lbfgs", "saga"])
+    params = {
+        "C": trial.suggest_float("C", 1e-4, 100.0, log=True),
+        "max_iter": 2000,
+        "solver": solver,
+    }
+    if solver == "saga":
+        params["penalty"] = trial.suggest_categorical(
+            "penalty", ["l1", "l2", "elasticnet"]
+        )
+        if params["penalty"] == "elasticnet":
+            params["l1_ratio"] = trial.suggest_float("l1_ratio", 0.0, 1.0)
+    else:
+        params["penalty"] = "l2"
+    return params
+
+
 TUNE_SEARCH_SPACES = {
     "catboost": _suggest_catboost,
     "lightgbm": _suggest_lightgbm,
     "xgboost": _suggest_xgboost,
     "ft_transformer": _suggest_ft_transformer,
+    "logistic_regression": _suggest_logistic_regression,
 }
 
 
