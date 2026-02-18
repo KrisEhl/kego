@@ -2237,7 +2237,11 @@ def main():
     args = parser.parse_args()
 
     if not args.from_experiment and not args.from_ensemble:
-        ray.init()
+        runtime_env = {}
+        hf_token = os.environ.get("HF_TOKEN")
+        if hf_token:
+            runtime_env["env_vars"] = {"HF_TOKEN": hf_token}
+        ray.init(runtime_env=runtime_env if runtime_env else None)
         optuna_logging = __import__("logging").getLogger("optuna")
         optuna_logging.setLevel(__import__("logging").WARNING)
 
