@@ -1,15 +1,193 @@
 #!/usr/bin/env python3
-"""Parse Ray job logs and show training progress summary."""
+"""Parse Ray job logs and show training progress summary.
+
+Architecture: parse_log() -> compute_state() -> display()
+"""
 
 import re
 import sys
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 TS_PAT = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+")
 
 # Learner ID pattern: e.g. "catboost/ablation-pruned/5f" or bare "catboost"
 LID = r"[\w][\w/.-]*"
+
+GPU_MODELS = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer", "tabpfn"}
+NEURAL_MODELS = {"realmlp", "realmlp_large", "resnet", "ft_transformer"}
+N_GPU_WORKERS = 3
+
+# Map worker IP -> GPU label (None = head node: 2080Ti + 3090)
+NODE_GPUS = {
+    None: "head",
+    "192.168.178.32": "head",
+    "192.168.178.75": "3090",
+    "192.168.178.80": "3050",
+}
+
+# ---------------------------------------------------------------------------
+# Compiled regex patterns
+# ---------------------------------------------------------------------------
+
+PAT_MODE = re.compile(r"Mode: (.+)")
+PAT_FOLDS = re.compile(r"(\d+) folds")
+PAT_FOLD_FROM_LID = re.compile(r"/(\d+)f$")
+
+# Planned task lines: "- catboost/raw/5f seed=42 (GPU 0.25)" or "(CPU)"
+PAT_PLANNED = re.compile(rf"- ({LID}) seed=(\d+) \((?:CPU|GPU(?: ([\d.]+))?)\)")
+
+# Driver-side completion: "[1/20] catboost/raw/5f seed=42 ... Holdout AUC: 0.9123"
+PAT_DRIVER_COMPLETED = re.compile(
+    rf"\[(\d+)/(\d+)\] ({LID}) seed=(\d+).*?(?:Holdout|OOF) AUC: ([\d.]+)"
+)
+
+# Driver-side failure: "[3/20] Task failed: catboost/raw/5f seed=42 ..."
+PAT_DRIVER_FAILED = re.compile(rf"\[(\d+)/(\d+)\] Task failed.*")
+
+# Worker starting: "[catboost/raw/5f] Starting seed=42"
+PAT_WORKER_STARTING = re.compile(
+    rf"pid=(\d+)(?:, ip=([\d.]+))?.*?\[({LID})\] Starting seed=(\d+)"
+)
+
+# Worker finished with IP: "ip=1.2.3.4) ... [model] Finished seed=42 ... (3m05s)"
+PAT_WORKER_FINISHED_IP = re.compile(
+    rf"ip=([\d.]+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)"
+)
+
+# Worker finished on head (no ip=): "pid=123) ... [model] Finished seed=42 ... (3m05s)"
+PAT_WORKER_FINISHED_HEAD = re.compile(
+    rf"pid=(\d+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)"
+)
+
+# Worker-side start/finish (simpler, for set-building)
+PAT_STARTED = re.compile(rf"\[({LID})\] Starting seed=(\d+)")
+PAT_FINISHED = re.compile(rf"\[({LID})\] Finished seed=(\d+)")
+
+# Neural fold progress
+PAT_REALMLP_FOLD = re.compile(r"Trainer\.fit.*stopped")
+PAT_EPOCH_HEADER = re.compile(r"epoch\s+train_loss")
+PAT_EPOCH_DUR = re.compile(r"\d+\s+[\d.]+\s+[\d.]+\s+[\d.]+\s+([\d.]+)")
+
+# Ensemble result patterns
+ENSEMBLE_PATTERNS = [
+    re.compile(p)
+    for p in [
+        r"avg.*seeds",
+        r"Simple Average",
+        r"Ridge.*(?:Holdout|OOF)",
+        r"Hill Climbing.*(?:Holdout|OOF)",
+        r"Rank Blending.*(?:Holdout|OOF)",
+        r"L2 LightGBM.*(?:Holdout|OOF)",
+        r"retrain-full.*method selection",
+        r"Best method",
+        r"Skipping calibration",
+        r"Calibrat",
+        r"Submission saved",
+        r"Mean prediction",
+    ]
+]
+
+# ---------------------------------------------------------------------------
+# Dataclasses
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PlannedTask:
+    learner_id: str
+    seed: str
+    gpu_amount: float | None  # None = CPU
+
+
+@dataclass
+class CompletedTask:
+    index: int
+    total: int
+    learner_id: str
+    seed: str
+    auc: float
+    auc_str: str  # original string from log (preserves formatting)
+    duration_secs: int | None
+    ip: str | None
+
+
+@dataclass
+class FailedTask:
+    index: int
+    total: int
+    raw_line: str
+
+
+@dataclass
+class RunningTask:
+    learner_id: str
+    seed: str
+    pid: str | None
+    ip: str | None
+    elapsed_secs: float | None
+    folds_done: int | None
+    folds_total: int | None
+    remaining_secs: float | None
+    gpu_amount: float | None
+
+
+@dataclass
+class ParsedLog:
+    """Raw data extracted from log text."""
+
+    mode: str | None
+    default_folds: int
+    planned: list[PlannedTask]
+    gpu_amounts: dict[tuple[str, str], float]
+    started: set[tuple[str, str]]
+    finished: set[tuple[str, str]]
+    driver_completed: list[tuple[str, str, str, str, str]]  # idx,total,lid,seed,auc
+    driver_failed: list[tuple[str, str, str]]  # idx, total, raw_line
+    task_pids: dict[tuple[str, str], tuple[str, int, str | None]]  # -> (pid, pos, ip)
+    task_durations: dict[tuple[str, str], int]  # -> seconds
+    task_ips: dict[tuple[str, str], str | None]
+    ts_index: list[tuple[int, datetime]]
+    start_time: datetime | None
+    text: str
+    lines: list[str]
+    ensemble_lines: list[str]
+
+
+@dataclass
+class JobState:
+    """Computed state ready for display."""
+
+    job_id: str
+    mode: str | None
+    elapsed_min: float | None
+    start_time: datetime | None
+
+    planned: list[PlannedTask]
+    completed: list[CompletedTask]
+    failed: list[FailedTask]
+    running: list[RunningTask]
+    unscheduled: list[tuple[str, str]]  # (learner_id, seed)
+
+    gpu_amounts: dict[tuple[str, str], float]
+    model_avg_dur: dict[str, float]
+    unsched_est: dict[tuple[str, str], float | None]
+
+    # ETA data
+    n_done: int
+    n_total: int
+
+    ensemble_lines: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _parse_start_time(text):
@@ -64,21 +242,8 @@ def _fmt_secs(secs):
     return f"{h}h{m:02d}m"
 
 
-GPU_MODELS = {"xgboost", "catboost", "realmlp", "resnet", "ft_transformer", "tabpfn"}
-NEURAL_MODELS = {"realmlp", "realmlp_large", "resnet", "ft_transformer"}
-N_GPU_WORKERS = 3
-
-# Map worker IP → GPU label (None = head node: 2080Ti + 3090)
-NODE_GPUS = {
-    None: "head",
-    "192.168.178.32": "head",
-    "192.168.178.75": "3090",
-    "192.168.178.80": "3050",
-}
-
-
 def _base_model(learner_id):
-    """Extract base model name from learner ID (e.g. 'catboost' from 'catboost/raw/5f')."""
+    """Extract base model name from learner ID."""
     return learner_id.split("/")[0]
 
 
@@ -100,355 +265,460 @@ def _device_label(model_name, color=True, gpu_amount=None):
     return "\033[2mCPU\033[0m" if color else "CPU"
 
 
-def main():
-    job_id = sys.argv[1] if len(sys.argv) > 1 else "unknown"
-    lines = sys.stdin.readlines()
-    text = "".join(lines)
-    now = datetime.now()
+def _folds_for(learner_id, default_folds):
+    """Extract fold count from learner ID (e.g. 'catboost/raw/5f' -> 5)."""
+    m = PAT_FOLD_FROM_LID.search(learner_id)
+    return int(m.group(1)) if m else default_folds
 
-    mode = re.search(r"Mode: (.+)", text)
-    print(f"Job: {job_id}")
-    if mode:
-        print(f"  {mode.group(0)}")
 
-    # Track task lifecycle
-    all_planned = set()
-    gpu_amounts = {}  # (model, seed) -> float
-    for m in re.finditer(rf"- ({LID}) seed=(\d+) \((?:CPU|GPU(?: ([\d.]+))?)\)", text):
+# ---------------------------------------------------------------------------
+# parse_log: text -> ParsedLog
+# ---------------------------------------------------------------------------
+
+
+def parse_log(text):
+    """Parse raw log text into structured data. Pure extraction, no computation."""
+    lines = text.splitlines()
+
+    # Mode
+    mode_m = PAT_MODE.search(text)
+    mode = mode_m.group(0) if mode_m else None
+
+    # Default fold count
+    folds_m = PAT_FOLDS.search(text)
+    default_folds = int(folds_m.group(1)) if folds_m else 5
+
+    # Planned tasks
+    planned = []
+    gpu_amounts = {}
+    for m in PAT_PLANNED.finditer(text):
         key = (m.group(1), m.group(2))
-        all_planned.add(key)
-        if m.group(3):
-            gpu_amounts[key] = float(m.group(3))
-    started = set(re.findall(rf"\[({LID})\] Starting seed=(\d+)", text))
-    finished = set(re.findall(rf"\[({LID})\] Finished seed=(\d+)", text))
+        gpu_amt = float(m.group(3)) if m.group(3) else None
+        planned.append(PlannedTask(m.group(1), m.group(2), gpu_amt))
+        if gpu_amt is not None:
+            gpu_amounts[key] = gpu_amt
 
-    # Completed tasks with AUC (driver-side — always present even if worker logs
-    # are truncated by Ray's log stream for fast-completing tasks)
-    completed = re.findall(
-        rf"\[(\d+)/(\d+)\] ({LID}) seed=(\d+).*?(?:Holdout|OOF) AUC: ([\d.]+)", text
-    )
+    # Worker-side started/finished sets
+    started = set(PAT_STARTED.findall(text))
+    finished = set(PAT_FINISHED.findall(text))
 
-    # Supplement worker-side sets with driver-side completions to avoid
-    # overcounting unscheduled when Ray truncates fast worker output
-    driver_completed = {(c[2], c[3]) for c in completed}
-    started = started | driver_completed
-    finished = finished | driver_completed
+    # Driver-side completions
+    driver_completed = PAT_DRIVER_COMPLETED.findall(text)
 
-    running = started - finished
-    unscheduled = all_planned - started
+    # Driver-side failures
+    driver_failed = []
+    for m in PAT_DRIVER_FAILED.finditer(text):
+        driver_failed.append((m.group(1), m.group(2), m.group(0).strip()))
+
+    # Worker Starting messages -> (model, seed) -> (pid, start_pos, ip)
+    task_pids = {}
+    for m in PAT_WORKER_STARTING.finditer(text):
+        pid, ip, mname, seed = m.group(1), m.group(2), m.group(3), m.group(4)
+        task_pids[(mname, seed)] = (pid, m.start(), ip)
 
     # Per-task durations and IPs from worker Finished lines
     task_durations = {}
-    task_ips = {}  # (model, seed) -> ip or None
-    for m in re.finditer(
-        rf"ip=([\d.]+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
-    ):
+    task_ips = {}
+    for m in PAT_WORKER_FINISHED_IP.finditer(text):
         key = (m.group(2), m.group(3))
         mins, secs = int(m.group(4)), int(m.group(5))
         task_durations[key] = mins * 60 + secs
         task_ips[key] = m.group(1)
-    # Also match head node tasks (no ip= in prefix)
-    for m in re.finditer(
-        rf"pid=(\d+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)", text
-    ):
+    for m in PAT_WORKER_FINISHED_HEAD.finditer(text):
         key = (m.group(2), m.group(3))
         if key not in task_durations:
             mins, secs = int(m.group(4)), int(m.group(5))
             task_durations[key] = mins * 60 + secs
             task_ips[key] = None
 
-    # Average duration per base model type from completed tasks
+    # Timestamp index and start time
+    ts_index = _build_ts_index(text)
+    start_time = _parse_start_time(text)
+
+    # Ensemble lines
+    ensemble_lines = []
+    for line in lines:
+        for pat in ENSEMBLE_PATTERNS:
+            if pat.search(line):
+                ensemble_lines.append(line.strip())
+                break
+
+    return ParsedLog(
+        mode=mode,
+        default_folds=default_folds,
+        planned=planned,
+        gpu_amounts=gpu_amounts,
+        started=started,
+        finished=finished,
+        driver_completed=driver_completed,
+        driver_failed=driver_failed,
+        task_pids=task_pids,
+        task_durations=task_durations,
+        task_ips=task_ips,
+        ts_index=ts_index,
+        start_time=start_time,
+        text=text,
+        lines=lines,
+        ensemble_lines=ensemble_lines,
+    )
+
+
+# ---------------------------------------------------------------------------
+# compute_state: ParsedLog -> JobState
+# ---------------------------------------------------------------------------
+
+
+def compute_state(parsed, now, job_id):
+    """Compute display-ready state from parsed log data. Pure function."""
+    # Build planned set
+    all_planned = {(p.learner_id, p.seed) for p in parsed.planned}
+
+    # Supplement worker-side sets with driver-side completions
+    driver_completed_keys = {(c[2], c[3]) for c in parsed.driver_completed}
+    started = parsed.started | driver_completed_keys
+    finished = parsed.finished | driver_completed_keys
+
+    # Failed tasks from driver
+    failed_keys = set()
+    failed = []
+    for idx_s, total_s, raw in parsed.driver_failed:
+        failed.append(FailedTask(int(idx_s), int(total_s), raw))
+        # Try to extract learner_id/seed from the raw line to exclude from running
+        m = re.search(rf"({LID}) seed=(\d+)", raw)
+        if m:
+            failed_keys.add((m.group(1), m.group(2)))
+
+    # Task lifecycle
+    running_keys = started - finished - failed_keys
+    unscheduled_keys = all_planned - started
+
+    # Per-model average durations
     model_durations = {}
-    for (model, seed), dur in task_durations.items():
+    for (model, seed), dur in parsed.task_durations.items():
         base = _base_model(model)
         model_durations.setdefault(base, []).append(dur)
     model_avg_dur = {m: sum(ds) / len(ds) for m, ds in model_durations.items()}
 
-    # Build timestamp index for position-based lookups
-    ts_index = _build_ts_index(text)
+    # Elapsed time
+    elapsed_min = None
+    if parsed.start_time:
+        elapsed_min = (now - parsed.start_time).total_seconds() / 60.0
 
-    # Elapsed time (from first log timestamp to now)
-    t_start = _parse_start_time(text)
-    elapsed_min = (now - t_start).total_seconds() / 60.0 if t_start else None
+    # Fallback: estimate durations from timestamps if no worker timing
+    if not model_avg_dur and parsed.ts_index and parsed.driver_completed:
+        for c in parsed.driver_completed:
+            mname, seed = c[2], c[3]
+            pattern = rf"\[{c[0]}/{c[1]}\].*?{re.escape(mname)} seed={seed}"
+            match = re.search(pattern, parsed.text)
+            if match:
+                finish_ts = _ts_at_pos(parsed.ts_index, match.start())
+                pid_info = parsed.task_pids.get((mname, seed))
+                if pid_info and finish_ts:
+                    start_ts = _ts_at_pos(parsed.ts_index, pid_info[1])
+                    if start_ts:
+                        dur = (finish_ts - start_ts).total_seconds()
+                        if dur > 0:
+                            parsed.task_durations[(mname, seed)] = int(dur)
+                            model_durations.setdefault(_base_model(mname), []).append(
+                                dur
+                            )
+        model_avg_dur = {m: sum(ds) / len(ds) for m, ds in model_durations.items()}
 
-    # --- Completed tasks ---
-    if completed:
-        last = completed[-1]
-        n_done = int(last[0])
-        n_total = int(last[1])
-        idx_width = len(last[1])
-        max_model_len = max(len(c[2]) for c in completed)
-        print(f"  Progress: {n_done}/{n_total} tasks completed")
-        top_threshold = max(float(c[4]) for c in completed) - 0.0001
-        for c in completed:
-            dur = task_durations.get((c[2], c[3]))
-            dur_str = f"  ({dur // 60}m{dur % 60:02d}s)" if dur else ""
-            idx = f"[{c[0]:>{idx_width}}/{c[1]}]"
-            is_top = float(c[4]) >= top_threshold
-            dev = _device_label(
-                c[2], color=not is_top, gpu_amount=gpu_amounts.get((c[2], c[3]))
+    # --- Build completed list ---
+    completed = []
+    for c in parsed.driver_completed:
+        key = (c[2], c[3])
+        dur = parsed.task_durations.get(key)
+        ip = parsed.task_ips.get(key)
+        completed.append(
+            CompletedTask(
+                index=int(c[0]),
+                total=int(c[1]),
+                learner_id=c[2],
+                seed=c[3],
+                auc=float(c[4]),
+                auc_str=c[4],
+                duration_secs=dur,
+                ip=ip,
             )
-            # GPU type for completed GPU tasks
-            ip = task_ips.get((c[2], c[3]))
-            gpu_str = ""
-            if _is_gpu_model(c[2]) and (c[2], c[3]) in task_ips:
-                gpu_name = NODE_GPUS.get(ip, ip or "?")
-                gpu_str = f" [{gpu_name}]"
-            hi = "\033[1;32m" if is_top else ""
-            reset = "\033[0m" if is_top else ""
-            print(
-                f"    {hi}{idx} {c[2]:<{max_model_len}}  seed={c[3]:<4} "
-                f"AUC: {c[4]}  {dev}{gpu_str}{dur_str}{reset}"
-            )
-        if elapsed_min and n_done == n_total:
-            print(f"  Completed in {_fmt_duration(elapsed_min)}")
-    elif elapsed_min:
-        print(f"  Elapsed: {_fmt_duration(elapsed_min)}, no tasks completed yet")
+        )
 
-    # --- Per-task timing and fold progress ---
-    default_folds_n = 5
-    folds_match = re.search(r"(\d+) folds", text)
-    if folds_match:
-        default_folds_n = int(folds_match.group(1))
+    # --- Compute running task details ---
 
-    def _folds_for(learner_id):
-        """Extract fold count from learner ID (e.g. 'catboost/raw/5f' -> 5)."""
-        m = re.search(r"/(\d+)f$", learner_id)
-        return int(m.group(1)) if m else default_folds_n
+    # Collect all tasks per PID in log order (for elapsed reconstruction)
+    pid_tasks = {}
+    for (mname, seed), (pid, start_pos, ip) in parsed.task_pids.items():
+        pid_tasks.setdefault(pid, []).append((start_pos, mname, seed))
+    for pid in pid_tasks:
+        pid_tasks[pid].sort()
 
-    # Parse Starting messages → (model, seed) -> (pid, start_pos, ip)
-    task_pids = {}
-    for m in re.finditer(
-        rf"pid=(\d+)(?:, ip=([\d.]+))?.*?\[({LID})\] Starting seed=(\d+)", text
-    ):
-        pid, ip, mname, seed = m.group(1), m.group(2), m.group(3), m.group(4)
-        task_pids[(mname, seed)] = (pid, m.start(), ip)
+    # Compute elapsed per running task via PID timeline reconstruction
+    task_elapsed = {}
+    for mname, seed in running_keys:
+        pid_info = parsed.task_pids.get((mname, seed))
+        if not pid_info or not parsed.start_time:
+            continue
+        pid, start_pos, ip = pid_info
+        prev_duration = 0
+        for pos, m, s in pid_tasks.get(pid, []):
+            if pos >= start_pos:
+                break
+            dur = parsed.task_durations.get((m, s))
+            if dur:
+                prev_duration += dur
+        task_start = parsed.start_time + timedelta(seconds=prev_duration)
+        task_elapsed[(mname, seed)] = (now - task_start).total_seconds()
 
     # Count folds and epoch durations per running neural task
     fold_counts = {}
-    task_epoch_secs = {}  # (model, seed) -> total seconds from epoch dur column
-    for mname, seed in running:
+    task_epoch_secs = {}
+    for mname, seed in running_keys:
         if not _is_neural(mname):
             continue
-        pid_info = task_pids.get((mname, seed))
+        pid_info = parsed.task_pids.get((mname, seed))
         if not pid_info:
             continue
         pid, start_pos, _ = pid_info
-        after = text[start_pos:]
+        after = parsed.text[start_pos:]
         if mname.startswith("realmlp"):
-            # Count completed folds via Trainer.fit stopped (one per fold)
             cnt = len(re.findall(rf"pid={pid}.*?Trainer\.fit.*stopped", after))
         else:
             cnt = len(re.findall(rf"pid={pid}.*?epoch\s+train_loss", after))
-            cnt = max(0, cnt - 1)  # header printed at fold start, so -1
-        folds_n = _folds_for(mname)
+            cnt = max(0, cnt - 1)
+        folds_n = _folds_for(mname, parsed.default_folds)
         fold_counts[(mname, seed)] = min(cnt, folds_n)
 
-        # Sum actual epoch durations from the dur column for accurate elapsed time
         dur_values = re.findall(
             rf"pid={pid}.*?\d+\s+[\d.]+\s+[\d.]+\s+[\d.]+\s+([\d.]+)", after
         )
         if dur_values:
             task_epoch_secs[(mname, seed)] = sum(float(d) for d in dur_values)
 
-    # Compute how long each running task has been running.
-    # Worker output has no timestamps, so _ts_at_pos is unreliable for workers.
-    # Instead, reconstruct the timeline per PID from actual task durations:
-    # tasks run sequentially on each PID, so task_start = job_start + sum(prior durations).
-
-    # Collect all tasks per PID in log order
-    pid_tasks = {}  # pid -> [(start_pos, model, seed), ...]
-    for (mname, seed), (pid, start_pos, ip) in task_pids.items():
-        pid_tasks.setdefault(pid, []).append((start_pos, mname, seed))
-    for pid in pid_tasks:
-        pid_tasks[pid].sort()
-
-    task_elapsed = {}  # (model, seed) -> seconds running
-    for mname, seed in running:
-        pid_info = task_pids.get((mname, seed))
-        if not pid_info:
-            continue
-        pid, start_pos, ip = pid_info
-
-        # Sum durations of all completed tasks before this one on same PID
-        prev_duration = 0
-        for pos, m, s in pid_tasks.get(pid, []):
-            if pos >= start_pos:
-                break
-            dur = task_durations.get((m, s))
-            if dur:
-                prev_duration += dur
-
-        if t_start:
-            from datetime import timedelta
-
-            task_start = t_start + timedelta(seconds=prev_duration)
-            task_elapsed[(mname, seed)] = (now - task_start).total_seconds()
-
-    # For neural models, also compute epoch-based elapsed for more accurate ETA
-    task_epoch_elapsed = {}
-    for key, epoch_secs in task_epoch_secs.items():
-        task_epoch_elapsed[key] = epoch_secs
-
-    # Estimate remaining time per task
+    # Estimate remaining time per running task
     task_remaining = {}
-    for mname, seed in running:
-        elapsed_secs = task_elapsed.get((mname, seed))
+    for mname, seed in running_keys:
+        elapsed_s = task_elapsed.get((mname, seed))
         folds_done = fold_counts.get((mname, seed))
 
-        # For neural tasks with fold progress: extrapolate from wall-clock elapsed
-        if folds_done is not None and folds_done > 0 and elapsed_secs:
-            task_folds = _folds_for(mname)
-            total_est = elapsed_secs * task_folds / folds_done
-            task_remaining[(mname, seed)] = max(0, total_est - elapsed_secs)
+        if folds_done is not None and folds_done > 0 and elapsed_s:
+            task_folds = _folds_for(mname, parsed.default_folds)
+            total_est = elapsed_s * task_folds / folds_done
+            task_remaining[(mname, seed)] = max(0, total_est - elapsed_s)
         elif folds_done is not None and folds_done == 0:
-            # Neural but no folds done yet — use model avg or None
             avg = model_avg_dur.get(_base_model(mname))
             task_remaining[(mname, seed)] = avg
         else:
-            # Non-neural: use model average minus elapsed
             avg = model_avg_dur.get(_base_model(mname))
-            if avg and elapsed_secs:
-                task_remaining[(mname, seed)] = max(0, avg - elapsed_secs)
+            if avg and elapsed_s:
+                task_remaining[(mname, seed)] = max(0, avg - elapsed_s)
             else:
                 task_remaining[(mname, seed)] = None
 
-    # Estimate duration for unscheduled tasks using completed same-model or
-    # average from timestamp-based durations of completed tasks
-    unsched_est = {}
-    # Fallback: estimate completed task durations from timestamps if no worker timing
-    if not model_avg_dur and ts_index and completed:
-        for c in completed:
-            mname, seed = c[2], c[3]
-            # Find the [N/M] completion line timestamp
-            pattern = rf"\[{c[0]}/{c[1]}\].*?{mname} seed={seed}"
-            match = re.search(pattern, text)
-            if match:
-                finish_ts = _ts_at_pos(ts_index, match.start())
-                # Find the Starting message position for this task
-                pid_info = task_pids.get((mname, seed))
-                if pid_info and finish_ts:
-                    start_ts = _ts_at_pos(ts_index, pid_info[1])
-                    if start_ts:
-                        dur = (finish_ts - start_ts).total_seconds()
-                        if dur > 0:
-                            task_durations[(mname, seed)] = dur
-                            model_durations.setdefault(_base_model(mname), []).append(
-                                dur
-                            )
-        # Rebuild averages
-        model_avg_dur = {m: sum(ds) / len(ds) for m, ds in model_durations.items()}
+    # Build RunningTask list
+    running = []
+    for mname, seed in sorted(running_keys):
+        pid_info = parsed.task_pids.get((mname, seed))
+        folds_n = _folds_for(mname, parsed.default_folds)
+        running.append(
+            RunningTask(
+                learner_id=mname,
+                seed=seed,
+                pid=pid_info[0] if pid_info else None,
+                ip=pid_info[2] if pid_info else None,
+                elapsed_secs=task_elapsed.get((mname, seed)),
+                folds_done=fold_counts.get((mname, seed)),
+                folds_total=folds_n if (mname, seed) in fold_counts else None,
+                remaining_secs=task_remaining.get((mname, seed)),
+                gpu_amount=parsed.gpu_amounts.get((mname, seed)),
+            )
+        )
 
-    for mname, seed in unscheduled:
+    # Unscheduled estimates
+    unsched_est = {}
+    for mname, seed in unscheduled_keys:
         avg = model_avg_dur.get(_base_model(mname))
         unsched_est[(mname, seed)] = avg
 
-    # --- Print running tasks with elapsed time and ETA ---
-    if running:
-        all_names = [m for m, s in running] + [m for m, s in unscheduled]
-        max_name_len = max(len(n) for n in all_names) if all_names else 10
-        print(f"  Running ({len(running)}):")
-        for m, s in sorted(running):
-            dev = _device_label(m, gpu_amount=gpu_amounts.get((m, s)))
-            elapsed_secs = task_elapsed.get((m, s))
-            remaining = task_remaining.get((m, s))
-            folds_done = fold_counts.get((m, s))
+    # n_done / n_total
+    n_done = completed[-1].index if completed else 0
+    n_total = completed[-1].total if completed else len(parsed.planned)
 
-            # GPU type from worker IP
-            pid_info = task_pids.get((m, s))
+    return JobState(
+        job_id=job_id,
+        mode=parsed.mode,
+        elapsed_min=elapsed_min,
+        start_time=parsed.start_time,
+        planned=parsed.planned,
+        completed=completed,
+        failed=failed,
+        running=running,
+        unscheduled=sorted(unscheduled_keys),
+        gpu_amounts=parsed.gpu_amounts,
+        model_avg_dur=model_avg_dur,
+        unsched_est=unsched_est,
+        n_done=n_done,
+        n_total=n_total,
+        ensemble_lines=parsed.ensemble_lines,
+    )
+
+
+# ---------------------------------------------------------------------------
+# display: JobState -> stdout
+# ---------------------------------------------------------------------------
+
+
+def display(state, now):
+    """Print training progress summary. Same format as previous version."""
+    print(f"Job: {state.job_id}")
+    if state.mode:
+        print(f"  {state.mode}")
+
+    # --- Completed tasks ---
+    if state.completed:
+        idx_width = len(str(state.n_total))
+        max_model_len = max(len(c.learner_id) for c in state.completed)
+        print(f"  Progress: {state.n_done}/{state.n_total} tasks completed")
+        top_threshold = max(c.auc for c in state.completed) - 0.0001
+        for c in state.completed:
+            dur_str = ""
+            if c.duration_secs is not None:
+                dur_str = f"  ({c.duration_secs // 60}m{c.duration_secs % 60:02d}s)"
+            idx = f"[{c.index:>{idx_width}}/{state.n_total}]"
+            is_top = c.auc >= top_threshold
+            dev = _device_label(
+                c.learner_id,
+                color=not is_top,
+                gpu_amount=state.gpu_amounts.get((c.learner_id, c.seed)),
+            )
             gpu_str = ""
-            if _is_gpu_model(m) and pid_info:
-                ip = pid_info[2]
-                gpu_name = NODE_GPUS.get(ip, ip or "?")
+            if _is_gpu_model(c.learner_id) and c.ip is not None:
+                gpu_name = NODE_GPUS.get(c.ip, c.ip or "?")
+                gpu_str = f" [{gpu_name}]"
+            elif _is_gpu_model(c.learner_id) and c.duration_secs is not None:
+                # Head node task (ip=None but has duration from head-match)
+                gpu_name = NODE_GPUS.get(None, "?")
+                gpu_str = f" [{gpu_name}]"
+            hi = "\033[1;32m" if is_top else ""
+            reset = "\033[0m" if is_top else ""
+            print(
+                f"    {hi}{idx} {c.learner_id:<{max_model_len}}  seed={c.seed:<4} "
+                f"AUC: {c.auc_str}  {dev}{gpu_str}{dur_str}{reset}"
+            )
+        if state.elapsed_min and state.n_done == state.n_total:
+            print(f"  Completed in {_fmt_duration(state.elapsed_min)}")
+    elif state.elapsed_min:
+        print(
+            f"  Elapsed: {_fmt_duration(state.elapsed_min)}, " f"no tasks completed yet"
+        )
+
+    # --- Failed tasks ---
+    if state.failed:
+        print(f"  Failed ({len(state.failed)}):")
+        for f in state.failed:
+            idx = f"[{f.index}/{f.total}]"
+            print(f"    \033[31m{idx} {f.raw_line}\033[0m")
+
+    # --- Running tasks ---
+    all_names = [r.learner_id for r in state.running] + [
+        m for m, s in state.unscheduled
+    ]
+    max_name_len = max(len(n) for n in all_names) if all_names else 10
+
+    if state.running:
+        print(f"  Running ({len(state.running)}):")
+        for r in state.running:
+            dev = _device_label(r.learner_id, gpu_amount=r.gpu_amount)
+            gpu_str = ""
+            if _is_gpu_model(r.learner_id) and r.ip is not None:
+                gpu_name = NODE_GPUS.get(r.ip, r.ip or "?")
+                gpu_str = f" [{gpu_name}]"
+            elif _is_gpu_model(r.learner_id) and r.pid is not None and r.ip is None:
+                gpu_name = NODE_GPUS.get(None, "?")
                 gpu_str = f" [{gpu_name}]"
 
             parts = []
-            if elapsed_secs:
-                parts.append(f"running {_fmt_secs(elapsed_secs)}")
-            if folds_done is not None:
-                parts.append(f"fold {folds_done}/{_folds_for(m)}")
-            if remaining is not None:
-                parts.append(f"~{_fmt_secs(remaining)} left")
+            if r.elapsed_secs:
+                parts.append(f"running {_fmt_secs(r.elapsed_secs)}")
+            if r.folds_done is not None and r.folds_total is not None:
+                parts.append(f"fold {r.folds_done}/{r.folds_total}")
+            if r.remaining_secs is not None:
+                parts.append(f"~{_fmt_secs(r.remaining_secs)} left")
 
             eta_str = f"  ({', '.join(parts)})" if parts else ""
-            print(f"    {m:<{max_name_len}}  seed={s:<4} {dev}{gpu_str}{eta_str}")
+            print(
+                f"    {r.learner_id:<{max_name_len}}  seed={r.seed:<4} "
+                f"{dev}{gpu_str}{eta_str}"
+            )
 
-    # --- Print unscheduled tasks with estimated durations ---
-    if unscheduled:
-        all_names = [m for m, s in running] + [m for m, s in unscheduled]
-        max_name_len = max(len(n) for n in all_names) if all_names else 10
-        print(f"  Unscheduled ({len(unscheduled)}):")
-        for m, s in sorted(unscheduled):
-            dev = _device_label(m, gpu_amount=gpu_amounts.get((m, s)))
-            est = unsched_est.get((m, s)) or model_avg_dur.get(_base_model(m))
+    # --- Unscheduled tasks ---
+    if state.unscheduled:
+        print(f"  Unscheduled ({len(state.unscheduled)}):")
+        for mname, seed in state.unscheduled:
+            dev = _device_label(mname, gpu_amount=state.gpu_amounts.get((mname, seed)))
+            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(
+                _base_model(mname)
+            )
             est_str = f"  (~{_fmt_secs(est)} est)" if est else ""
-            print(f"    {m:<{max_name_len}}  seed={s:<4} {dev}{est_str}")
+            print(f"    {mname:<{max_name_len}}  seed={seed:<4} {dev}{est_str}")
 
-    # --- Combined ETA from per-task estimates ---
-    if elapsed_min and completed:
-        last = completed[-1]
-        n_done = int(last[0])
-        n_total = int(last[1])
-        if n_done < n_total:
-            gpu_remaining = []
-            cpu_remaining = []
+    # --- Combined ETA ---
+    if state.elapsed_min and state.completed and state.n_done < state.n_total:
+        gpu_remaining = []
+        cpu_remaining = []
 
-            for mname, seed in running:
-                rem = task_remaining.get((mname, seed))
-                if rem is None:
-                    rem = model_avg_dur.get(_base_model(mname), 300)
-                if _is_gpu_model(mname):
-                    gpu_remaining.append(rem)
-                else:
-                    cpu_remaining.append(rem)
+        for r in state.running:
+            rem = r.remaining_secs
+            if rem is None:
+                rem = state.model_avg_dur.get(_base_model(r.learner_id), 300)
+            if _is_gpu_model(r.learner_id):
+                gpu_remaining.append(rem)
+            else:
+                cpu_remaining.append(rem)
 
-            for mname, seed in unscheduled:
-                est = unsched_est.get((mname, seed)) or model_avg_dur.get(
-                    _base_model(mname), 300
-                )
-                if _is_gpu_model(mname):
-                    gpu_remaining.append(est)
-                else:
-                    cpu_remaining.append(est)
+        for mname, seed in state.unscheduled:
+            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(
+                _base_model(mname), 300
+            )
+            if _is_gpu_model(mname):
+                gpu_remaining.append(est)
+            else:
+                cpu_remaining.append(est)
 
-            # GPU: total work / n_gpus; CPU: longest single task (parallel with GPU)
-            gpu_eta = sum(gpu_remaining) / N_GPU_WORKERS / 60 if gpu_remaining else 0
-            cpu_eta = max(cpu_remaining) / 60 if cpu_remaining else 0
-            combined_eta = max(gpu_eta, cpu_eta)
+        gpu_eta = sum(gpu_remaining) / N_GPU_WORKERS / 60 if gpu_remaining else 0
+        cpu_eta = max(cpu_remaining) / 60 if cpu_remaining else 0
+        combined_eta = max(gpu_eta, cpu_eta)
 
-            parts = [f"Elapsed: {_fmt_duration(elapsed_min)}"]
-            parts.append(f"ETA: {_fmt_duration(combined_eta)}")
-            detail = []
-            if gpu_remaining:
-                detail.append(
-                    f"{len(gpu_remaining)} GPU tasks, "
-                    f"~{_fmt_secs(sum(gpu_remaining))} work / {N_GPU_WORKERS} GPUs"
-                )
-            if cpu_remaining:
-                detail.append(f"{len(cpu_remaining)} CPU tasks")
-            if detail:
-                parts.append(f"({'; '.join(detail)})")
-            print(f"  {' '.join(parts)}")
+        parts = [f"Elapsed: {_fmt_duration(state.elapsed_min)}"]
+        parts.append(f"ETA: {_fmt_duration(combined_eta)}")
+        detail = []
+        if gpu_remaining:
+            detail.append(
+                f"{len(gpu_remaining)} GPU tasks, "
+                f"~{_fmt_secs(sum(gpu_remaining))} work / {N_GPU_WORKERS} GPUs"
+            )
+        if cpu_remaining:
+            detail.append(f"{len(cpu_remaining)} CPU tasks")
+        if detail:
+            parts.append(f"({'; '.join(detail)})")
+        print(f"  {' '.join(parts)}")
 
-    # Ensemble results
-    for line in lines:
-        for pattern in [
-            r"avg.*seeds",
-            r"Simple Average",
-            r"Ridge.*(?:Holdout|OOF)",
-            r"Hill Climbing.*(?:Holdout|OOF)",
-            r"Rank Blending.*(?:Holdout|OOF)",
-            r"L2 LightGBM.*(?:Holdout|OOF)",
-            r"retrain-full.*method selection",
-            r"Best method",
-            r"Skipping calibration",
-            r"Calibrat",
-            r"Submission saved",
-            r"Mean prediction",
-        ]:
-            if re.search(pattern, line):
-                print(f"  {line.strip()}")
-                break
+    # --- Ensemble results ---
+    for line in state.ensemble_lines:
+        print(f"  {line}")
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+
+def main():
+    job_id = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+    text = sys.stdin.read()
+    now = datetime.now()
+    parsed = parse_log(text)
+    state = compute_state(parsed, now, job_id)
+    display(state, now)
 
 
 if __name__ == "__main__":

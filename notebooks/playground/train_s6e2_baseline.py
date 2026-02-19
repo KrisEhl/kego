@@ -2464,6 +2464,7 @@ def main():
         sys.exit(1)
 
     if not args.from_experiment and not args.from_ensemble:
+        os.environ.setdefault("RAY_DEDUP_LOGS", "0")
         runtime_env = {}
         hf_token = os.environ.get("HF_TOKEN")
         if hf_token:
