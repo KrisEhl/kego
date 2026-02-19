@@ -1555,12 +1555,16 @@ def _run_optuna_study(
         }
     elif any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES):
         resource_opts = {
-            "num_gpus": 0.5,
+            "num_gpus": 1,
             "num_cpus": 2,
-            "resources": {"heavy_gpu": 0.5},
+            "resources": {"heavy_gpu": 1},
         }
     elif any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES):
-        resource_opts = {"num_gpus": 0.25, "num_cpus": 1}
+        resource_opts = {
+            "num_gpus": 0.5,
+            "num_cpus": 1,
+            "resources": {"heavy_gpu": 0.5},
+        }
     else:
         resource_opts = {"num_cpus": 8}
 
@@ -2165,12 +2169,16 @@ def _train_ensemble(
                         }
                     elif is_neural:
                         opts = {
-                            "num_gpus": 0.5,
+                            "num_gpus": 1,
                             "num_cpus": 2,
-                            "resources": {"heavy_gpu": 0.5},
+                            "resources": {"heavy_gpu": 1},
                         }
                     elif is_gpu:
-                        opts = {"num_gpus": 0.25, "num_cpus": 1}
+                        opts = {
+                            "num_gpus": 0.5,
+                            "num_cpus": 1,
+                            "resources": {"heavy_gpu": 0.5},
+                        }
                     else:
                         opts = {"num_cpus": 2}
                     future = _train_single_model.options(**opts).remote(
