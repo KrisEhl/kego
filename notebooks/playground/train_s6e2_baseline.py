@@ -1287,6 +1287,25 @@ def _filter_model_config(config: dict, active_features: set[str]) -> dict:
     return config
 
 
+def _task_fingerprint(model_name, seed, folds_n, feature_set, features, model_config):
+    """Deterministic hash of all parameters that define a training task."""
+    import hashlib
+    import json
+
+    blob = json.dumps(
+        {
+            "model": model_name,
+            "seed": seed,
+            "folds_n": folds_n,
+            "feature_set": feature_set,
+            "features": sorted(features),
+            "kwargs": {k: repr(v) for k, v in sorted(model_config["kwargs"].items())},
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(blob.encode()).hexdigest()[:12]
+
+
 # ---------------------------------------------------------------------------
 # Optuna search spaces
 # ---------------------------------------------------------------------------
@@ -1411,6 +1430,7 @@ def _train_single_model(
     seed,
     folds_n=10,
     feature_set="all",
+    config_fingerprint="",
 ):
     """Train one model with one seed on a Ray worker."""
     import os
@@ -1463,18 +1483,22 @@ def _train_single_model(
     if holdout_auc is not None:
         metrics["holdout_auc"] = holdout_auc
 
-    logging_data = {
-        "params": {
-            "model": model_name,
-            "seed": seed,
-            "folds_n": folds_n,
-            "feature_set": feature_set,
-            **{
-                k: v
-                for k, v in model_config["kwargs"].items()
-                if isinstance(v, (int, float, str, bool))
-            },
+    params = {
+        "model": model_name,
+        "seed": seed,
+        "folds_n": folds_n,
+        "feature_set": feature_set,
+        **{
+            k: v
+            for k, v in model_config["kwargs"].items()
+            if isinstance(v, (int, float, str, bool))
         },
+    }
+    if config_fingerprint:
+        params["config_fingerprint"] = config_fingerprint
+
+    logging_data = {
+        "params": params,
         "metrics": metrics,
         "oof": oof,
         "holdout": holdout_pred,
@@ -2050,6 +2074,41 @@ def _load_predictions_from_runs(runs_df, tracking_uri):
     return learner_names, all_oof, all_holdout, all_test
 
 
+def _get_completed_fingerprints(experiment_name, tracking_uri):
+    """Query MLflow for completed runs and return their config fingerprints.
+
+    Returns:
+        (set of fingerprint strings, runs DataFrame)
+    """
+    import mlflow
+
+    mlflow.set_tracking_uri(tracking_uri)
+    exp = mlflow.get_experiment_by_name(experiment_name)
+    if exp is None:
+        logger.warning(f"Experiment '{experiment_name}' not found")
+        return set(), pd.DataFrame()
+
+    runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
+    # Filter out ensemble runs
+    runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
+    # Only keep runs that have a config_fingerprint param
+    fp_col = "params.config_fingerprint"
+    if fp_col not in runs.columns:
+        logger.warning(
+            f"No runs with config_fingerprint in '{experiment_name}' "
+            f"(old experiment without fingerprints?)"
+        )
+        return set(), runs
+
+    has_fp = runs[fp_col].notna()
+    fingerprints = set(runs.loc[has_fp, fp_col].tolist())
+    logger.info(
+        f"Experiment '{experiment_name}': {len(runs)} runs, "
+        f"{len(fingerprints)} with fingerprints"
+    )
+    return fingerprints, runs[has_fp]
+
+
 def _load_predictions_from_mlflow(experiment_names, tracking_uri):
     """Load per-model averaged predictions from MLflow experiments."""
     import mlflow
@@ -2111,6 +2170,9 @@ def _train_ensemble(
     seeds_per_learner,
     folds_list,
     tag="full",
+    skip_fingerprints=None,
+    preloaded=None,
+    description="",
 ):
     """Train all learners (model x feature_set x folds) with rotating seeds via Ray."""
     # Share data via Ray object store (stored once, shared across all tasks)
@@ -2125,6 +2187,7 @@ def _train_ensemble(
     futures = []
     task_info = []
     seeds_per_lid = {}  # learner_id -> number of seeds assigned
+    skipped = 0
 
     learner_index = 0
     for fs_name, fs_features in feature_sets_map.items():
@@ -2143,6 +2206,13 @@ def _train_ensemble(
                 is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
 
                 for seed in learner_seeds:
+                    fp = _task_fingerprint(
+                        model_name, seed, folds_n, fs_name, fs_features, filtered_config
+                    )
+                    if skip_fingerprints and fp in skip_fingerprints:
+                        skipped += 1
+                        continue
+
                     if model_name.startswith("catboost"):
                         opts = {
                             "num_gpus": 1,
@@ -2192,11 +2262,17 @@ def _train_ensemble(
                         seed,
                         folds_n,
                         fs_name,
+                        fp,
                     )
                     futures.append(future)
                     device = f"GPU {opts['num_gpus']}" if is_gpu else "CPU"
                     task_info.append(f"{learner_id} seed={seed} ({device})")
 
+    if skipped:
+        logger.info(
+            f"Resuming: skipped {skipped} completed tasks (config match), "
+            f"launching {len(futures)} new"
+        )
     logger.info(f"Launched {len(futures)} Ray tasks ({learner_index} learners):")
     for info in task_info:
         logger.info(f"  - {info}")
@@ -2222,6 +2298,7 @@ def _train_ensemble(
     all_oof_preds = {}
     all_holdout_preds = {}
     all_test_preds = {}
+    actual_seed_counts = {}  # learner_id -> number of seeds actually received
     remaining = list(futures)
     completed = 0
 
@@ -2261,6 +2338,7 @@ def _train_ensemble(
         all_oof_preds[learner_id] += oof
         all_holdout_preds[learner_id] += holdout_pred
         all_test_preds[learner_id] += test_pred
+        actual_seed_counts[learner_id] = actual_seed_counts.get(learner_id, 0) + 1
 
         if holdout_labels is not None:
             auc = roc_auc_score(holdout_labels, holdout_pred)
@@ -2280,6 +2358,8 @@ def _train_ensemble(
                 run_name = f"{learner_id}_seed{seed}"
                 with mlflow.start_run(run_name=run_name):
                     mlflow.log_params(logging_data["params"])
+                    if description:
+                        mlflow.log_param("description", description)
                     mlflow.log_metrics(logging_data["metrics"])
                     with tempfile.TemporaryDirectory() as tmp:
                         for arr_name, arr in [
@@ -2295,7 +2375,7 @@ def _train_ensemble(
 
     # Average across seeds per learner and log results
     for lid in all_oof_preds:
-        n = seeds_per_lid[lid]
+        n = actual_seed_counts.get(lid, seeds_per_lid[lid])
         all_oof_preds[lid] /= n
         all_holdout_preds[lid] /= n
         all_test_preds[lid] /= n
@@ -2312,6 +2392,26 @@ def _train_ensemble(
         else:
             oof_auc = roc_auc_score(train_labels, all_oof_preds[lid])
             logger.info(f"{lid} (avg {n} seeds) — OOF AUC: {oof_auc:.4f}")
+
+    # Merge preloaded predictions from resumed experiment
+    if preloaded:
+        pre_oof, pre_holdout, pre_test = preloaded
+        preloaded_count = 0
+        for lid in pre_oof:
+            if lid not in all_oof_preds:
+                # Fully preloaded learner (all seeds completed previously)
+                all_oof_preds[lid] = pre_oof[lid]
+                all_holdout_preds[lid] = pre_holdout[lid]
+                all_test_preds[lid] = pre_test[lid]
+                preloaded_count += 1
+                if holdout_labels is not None:
+                    auc = roc_auc_score(holdout_labels, pre_holdout[lid])
+                    logger.info(f"{lid} (preloaded) — Holdout AUC: {auc:.4f}")
+                else:
+                    oof_auc = roc_auc_score(train_labels, pre_oof[lid])
+                    logger.info(f"{lid} (preloaded) — OOF AUC: {oof_auc:.4f}")
+        if preloaded_count:
+            logger.info(f"Merged {preloaded_count} preloaded learners from resume")
 
     # Build ensemble from all learners that succeeded
     learner_names = list(all_oof_preds.keys())
@@ -2348,6 +2448,8 @@ def _train_ensemble(
                     seeds_per_learner if seeds_per_learner else len(seed_pool),
                 )
                 mlflow.log_param("source", f"training_{tag}")
+                if description:
+                    mlflow.log_param("description", description)
             logger.info("MLflow: logged ensemble run to 'ensemble'")
         except Exception as e:
             logger.warning(f"MLflow ensemble logging failed (non-fatal): {e}")
@@ -2455,11 +2557,29 @@ def main():
         action="store_true",
         help="Retrain all models on train+holdout combined (no holdout evaluation)",
     )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        metavar="EXPERIMENT",
+        help="Resume from previous experiment: skip completed tasks, retrain failed/missing",
+    )
+    parser.add_argument(
+        "--description",
+        type=str,
+        default="",
+        help="Free-text description logged to MLflow (e.g. 'tuned catboost LR')",
+    )
     args = parser.parse_args()
 
     if args.retrain_full and (args.from_ensemble or args.from_experiment):
         logger.error(
             "--retrain-full cannot be combined with --from-ensemble/--from-experiment"
+        )
+        sys.exit(1)
+
+    if args.resume and (args.from_ensemble or args.from_experiment):
+        logger.error(
+            "--resume cannot be combined with --from-ensemble/--from-experiment"
         )
         sys.exit(1)
 
@@ -2702,6 +2822,26 @@ def main():
         else:
             logger.info(f"  All learners share {len(seed_pool)} seed(s)")
 
+        # Resume: load completed fingerprints and predictions from previous run
+        skip_fingerprints = None
+        preloaded = None
+        if args.resume:
+            tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
+            if not tracking_uri:
+                logger.error("MLFLOW_TRACKING_URI must be set for --resume")
+                sys.exit(1)
+            skip_fingerprints, runs_df = _get_completed_fingerprints(
+                args.resume, tracking_uri
+            )
+            logger.info(
+                f"Resuming '{args.resume}': {len(skip_fingerprints)} completed tasks"
+            )
+            if not runs_df.empty:
+                _, pre_oof, pre_holdout, pre_test = _load_predictions_from_runs(
+                    runs_df, tracking_uri
+                )
+                preloaded = (pre_oof, pre_holdout, pre_test)
+
         # Train ensemble with multi-seed averaging via Ray
         best_test, best_method, best_auc, ensemble_run_id = _train_ensemble(
             train,
@@ -2713,6 +2853,9 @@ def main():
             seeds_per_learner=args.seeds_per_learner,
             folds_list=folds_list,
             tag=tag,
+            skip_fingerprints=skip_fingerprints,
+            preloaded=preloaded,
+            description=args.description,
         )
 
     # Generate submission

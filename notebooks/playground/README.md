@@ -28,6 +28,33 @@ The original data is combined with the synthetic training data during training t
 - `submit_s6e2.sh` — Submit predictions via Kaggle CLI
 - `explore_s6e2.py` — EDA and data exploration
 
+## Resuming Failed Runs
+
+When a training run has partial failures (GPU OOM, joblib crashes, worker disconnects), `--resume` avoids re-running the entire experiment. It queries MLflow for completed tasks and only re-trains what's missing.
+
+```bash
+# Resume a failed full run — skip completed tasks, retrain only failed/missing
+cd cluster && make submit-full RESUME=playground-s6e2-full TAG=full
+
+# Resume with a description for tracking
+cd cluster && make submit-full RESUME=playground-s6e2-full TAG=full DESCRIPTION="retry after OOM fix"
+
+# Local (non-cluster) usage
+uv run python notebooks/playground/train_s6e2_baseline.py --resume playground-s6e2-full --tag full
+```
+
+**How it works:**
+
+1. Each training task (model + seed + folds + features + hyperparams) is hashed into a 12-char **config fingerprint** stored in MLflow
+2. `--resume EXPERIMENT` queries the named MLflow experiment for completed runs and collects their fingerprints
+3. Before submitting each Ray task, the driver computes the fingerprint and skips it if already completed
+4. Predictions from completed runs are loaded from MLflow artifacts and merged with newly trained results
+5. The final ensemble combines both preloaded and freshly trained learners
+
+**Config change detection:** If you modify ANY parameter (hyperparams, features, folds), the fingerprint changes automatically — stale results are never reused. Only exact config matches are skipped.
+
+**Partial learners:** If a learner has some seeds completed but not all (e.g. 2 of 3 seeds finished), none of its seeds are preloaded — all seeds are retrained. This avoids complexity of un-averaging partial results.
+
 ## Current Best
 
 - **Leaderboard (public)**: 0.95372

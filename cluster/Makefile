@@ -85,16 +85,16 @@ log-score:
 	print(f'Logged public_lb_score=$(SCORE) to run \"{name}\" in experiment \"{exp}\"')"
 
 submit-fast:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --fast $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --fast $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-fast-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --fast-full $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --fast-full $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-neural:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --neural $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --neural $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-debug:
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
@@ -112,7 +112,7 @@ DIVERSE_FOLDS ?= 5 10
 DIVERSE_SEED_POOL ?= 42 123 777 999 2024
 DIVERSE_SEEDS_PER ?= 3
 submit-diverse:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-ensemble:
 	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble ENSEMBLE=submit-v1"; echo "       make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
