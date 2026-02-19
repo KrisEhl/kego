@@ -1453,9 +1453,15 @@ def _train_single_model(
     # Compute metrics for MLflow logging
     from sklearn.metrics import roc_auc_score
 
-    holdout_labels = holdout[target].values
     oof_auc = roc_auc_score(train[target].values, oof)
-    holdout_auc = roc_auc_score(holdout_labels, holdout_pred)
+    if target in holdout.columns:
+        holdout_auc = roc_auc_score(holdout[target].values, holdout_pred)
+    else:
+        holdout_auc = None
+
+    metrics = {"oof_auc": oof_auc}
+    if holdout_auc is not None:
+        metrics["holdout_auc"] = holdout_auc
 
     logging_data = {
         "params": {
@@ -1469,10 +1475,7 @@ def _train_single_model(
                 if isinstance(v, (int, float, str, bool))
             },
         },
-        "metrics": {
-            "oof_auc": oof_auc,
-            "holdout_auc": holdout_auc,
-        },
+        "metrics": metrics,
         "oof": oof,
         "holdout": holdout_pred,
         "test": test_pred,
@@ -1480,12 +1483,20 @@ def _train_single_model(
 
     elapsed = time.time() - t0
     mins, secs = divmod(int(elapsed), 60)
-    print(
-        f"[{learner_id}] Finished seed={seed} "
-        f"— OOF AUC: {oof_auc:.4f}, Holdout AUC: {holdout_auc:.4f} "
-        f"({mins}m{secs:02d}s)",
-        flush=True,
-    )
+    if holdout_auc is not None:
+        print(
+            f"[{learner_id}] Finished seed={seed} "
+            f"— OOF AUC: {oof_auc:.4f}, Holdout AUC: {holdout_auc:.4f} "
+            f"({mins}m{secs:02d}s)",
+            flush=True,
+        )
+    else:
+        print(
+            f"[{learner_id}] Finished seed={seed} "
+            f"— OOF AUC: {oof_auc:.4f} (retrain-full, no holdout) "
+            f"({mins}m{secs:02d}s)",
+            flush=True,
+        )
     logging_data["metrics"]["duration_seconds"] = elapsed
     return (
         model_name,
@@ -1663,7 +1674,7 @@ def _run_optuna_study(
             _, _, _, _, _, logging_data, _, _ = result
 
             oof_auc = logging_data["metrics"]["oof_auc"]
-            holdout_auc = logging_data["metrics"]["holdout_auc"]
+            holdout_auc = logging_data["metrics"].get("holdout_auc")
             elapsed = time.time() - t0
 
             # Report result to Optuna
@@ -1688,13 +1699,13 @@ def _run_optuna_study(
                                 },
                             }
                         )
-                        mlflow.log_metrics(
-                            {
-                                "oof_auc": oof_auc,
-                                "holdout_auc": holdout_auc,
-                                "duration_seconds": elapsed,
-                            }
-                        )
+                        mlflow_metrics = {
+                            "oof_auc": oof_auc,
+                            "duration_seconds": elapsed,
+                        }
+                        if holdout_auc is not None:
+                            mlflow_metrics["holdout_auc"] = holdout_auc
+                        mlflow.log_metrics(mlflow_metrics)
                 except Exception as e:
                     logger.warning(
                         f"MLflow logging failed for trial {trial.number}: {e}"
@@ -1704,9 +1715,12 @@ def _run_optuna_study(
                 best_so_far = study.best_value
             except ValueError:
                 best_so_far = oof_auc
+            holdout_str = (
+                f" holdout_auc={holdout_auc:.4f}" if holdout_auc is not None else ""
+            )
             print(
                 f"Trial {completed}/{n_trials}: "
-                f"oof_auc={oof_auc:.4f} holdout_auc={holdout_auc:.4f} "
+                f"oof_auc={oof_auc:.4f}{holdout_str} "
                 f"(best={best_so_far:.4f}) [{elapsed:.0f}s]",
                 flush=True,
             )
@@ -1809,28 +1823,58 @@ def _ensemble_predictions(
     holdout_matrix = np.column_stack([all_holdout_preds[n] for n in model_names])
     test_matrix = np.column_stack([all_test_preds[n] for n in model_names])
 
+    def _eval_label():
+        return "Holdout" if holdout_labels is not None else "OOF"
+
     # --- Simple average ---
     avg_holdout = np.mean(holdout_matrix, axis=1)
     avg_test = np.mean(test_matrix, axis=1)
-    auc = roc_auc_score(holdout_labels, avg_holdout)
+    avg_oof = np.mean(oof_matrix, axis=1)
     logger.info(f"\n{'='*50}")
-    logger.info(f"{tag}Simple Average — Holdout AUC: {auc:.4f}")
+    if holdout_labels is not None:
+        logger.info(
+            f"{tag}Simple Average — Holdout AUC: "
+            f"{roc_auc_score(holdout_labels, avg_holdout):.4f}"
+        )
+    else:
+        logger.info(
+            f"{tag}Simple Average — OOF AUC: "
+            f"{roc_auc_score(train_labels, avg_oof):.4f}"
+        )
 
     # --- Ridge stacking ---
     ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
     ridge.fit(oof_matrix, train_labels)
     ridge_holdout = ridge.predict(holdout_matrix)
     ridge_test = ridge.predict(test_matrix)
-    auc = roc_auc_score(holdout_labels, ridge_holdout)
-    logger.info(f"{tag}Ridge (alpha={ridge.alpha_:.2f}) — Holdout AUC: {auc:.4f}")
+    ridge_oof = ridge.predict(oof_matrix)
+    if holdout_labels is not None:
+        logger.info(
+            f"{tag}Ridge (alpha={ridge.alpha_:.2f}) — Holdout AUC: "
+            f"{roc_auc_score(holdout_labels, ridge_holdout):.4f}"
+        )
+    else:
+        logger.info(
+            f"{tag}Ridge (alpha={ridge.alpha_:.2f}) — OOF AUC: "
+            f"{roc_auc_score(train_labels, ridge_oof):.4f}"
+        )
     logger.info(f"  Weights: {dict(zip(model_names, ridge.coef_))}")
 
     # --- Hill Climbing ---
     best_weights = _hill_climbing(oof_matrix, train_labels, model_names)
     hc_holdout = holdout_matrix @ best_weights
     hc_test = test_matrix @ best_weights
-    auc = roc_auc_score(holdout_labels, hc_holdout)
-    logger.info(f"{tag}Hill Climbing — Holdout AUC: {auc:.4f}")
+    hc_oof = oof_matrix @ best_weights
+    if holdout_labels is not None:
+        logger.info(
+            f"{tag}Hill Climbing — Holdout AUC: "
+            f"{roc_auc_score(holdout_labels, hc_holdout):.4f}"
+        )
+    else:
+        logger.info(
+            f"{tag}Hill Climbing — OOF AUC: "
+            f"{roc_auc_score(train_labels, hc_oof):.4f}"
+        )
     logger.info(f"  Weights: {dict(zip(model_names, best_weights))}")
 
     # --- Rank Blending ---
@@ -1846,14 +1890,22 @@ def _ensemble_predictions(
     rb_oof = _rank_blend(oof_matrix)
     rb_holdout = _rank_blend(holdout_matrix)
     rb_test = _rank_blend(test_matrix)
-    auc = roc_auc_score(holdout_labels, rb_holdout)
-    logger.info(f"{tag}Rank Blending — Holdout AUC: {auc:.4f}")
+    if holdout_labels is not None:
+        logger.info(
+            f"{tag}Rank Blending — Holdout AUC: "
+            f"{roc_auc_score(holdout_labels, rb_holdout):.4f}"
+        )
+    else:
+        logger.info(
+            f"{tag}Rank Blending — OOF AUC: "
+            f"{roc_auc_score(train_labels, rb_oof):.4f}"
+        )
 
     # Pick best ensemble method
     results = {
-        "average": (avg_holdout, avg_test, np.mean(oof_matrix, axis=1)),
-        "ridge": (ridge_holdout, ridge_test, ridge.predict(oof_matrix)),
-        "hill_climbing": (hc_holdout, hc_test, oof_matrix @ best_weights),
+        "average": (avg_holdout, avg_test, avg_oof),
+        "ridge": (ridge_holdout, ridge_test, ridge_oof),
+        "hill_climbing": (hc_holdout, hc_test, hc_oof),
         "rank_blending": (rb_holdout, rb_test, rb_oof),
     }
 
@@ -1883,36 +1935,50 @@ def _ensemble_predictions(
             test_feat,
         )
         label = f"L2 LightGBM ({fs_name})"
-        l2_auc = roc_auc_score(holdout_labels, l2_holdout)
-        logger.info(f"{tag}{label} — Holdout AUC: {l2_auc:.4f}")
+        if holdout_labels is not None:
+            logger.info(
+                f"{tag}{label} — Holdout AUC: "
+                f"{roc_auc_score(holdout_labels, l2_holdout):.4f}"
+            )
+        else:
+            logger.info(
+                f"{tag}{label} — OOF AUC: " f"{roc_auc_score(train_labels, l2_oof):.4f}"
+            )
         results[f"l2_{fs_name}"] = (l2_holdout, l2_test, l2_oof)
 
     logger.info(f"{'='*50}")
-    all_aucs = {k: roc_auc_score(holdout_labels, v[0]) for k, v in results.items()}
+    if holdout_labels is not None:
+        all_aucs = {k: roc_auc_score(holdout_labels, v[0]) for k, v in results.items()}
+    else:
+        all_aucs = {k: roc_auc_score(train_labels, v[2]) for k, v in results.items()}
+        logger.info(f"{tag}(retrain-full: method selection based on OOF AUC)")
     best_name = max(all_aucs, key=all_aucs.get)
     best_holdout, best_test, best_oof = results[best_name]
     auc = all_aucs[best_name]
-    logger.info(f"{tag}Best method: {best_name} (AUC: {auc:.4f})")
+    logger.info(f"{tag}Best method: {best_name} ({_eval_label()} AUC: {auc:.4f})")
 
     # --- Post-processing: Isotonic calibration ---
     iso = IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip")
     iso.fit(best_oof, train_labels)
     cal_holdout = iso.predict(best_holdout)
     cal_test = iso.predict(best_test)
-    cal_auc = roc_auc_score(holdout_labels, cal_holdout)
-    logger.info(f"{tag}Calibrated ({best_name}) — Holdout AUC: {cal_auc:.4f}")
+    if holdout_labels is not None:
+        cal_auc = roc_auc_score(holdout_labels, cal_holdout)
+        logger.info(f"{tag}Calibrated ({best_name}) — Holdout AUC: {cal_auc:.4f}")
 
-    if cal_auc > auc:
-        logger.info(
-            f"{tag}Calibration improved AUC by {cal_auc - auc:.5f}, using calibrated"
-        )
-        best_test = cal_test
-        auc = cal_auc
+        if cal_auc > auc:
+            logger.info(
+                f"{tag}Calibration improved AUC by {cal_auc - auc:.5f}, using calibrated"
+            )
+            best_test = cal_test
+            auc = cal_auc
+        else:
+            logger.info(
+                f"{tag}Calibration did not improve AUC "
+                f"({cal_auc:.4f} vs {auc:.4f}), using raw"
+            )
     else:
-        logger.info(
-            f"{tag}Calibration did not improve AUC "
-            f"({cal_auc:.4f} vs {auc:.4f}), using raw"
-        )
+        logger.info(f"{tag}Skipping calibration comparison (no holdout for evaluation)")
 
     logger.info(f"{'='*50}")
     return best_test, best_name, auc, all_aucs
@@ -2049,7 +2115,7 @@ def _train_ensemble(
     holdout_ref = ray.put(holdout)
 
     train_labels = train[TARGET].values
-    holdout_labels = holdout[TARGET].values
+    holdout_labels = holdout[TARGET].values if TARGET in holdout.columns else None
 
     # Launch tasks: enumerate learners and assign rotating seeds
     futures = []
@@ -2188,11 +2254,17 @@ def _train_ensemble(
         all_holdout_preds[learner_id] += holdout_pred
         all_test_preds[learner_id] += test_pred
 
-        auc = roc_auc_score(holdout_labels, holdout_pred)
-        logger.info(
-            f"[{completed}/{len(futures)}] {learner_id} seed={seed} "
-            f"— Holdout AUC: {auc:.4f}"
-        )
+        if holdout_labels is not None:
+            auc = roc_auc_score(holdout_labels, holdout_pred)
+            logger.info(
+                f"[{completed}/{len(futures)}] {learner_id} seed={seed} "
+                f"— Holdout AUC: {auc:.4f}"
+            )
+        else:
+            logger.info(
+                f"[{completed}/{len(futures)}] {learner_id} seed={seed} "
+                f"— OOF AUC: {logging_data['metrics']['oof_auc']:.4f}"
+            )
 
         # Log to MLflow immediately
         if mlflow_ready:
@@ -2220,13 +2292,18 @@ def _train_ensemble(
         all_holdout_preds[lid] /= n
         all_test_preds[lid] /= n
 
-        auc = roc_auc_score(holdout_labels, all_holdout_preds[lid])
-        acc = accuracy_score(
-            holdout_labels, (all_holdout_preds[lid] >= 0.5).astype(int)
-        )
-        logger.info(
-            f"{lid} (avg {n} seeds) — " f"Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
-        )
+        if holdout_labels is not None:
+            auc = roc_auc_score(holdout_labels, all_holdout_preds[lid])
+            acc = accuracy_score(
+                holdout_labels, (all_holdout_preds[lid] >= 0.5).astype(int)
+            )
+            logger.info(
+                f"{lid} (avg {n} seeds) — "
+                f"Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
+            )
+        else:
+            oof_auc = roc_auc_score(train_labels, all_oof_preds[lid])
+            logger.info(f"{lid} (avg {n} seeds) — OOF AUC: {oof_auc:.4f}")
 
     # Build ensemble from all learners that succeeded
     learner_names = list(all_oof_preds.keys())
@@ -2365,7 +2442,18 @@ def main():
         default=None,
         help="Subsample training data to N rows for tuning (useful for neural models)",
     )
+    parser.add_argument(
+        "--retrain-full",
+        action="store_true",
+        help="Retrain all models on train+holdout combined (no holdout evaluation)",
+    )
     args = parser.parse_args()
+
+    if args.retrain_full and (args.from_ensemble or args.from_experiment):
+        logger.error(
+            "--retrain-full cannot be combined with --from-ensemble/--from-experiment"
+        )
+        sys.exit(1)
 
     if not args.from_experiment and not args.from_ensemble:
         runtime_env = {}
@@ -2419,6 +2507,14 @@ def main():
     train = _engineer_features(train)
     holdout = _engineer_features(holdout)
     test = _engineer_features(test)
+
+    if args.retrain_full:
+        logger.info(
+            f"Retrain-full: combining train ({len(train)}) + holdout ({len(holdout)}) "
+            f"= {len(train) + len(holdout)} rows"
+        )
+        train = pd.concat([train, holdout]).reset_index(drop=True)
+        holdout = test  # holdout has no TARGET — signals retrain-full mode
 
     # Build feature sets map from args
     feature_sets_map = {}
@@ -2474,7 +2570,7 @@ def main():
     tag = args.tag or mode_name
 
     train_labels = train[TARGET].values
-    holdout_labels = holdout[TARGET].values
+    holdout_labels = holdout[TARGET].values if TARGET in holdout.columns else None
     ensemble_run_id = None
 
     if args.from_experiment or args.from_ensemble:
