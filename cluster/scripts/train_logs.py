@@ -125,7 +125,7 @@ def main():
     # Completed tasks with AUC (driver-side — always present even if worker logs
     # are truncated by Ray's log stream for fast-completing tasks)
     completed = re.findall(
-        rf"\[(\d+)/(\d+)\] ({LID}) seed=(\d+).*?Holdout AUC: ([\d.]+)", text
+        rf"\[(\d+)/(\d+)\] ({LID}) seed=(\d+).*?(?:Holdout|OOF) AUC: ([\d.]+)", text
     )
 
     # Supplement worker-side sets with driver-side completions to avoid
@@ -435,9 +435,14 @@ def main():
         for pattern in [
             r"avg.*seeds",
             r"Simple Average",
-            r"Ridge.*Holdout",
-            r"Hill Climbing.*Holdout",
+            r"Ridge.*(?:Holdout|OOF)",
+            r"Hill Climbing.*(?:Holdout|OOF)",
+            r"Rank Blending.*(?:Holdout|OOF)",
+            r"L2 LightGBM.*(?:Holdout|OOF)",
+            r"retrain-full.*method selection",
             r"Best method",
+            r"Skipping calibration",
+            r"Calibrat",
             r"Submission saved",
             r"Mean prediction",
         ]:
