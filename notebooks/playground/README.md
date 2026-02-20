@@ -26,6 +26,7 @@ The original data is combined with the synthetic training data during training t
 - `analyze_disagreement.py` — Model disagreement matrix and best-run analysis using OOF predictions from MLflow
 - `benchmark_models.py` — Standalone neural model benchmarking (no Ray): timing, profiling, MLflow logging
 - `select_features.py` — Fine-grained feature selection: per-feature ablation + forward selection with multi-seed averaging
+- `research_features.py` — Domain-driven feature research: generates ~140 candidates from clinical literature and evaluates via clean-slate forward selection
 - `test_features_local.py` — Local CPU feature engineering comparison (LightGBM + LogReg)
 - `submit_s6e2.sh` — Submit predictions via Kaggle CLI
 - `explore_s6e2.py` — EDA and data exploration
@@ -93,6 +94,26 @@ cd cluster && make submit-kaggle ENSEMBLE=submit-v9
 # Local usage (without Ray cluster)
 uv run python notebooks/playground/train_s6e2_baseline.py --fast --tag local-test
 ```
+
+## CLI Reference — `research_features.py`
+
+Domain-driven feature research script. Generates ~140 feature candidates from clinical literature (Framingham, HEART, Duke Treadmill scores, exercise physiology, advanced encodings, meta-models) and evaluates via 5-step pipeline: baselines, permutation importance, ablation, forward selection, comparison.
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--seeds` | str | `42,123,777` | Comma-separated seeds for multi-seed averaging |
+| `--train-sample` | int | `30000` | Subsample training set (0=no sampling) |
+| `--holdout-sample` | int | `10000` | Subsample holdout set (0=no sampling) |
+
+```bash
+# Quick smoke test
+uv run python notebooks/playground/research_features.py --train-sample 3000 --holdout-sample 1000 --seeds 42
+
+# Default run
+uv run python notebooks/playground/research_features.py
+```
+
+See `FEATURES.md` for the full feature catalog with formulas and academic references.
 
 ## Cluster Commands (`cluster/Makefile`)
 
