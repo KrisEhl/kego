@@ -15,10 +15,10 @@ import os
 import sys
 from pathlib import Path
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from lightgbm import LGBMClassifier  # noqa: F401 — used in Task 3
-from sklearn.metrics import roc_auc_score  # noqa: F401 — used in Task 3
+from sklearn.metrics import roc_auc_score
 
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
@@ -612,6 +612,33 @@ def _engineer_fold_features(
 
 
 # ---------------------------------------------------------------------------
+# Evaluation helper
+# ---------------------------------------------------------------------------
+
+
+def _eval_features_multiseed(
+    X_tr, y_train, X_ho, y_holdout, features, seeds, use_native_cats=True
+):
+    """Evaluate a feature subset with multi-seed LightGBM on pre-computed DataFrames."""
+
+    cat_feats = [c for c in CAT_FEATURES if c in features] if use_native_cats else []
+    aucs = []
+    for seed in seeds:
+        params = {**LGBM_PARAMS, "random_state": seed}
+        model = lgb.LGBMClassifier(**params)
+        model.fit(
+            X_tr[features],
+            y_train,
+            eval_set=[(X_ho[features], y_holdout)],
+            categorical_feature=cat_feats,
+            callbacks=[lgb.early_stopping(80), lgb.log_evaluation(0)],
+        )
+        preds = model.predict_proba(X_ho[features])[:, 1]
+        aucs.append(roc_auc_score(y_holdout, preds))
+    return float(np.mean(aucs))
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -700,6 +727,227 @@ def main() -> None:
     fold_features = [c for c in all_features if c not in static_features]
     print(f"  Fold-aware features: {len(fold_features)}")
     print(f"  Total after fold features: {len(all_features)}")
+
+    # ===================================================================
+    # Step 1: Baselines (multi-seed)
+    # ===================================================================
+    print(f"\n{'='*70}")
+    print("STEP 1: BASELINES")
+    print(f"{'='*70}")
+
+    # 1a. Raw only (13 features) — use native cats
+    raw_in_xtr = [f for f in RAW_FEATURES if f in X_tr.columns]
+    auc_raw = _eval_features_multiseed(
+        X_tr, y_train, X_ho, y_holdout, raw_in_xtr, seeds
+    )
+    print(f"Raw only ({len(raw_in_xtr)}): {auc_raw:.5f}")
+
+    # 1b. Current ablation-pruned (21 features) — reference
+    abl_pruned_in_xtr = [f for f in FEATURES_ABLATION_PRUNED if f in X_tr.columns]
+    auc_abl_ref = _eval_features_multiseed(
+        X_tr, y_train, X_ho, y_holdout, abl_pruned_in_xtr, seeds
+    )
+    print(f"Ablation-pruned ref ({len(abl_pruned_in_xtr)}): {auc_abl_ref:.5f}")
+
+    # 1c. All features with native categoricals
+    auc_all_native = _eval_features_multiseed(
+        X_tr, y_train, X_ho, y_holdout, all_features, seeds, use_native_cats=True
+    )
+    print(f"All features native cats ({len(all_features)}): {auc_all_native:.5f}")
+
+    # 1d. All features without native categoricals
+    auc_all_no_cats = _eval_features_multiseed(
+        X_tr, y_train, X_ho, y_holdout, all_features, seeds, use_native_cats=False
+    )
+    print(f"All features no native cats ({len(all_features)}): {auc_all_no_cats:.5f}")
+
+    # ===================================================================
+    # Step 2: Permutation importance
+    # ===================================================================
+    print(f"\n{'='*70}")
+    print("STEP 2: PERMUTATION IMPORTANCE")
+    print(f"{'='*70}")
+
+    # Train one model on all features for permutation importance
+    from sklearn.inspection import permutation_importance
+
+    model_all = lgb.LGBMClassifier(**LGBM_PARAMS)
+    fit_cats = [c for c in CAT_FEATURES if c in all_features]
+    model_all.fit(
+        X_tr[all_features],
+        y_train,
+        eval_set=[(X_ho[all_features], y_holdout)],
+        categorical_feature=fit_cats,
+        callbacks=[lgb.early_stopping(80), lgb.log_evaluation(0)],
+    )
+
+    result = permutation_importance(
+        model_all,
+        X_ho[all_features],
+        y_holdout,
+        n_repeats=10,
+        scoring="roc_auc",
+        random_state=42,
+        n_jobs=-1,
+    )
+
+    imp_df = pd.DataFrame(
+        {
+            "feature": all_features,
+            "importance_mean": result.importances_mean,
+            "importance_std": result.importances_std,
+        }
+    ).sort_values("importance_mean", ascending=False)
+    imp_df["significant"] = imp_df["importance_mean"] > 2 * imp_df["importance_std"]
+
+    print(f"\n{'Feature':<40} {'Mean':>10} {'Std':>10} {'Sig':>5}")
+    print("-" * 70)
+    for _, row in imp_df.iterrows():
+        sig = "***" if row["significant"] else ""
+        sign = "-" if row["importance_mean"] < 0 else ""
+        print(
+            f"{row['feature']:<40} {sign}{abs(row['importance_mean']):>9.5f} "
+            f"{row['importance_std']:>10.5f} {sig:>5}"
+        )
+
+    features_by_importance = imp_df["feature"].tolist()
+
+    # ===================================================================
+    # Step 3: Drop-one-at-a-time ablation (multi-seed)
+    # ===================================================================
+    print(f"\n{'='*70}")
+    print(f"STEP 3: ABLATION ({len(all_features)} features x {len(seeds)} seeds)")
+    print(f"{'='*70}")
+
+    baseline_ms = _eval_features_multiseed(
+        X_tr, y_train, X_ho, y_holdout, all_features, seeds
+    )
+    print(f"\nAll-features baseline: {baseline_ms:.5f}")
+
+    ablation_results = []
+    for i, feat in enumerate(all_features):
+        reduced = [f for f in all_features if f != feat]
+        auc_without = _eval_features_multiseed(
+            X_tr, y_train, X_ho, y_holdout, reduced, seeds
+        )
+        delta = auc_without - baseline_ms
+        ablation_results.append((feat, auc_without, delta))
+        print(
+            f"  [{i+1}/{len(all_features)}] -{feat:<35} "
+            f"AUC={auc_without:.5f} (delta={delta:+.5f})"
+        )
+
+    ablation_results.sort(key=lambda x: x[2], reverse=True)
+
+    print(f"\n{'Feature':<40} {'AUC without':>12} {'Delta':>10} {'Verdict':>10}")
+    print("-" * 76)
+    for feat, auc_without, delta in ablation_results:
+        verdict = "HARMFUL" if delta > 0 else "helpful"
+        print(f"{feat:<40} {auc_without:>12.5f} {delta:>+10.5f} {verdict:>10}")
+
+    harmful_features = [f for f, _, d in ablation_results if d > 0]
+    ablation_pruned = [f for f in all_features if f not in harmful_features]
+    print(f"\nHarmful ({len(harmful_features)}): {harmful_features}")
+    print(f"Ablation-pruned set: {len(ablation_pruned)} features")
+
+    # ===================================================================
+    # Step 4: Forward selection (greedy, importance order)
+    # ===================================================================
+    print(f"\n{'='*70}")
+    print(f"STEP 4: FORWARD SELECTION ({len(all_features)} features)")
+    print(f"{'='*70}")
+
+    forward_history = []
+    for i, _ in enumerate(features_by_importance, start=1):
+        subset = features_by_importance[:i]
+        auc_fwd = _eval_features_multiseed(
+            X_tr, y_train, X_ho, y_holdout, subset, seeds
+        )
+        forward_history.append((i, subset[-1], auc_fwd))
+        print(
+            f"  [{i}/{len(features_by_importance)}] +{subset[-1]:<35} "
+            f"AUC={auc_fwd:.5f}"
+        )
+
+    # Find optimal
+    best_n, best_feat, best_fwd_auc = max(forward_history, key=lambda x: x[2])
+    forward_selected = features_by_importance[:best_n]
+
+    print(f"\n{'N':>3} {'Added feature':<40} {'AUC':>10} {'Delta':>10}")
+    print("-" * 67)
+    prev_auc = 0.0
+    for n, feat, auc in forward_history:
+        delta = auc - prev_auc if n > 1 else 0.0
+        print(f"{n:>3} {feat:<40} {auc:>10.5f} {delta:>+10.5f}")
+        prev_auc = auc
+
+    print(f"\nOptimal: {best_n} features, AUC={best_fwd_auc:.5f}")
+
+    # ===================================================================
+    # Step 5: Comparison
+    # ===================================================================
+    print(f"\n{'='*70}")
+    print("STEP 5: COMPARISON")
+    print(f"{'='*70}")
+
+    results = [
+        (f"Raw only ({len(raw_in_xtr)})", auc_raw),
+        (f"Ablation-pruned ref ({len(abl_pruned_in_xtr)})", auc_abl_ref),
+        (f"All features ({len(all_features)})", auc_all_native),
+        (
+            f"New ablation-pruned ({len(ablation_pruned)})",
+            _eval_features_multiseed(
+                X_tr, y_train, X_ho, y_holdout, ablation_pruned, seeds
+            ),
+        ),
+        (f"Forward-selected ({len(forward_selected)})", best_fwd_auc),
+    ]
+
+    print(f"\n{'Feature set':<45} {'AUC':>10} {'Delta vs raw':>14}")
+    print("-" * 73)
+    for name, auc in results:
+        delta = auc - auc_raw
+        print(f"{name:<45} {auc:>10.5f} {delta:>+14.5f}")
+
+    # Determine feature sources
+    raw_set = set(RAW_FEATURES)
+    fold_set = set(fold_features)
+    existing_eng_names = {
+        "thallium_x_chestpain",
+        "thallium_x_slope",
+        "thallium_x_sex",
+        "thallium_x_stdep",
+        "thallium_abnormal",
+        "chestpain_x_slope",
+        "chestpain_x_angina",
+        "vessels_x_thallium",
+        "angina_x_stdep",
+        "top4_sum",
+        "abnormal_count",
+        "risk_score",
+        "maxhr_per_age",
+        "hr_reserve_pct",
+        "age_x_stdep",
+        "age_x_maxhr",
+        "heart_load",
+        "Cholesterol_dev_sex",
+        "BP_dev_sex",
+        "Max HR_dev_sex",
+        "ST depression_dev_sex",
+        "signal_conflict",
+    }
+
+    print(f"\nForward-selected features ({len(forward_selected)}):")
+    for f in forward_selected:
+        if f in raw_set:
+            source = "RAW"
+        elif f in existing_eng_names:
+            source = "EXISTING"
+        elif f in fold_set:
+            source = "FOLD"
+        else:
+            source = "RESEARCH"
+        print(f"  - {f} [{source}]")
 
 
 if __name__ == "__main__":
