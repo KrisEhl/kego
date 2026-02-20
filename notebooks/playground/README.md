@@ -23,10 +23,130 @@ The original data is combined with the synthetic training data during training t
 - `train_s6e2_baseline.py` — 19-model ensemble with multi-seed averaging and Ridge stacking (runs on Ray cluster)
 - `compare_stacking.py` — Stacking comparison: simple average vs Ridge vs LightGBM meta-models
 - `analyze_ensemble.py` — Greedy forward selection and leave-one-out analysis of ensemble members
+- `analyze_disagreement.py` — Model disagreement matrix and best-run analysis using OOF predictions from MLflow
+- `benchmark_models.py` — Standalone neural model benchmarking (no Ray): timing, profiling, MLflow logging
 - `select_features.py` — Fine-grained feature selection: per-feature ablation + forward selection with multi-seed averaging
 - `test_features_local.py` — Local CPU feature engineering comparison (LightGBM + LogReg)
 - `submit_s6e2.sh` — Submit predictions via Kaggle CLI
 - `explore_s6e2.py` — EDA and data exploration
+
+## CLI Reference — `train_s6e2_baseline.py`
+
+### Training Modes
+
+| Flag | Folds | Seeds | Models | Purpose |
+|------|-------|-------|--------|---------|
+| *(none)* | 10 | 3 | all 19 | Full training run |
+| `--fast` | 5 | 1 | core GBDTs | Quick iteration (~3-5 min) |
+| `--fast-full` | 10 | 3 | core GBDTs | GBDT-only with full CV (~15-20 min) |
+| `--neural` | 5 | 1 | resnet, ft_transformer, realmlp | Neural models only |
+| `--debug` | 2 | 1 | all | 2000 rows, sanity check |
+
+### Arguments
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--tag TAG` | str | `""` | Custom MLflow experiment name suffix (e.g. `--tag gbdt-v2`) |
+| `--features F [F ...]` | choice | `ablation-pruned` | Feature set(s): `all`, `raw`, `ablation-pruned`, `forward-selected` |
+| `--folds N [N ...]` | int | mode-dependent | CV fold counts (e.g. `--folds 5 10`) |
+| `--models M [M ...]` | str | all | Only train these models (e.g. `--models catboost realmlp`) |
+| `--seed-pool S [S ...]` | int | `42 123 777` | Seed pool for reproducibility |
+| `--seeds-per-learner N` | int | all seeds | Rotate N seeds per learner from the pool |
+| `--resume EXPERIMENT` | str | — | Skip tasks completed in a previous MLflow experiment |
+| `--retrain-full` | flag | — | Retrain on train+holdout combined (no holdout eval) |
+| `--description TEXT` | str | `""` | Free-text description logged to MLflow |
+
+### Tuning Mode
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--tune M [M ...]` | str | — | Run Optuna HP tuning for these models |
+| `--tune-trials N` | int | `50` | Optuna trials per model |
+| `--tune-sample N` | int | all rows | Subsample training data for faster tuning |
+
+### Ensemble-from-MLflow Mode (no training)
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `--from-experiment E [E ...]` | str | Load predictions from MLflow experiment(s) |
+| `--from-ensemble NAME` | str | Load predictions from a curated ensemble (tagged runs) |
+| `--submit` | flag | Submit to Kaggle and log leaderboard score to MLflow |
+
+### Examples
+
+```bash
+# Full training on Ray cluster
+cd cluster && make submit-full TAG=full-v2
+
+# Fast iteration with specific models and features
+cd cluster && make submit-fast TAG=test DESCRIPTION="testing catboost tuned params"
+
+# Tune CatBoost and LightGBM (50 trials each)
+cd cluster && make submit-tune TUNE_MODELS="catboost lightgbm" TUNE_TRIALS=50
+
+# Re-ensemble from previous experiments (no training)
+cd cluster && make submit-ensemble EXPERIMENTS="full-v1 diverse-v1"
+
+# Submit best ensemble to Kaggle
+cd cluster && make submit-kaggle ENSEMBLE=submit-v9
+
+# Local usage (without Ray cluster)
+uv run python notebooks/playground/train_s6e2_baseline.py --fast --tag local-test
+```
+
+## Cluster Commands (`cluster/Makefile`)
+
+All commands run from the `cluster/` directory.
+
+### Training Jobs
+
+| Target | Description | Key Variables |
+|--------|-------------|---------------|
+| `make submit-fast` | 5 folds, 1 seed, core GBDTs (~3-5 min) | `TAG=`, `RESUME=`, `DESCRIPTION=` |
+| `make submit-fast-full` | 10 folds, 3 seeds, core GBDTs (~15-20 min) | `TAG=`, `FEATURES=`, `RESUME=`, `DESCRIPTION=` |
+| `make submit-full` | All 19 models, 10 folds, 3 seeds | `TAG=`, `FEATURES=`, `RESUME=`, `DESCRIPTION=` |
+| `make submit-neural` | Neural models only, 5 folds, 1 seed | `TAG=`, `RESUME=`, `DESCRIPTION=` |
+| `make submit-debug` | Debug: 2K rows, fast mode | `TAG=` |
+| `make submit-tune` | Optuna HP tuning | `TUNE_MODELS=`, `TUNE_TRIALS=`, `TUNE_SAMPLE=`, `FEATURES=`, `FOLDS=`, `TAG=` |
+| `make submit-diverse` | Diverse models/features/seeds | `DIVERSE_MODELS=`, `DIVERSE_FEATURES=`, `DIVERSE_FOLDS=`, `DIVERSE_SEED_POOL=`, `DIVERSE_SEEDS_PER=`, `TAG=`, `RESUME=`, `DESCRIPTION=` |
+
+### Ensemble & Submission
+
+| Target | Description | Key Variables |
+|--------|-------------|---------------|
+| `make submit-ensemble` | Re-ensemble from MLflow runs (no training) | `ENSEMBLE=` or `EXPERIMENTS=` |
+| `make submit-kaggle` | Generate submission + submit to Kaggle | `ENSEMBLE=` or `EXPERIMENTS=` |
+| `make log-score` | Log leaderboard score to latest ensemble run | `SCORE=` (required) |
+
+### Ensemble Curation
+
+| Target | Description | Key Variables |
+|--------|-------------|---------------|
+| `make promote` | Tag specific runs into a named ensemble | `ENSEMBLE=`, `RUN_ID=` (both required) |
+| `make auto-promote` | Auto-select best runs per model from experiments | `ENSEMBLE=`, `EXPERIMENT=` or `ALL=1`, `FOLDS=`, `MODELS=`, `FEATURES=` |
+| `make list-ensemble` | List all runs in an ensemble | `ENSEMBLE=` |
+| `make clear-ensemble` | Remove all runs from an ensemble | `ENSEMBLE=` |
+| `make search-runs` | Search MLflow runs matching filters | `EXPERIMENT=` or `ALL=1`, `FOLDS=`, `MODELS=`, `SEEDS=`, `FEATURES=` |
+
+### Cluster Management
+
+| Target | Description |
+|--------|-------------|
+| `make start-head` | Start Ray head node (run on head machine) |
+| `make start-worker` | Connect this node as a Ray worker |
+| `make start-worker-light` | Connect as worker with `light_gpu` resource only |
+| `make restart-worker` | Stop and reconnect worker |
+| `make stop` | Stop Ray on this node |
+| `make status` | List all Ray jobs and their status |
+| `make logs` | Show parsed progress of the running job |
+| `make logs-raw` | Show last N raw log lines (`N=20` default) |
+
+### MLflow
+
+| Target | Description |
+|--------|-------------|
+| `make mlflow-start` | Start MLflow tracking server |
+| `make mlflow-stop` | Stop MLflow server |
 
 ## Resuming Failed Runs
 

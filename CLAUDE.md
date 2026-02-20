@@ -32,14 +32,22 @@ uv run pre-commit run --all-files
 uv run python notebooks/stanford/train_rna_baseline.py
 
 # Ray cluster commands (run from cluster/ directory)
+# See notebooks/playground/README.md for full command reference with all variables
 cd cluster
 make start-head           # Start Ray head node
 make start-worker         # Connect as worker to head
 make restart-worker       # Stop and reconnect worker
-make submit-fast          # Submit fast iteration job (~3-5 min)
-make submit-full          # Submit full training run
-make submit-debug         # Submit debug job (small sample)
-make logs                 # Show progress of running job
+make submit-fast          # Fast iteration (~3-5 min): TAG= RESUME= DESCRIPTION=
+make submit-fast-full     # Core GBDTs, full CV (~15-20 min): TAG= FEATURES= RESUME=
+make submit-full          # All models, 10 folds, 3 seeds: TAG= FEATURES= RESUME=
+make submit-neural        # Neural models only: TAG= RESUME=
+make submit-debug         # Debug job (2K rows, fast mode): TAG=
+make submit-tune          # Optuna HP tuning: TUNE_MODELS= TUNE_TRIALS= FEATURES=
+make submit-diverse       # Diverse models/features/seeds: DIVERSE_MODELS= TAG=
+make submit-ensemble      # Re-ensemble from MLflow: ENSEMBLE= or EXPERIMENTS=
+make submit-kaggle        # Submit to Kaggle: ENSEMBLE= or EXPERIMENTS=
+make logs                 # Show parsed progress of running job
+make logs-raw             # Show last N raw log lines (N=20)
 make status               # List all jobs and their status
 make stop                 # Stop Ray on this node
 ```
@@ -65,12 +73,12 @@ Each competition lives in `notebooks/<competition>/` with its own `pyproject.tom
 
 The `cluster/` workspace member provides a uv-managed venv with `ray[default]` for Ray cluster workers. On each worker node, `cd cluster && uv sync` creates the venv, then ML deps are installed via `uv pip install`. Worker setup is handled by `cluster/scripts/setup-ray-worker.sh`.
 
-### Current Active Focus: Stanford RNA 3D Folding
+### Current Active Focus: Playground Series S6E2 (Heart Disease)
 
-- Goal: predict x,y,z coordinates for each RNA nucleotide
-- Bidirectional LSTM baseline model in `kego/competitions/rna/`
-- `RNADataset` handles variable-length sequences with custom `collate_fn` (padding)
-- Training script: `notebooks/stanford/train_rna_baseline.py`
+- Binary classification (AUC), 630K train / 270K test rows
+- 19-model ensemble with Ridge stacking, trained on Ray GPU cluster
+- Main script: `notebooks/playground/train_s6e2_baseline.py`
+- **See `notebooks/playground/README.md`** for full CLI reference, cluster Makefile commands, model details, and experiment log
 
 ## Code Conventions
 
