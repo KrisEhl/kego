@@ -13,6 +13,7 @@ Usage:
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 import lightgbm as lgb
@@ -825,6 +826,7 @@ def main() -> None:
     print(f"\nAll-features baseline: {baseline_ms:.5f}")
 
     ablation_results = []
+    t0 = time.perf_counter()
     for i, feat in enumerate(all_features):
         reduced = [f for f in all_features if f != feat]
         auc_without = _eval_features_multiseed(
@@ -832,9 +834,12 @@ def main() -> None:
         )
         delta = auc_without - baseline_ms
         ablation_results.append((feat, auc_without, delta))
+        elapsed = time.perf_counter() - t0
+        eta = elapsed / (i + 1) * (len(all_features) - i - 1)
         print(
             f"  [{i+1}/{len(all_features)}] -{feat:<35} "
-            f"AUC={auc_without:.5f} (delta={delta:+.5f})"
+            f"AUC={auc_without:.5f} (delta={delta:+.5f}) "
+            f"[ETA: {eta/60:.1f}min]"
         )
 
     ablation_results.sort(key=lambda x: x[2], reverse=True)
@@ -858,15 +863,18 @@ def main() -> None:
     print(f"{'='*70}")
 
     forward_history = []
+    t0 = time.perf_counter()
     for i, _ in enumerate(features_by_importance, start=1):
         subset = features_by_importance[:i]
         auc_fwd = _eval_features_multiseed(
             X_tr, y_train, X_ho, y_holdout, subset, seeds
         )
         forward_history.append((i, subset[-1], auc_fwd))
+        elapsed = time.perf_counter() - t0
+        eta = elapsed / i * (len(features_by_importance) - i)
         print(
             f"  [{i}/{len(features_by_importance)}] +{subset[-1]:<35} "
-            f"AUC={auc_fwd:.5f}"
+            f"AUC={auc_fwd:.5f} [ETA: {eta/60:.1f}min]"
         )
 
     # Find optimal
@@ -937,17 +945,27 @@ def main() -> None:
         "signal_conflict",
     }
 
+    def _source_label(f):
+        if f in raw_set:
+            return "RAW"
+        elif f in existing_eng_names:
+            return "EXISTING"
+        elif f in fold_set:
+            return "FOLD"
+        return "RESEARCH"
+
     print(f"\nForward-selected features ({len(forward_selected)}):")
     for f in forward_selected:
-        if f in raw_set:
-            source = "RAW"
-        elif f in existing_eng_names:
-            source = "EXISTING"
-        elif f in fold_set:
-            source = "FOLD"
-        else:
-            source = "RESEARCH"
-        print(f"  - {f} [{source}]")
+        print(f"  - {f} [{_source_label(f)}]")
+
+    print(f"\nNew ablation-pruned features ({len(ablation_pruned)}):")
+    for f in ablation_pruned:
+        print(f"  - {f} [{_source_label(f)}]")
+
+    if harmful_features:
+        print(f"\nFeatures to DROP ({len(harmful_features)}):")
+        for f in harmful_features:
+            print(f"  - {f} [{_source_label(f)}]")
 
 
 if __name__ == "__main__":
