@@ -365,6 +365,253 @@ def _engineer_research_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Feature engineering: fold-aware features (~57 per fold)
+# ---------------------------------------------------------------------------
+
+
+def _engineer_fold_features(
+    X_train: pd.DataFrame, y_train: pd.Series, X_val: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Generate ~57 fold-aware features fit on X_train only, applied to both."""
+    from sklearn.covariance import EmpiricalCovariance
+    from sklearn.decomposition import PCA
+    from sklearn.ensemble import IsolationForest
+    from sklearn.linear_model import LinearRegression, LogisticRegression
+    from sklearn.naive_bayes import GaussianNB
+    from sklearn.neighbors import BallTree, KNeighborsClassifier
+    from sklearn.preprocessing import (
+        PowerTransformer,
+        SplineTransformer,
+        StandardScaler,
+    )
+    from sklearn.tree import DecisionTreeClassifier
+
+    X_train = X_train.copy()
+    X_val = X_val.copy()
+    y_train = pd.Series(y_train.values, index=X_train.index)
+
+    ENCODE_CATS = [
+        "Thallium",
+        "Chest pain type",
+        "Slope of ST",
+        "EKG results",
+        "Number of vessels fluro",
+    ]
+    CONTINUOUS = ["Age", "BP", "Cholesterol", "Max HR", "ST depression"]
+
+    # === 1. Target encoding (5 features) ===
+    global_mean = y_train.mean()
+    for col in ENCODE_CATS:
+        means = y_train.groupby(X_train[col]).mean()
+        X_train[f"{col}_te"] = X_train[col].map(means).fillna(global_mean)
+        X_val[f"{col}_te"] = X_val[col].map(means).fillna(global_mean)
+
+    # === 2. GLMM encoding (5 features) ===
+    try:
+        from category_encoders import GLMMEncoder
+
+        enc = GLMMEncoder(cols=ENCODE_CATS)
+        enc.fit(X_train[ENCODE_CATS], y_train)
+        glmm_tr = enc.transform(X_train[ENCODE_CATS])
+        glmm_val = enc.transform(X_val[ENCODE_CATS])
+        for col in ENCODE_CATS:
+            X_train[f"{col}_glmm"] = glmm_tr[col].values
+            X_val[f"{col}_glmm"] = glmm_val[col].values
+    except ImportError:
+        pass
+
+    # === 3. James-Stein encoding (5 features) ===
+    try:
+        from category_encoders import JamesSteinEncoder
+
+        enc = JamesSteinEncoder(cols=ENCODE_CATS)
+        enc.fit(X_train[ENCODE_CATS], y_train)
+        js_tr = enc.transform(X_train[ENCODE_CATS])
+        js_val = enc.transform(X_val[ENCODE_CATS])
+        for col in ENCODE_CATS:
+            X_train[f"{col}_js"] = js_tr[col].values
+            X_val[f"{col}_js"] = js_val[col].values
+    except ImportError:
+        pass
+
+    # === 4. Leave-one-out encoding (5 features) ===
+    try:
+        from category_encoders import LeaveOneOutEncoder
+
+        enc = LeaveOneOutEncoder(cols=ENCODE_CATS, sigma=0.05)
+        loo_tr = enc.fit_transform(X_train[ENCODE_CATS], y_train)
+        loo_val = enc.transform(X_val[ENCODE_CATS])
+        for col in ENCODE_CATS:
+            X_train[f"{col}_loo"] = loo_tr[col].values
+            X_val[f"{col}_loo"] = loo_val[col].values
+    except ImportError:
+        pass
+
+    # === 5. WoE via optimal binning (5 features) ===
+    try:
+        from optbinning import OptimalBinning
+
+        for col in CONTINUOUS:
+            optb = OptimalBinning(name=col, dtype="numerical", solver="cp")
+            optb.fit(X_train[col].values, y_train.values)
+            X_train[f"{col}_woe"] = optb.transform(X_train[col].values, metric="woe")
+            X_val[f"{col}_woe"] = optb.transform(X_val[col].values, metric="woe")
+    except ImportError:
+        pass
+
+    # === 6. TE pair interactions (4 features) ===
+    TE_PAIRS = [
+        ("Thallium", "Chest pain type"),
+        ("Thallium", "Slope of ST"),
+        ("Chest pain type", "Exercise angina"),
+        ("EKG results", "Slope of ST"),
+    ]
+    for c1, c2 in TE_PAIRS:
+        combo_tr = X_train[c1].astype(str) + "_" + X_train[c2].astype(str)
+        combo_val = X_val[c1].astype(str) + "_" + X_val[c2].astype(str)
+        means = y_train.groupby(combo_tr).mean()
+        name = f"{c1}_{c2}_te"
+        X_train[name] = combo_tr.map(means).fillna(global_mean)
+        X_val[name] = combo_val.map(means).fillna(global_mean)
+
+    # === 7. Residual features (3 features) ===
+    lr = LinearRegression().fit(X_train[["Age"]], X_train["Max HR"])
+    X_train["maxhr_residual"] = X_train["Max HR"] - lr.predict(X_train[["Age"]])
+    X_val["maxhr_residual"] = X_val["Max HR"] - lr.predict(X_val[["Age"]])
+
+    lr = LinearRegression().fit(X_train[["Age", "Sex"]], X_train["Cholesterol"])
+    X_train["chol_residual"] = X_train["Cholesterol"] - lr.predict(
+        X_train[["Age", "Sex"]]
+    )
+    X_val["chol_residual"] = X_val["Cholesterol"] - lr.predict(X_val[["Age", "Sex"]])
+
+    lr = LinearRegression().fit(X_train[["Age", "Sex"]], X_train["BP"])
+    X_train["bp_residual"] = X_train["BP"] - lr.predict(X_train[["Age", "Sex"]])
+    X_val["bp_residual"] = X_val["BP"] - lr.predict(X_val[["Age", "Sex"]])
+
+    # === Standardize continuous features (shared for PCA, UMAP, etc.) ===
+    scaler = StandardScaler()
+    X_tr_scaled = scaler.fit_transform(X_train[CONTINUOUS])
+    X_val_scaled = scaler.transform(X_val[CONTINUOUS])
+
+    # === 8. PCA (3 features) ===
+    pca = PCA(n_components=3, random_state=42)
+    pca_tr = pca.fit_transform(X_tr_scaled)
+    pca_val = pca.transform(X_val_scaled)
+    for i in range(3):
+        X_train[f"pca_{i}"] = pca_tr[:, i]
+        X_val[f"pca_{i}"] = pca_val[:, i]
+
+    # === 9. Supervised UMAP (2 features) ===
+    try:
+        import umap
+
+        reducer = umap.UMAP(n_components=2, random_state=42, n_neighbors=15)
+        umap_tr = reducer.fit_transform(X_tr_scaled, y=y_train.values)
+        umap_val = reducer.transform(X_val_scaled)
+        X_train["umap_0"] = umap_tr[:, 0]
+        X_train["umap_1"] = umap_tr[:, 1]
+        X_val["umap_0"] = umap_val[:, 0]
+        X_val["umap_1"] = umap_val[:, 1]
+    except ImportError:
+        pass
+
+    # === 10. Mahalanobis distance (3 features) ===
+    for label, suffix in [(1, "pos"), (0, "neg")]:
+        mask = y_train.values == label
+        cov = EmpiricalCovariance().fit(X_tr_scaled[mask])
+        vi = cov.precision_
+        center = cov.location_
+        diff_tr = X_tr_scaled - center
+        dist_tr = np.sqrt(np.sum(diff_tr @ vi * diff_tr, axis=1))
+        diff_val = X_val_scaled - center
+        dist_val = np.sqrt(np.sum(diff_val @ vi * diff_val, axis=1))
+        X_train[f"mahal_{suffix}"] = dist_tr
+        X_val[f"mahal_{suffix}"] = dist_val
+    X_train["mahal_ratio"] = X_train["mahal_neg"] / (X_train["mahal_pos"] + 1e-8)
+    X_val["mahal_ratio"] = X_val["mahal_neg"] / (X_val["mahal_pos"] + 1e-8)
+
+    # === 11. Isolation Forest anomaly score (1 feature) ===
+    iso = IsolationForest(n_estimators=100, random_state=42, n_jobs=-1)
+    iso.fit(X_tr_scaled)
+    X_train["isolation_score"] = iso.decision_function(X_tr_scaled)
+    X_val["isolation_score"] = iso.decision_function(X_val_scaled)
+
+    # === 12. KNN features (4 features) ===
+    tree = BallTree(X_tr_scaled)
+    for label, suffix in [(1, "pos"), (0, "neg")]:
+        mask = y_train.values == label
+        class_tree = BallTree(X_tr_scaled[mask])
+        dist_tr, _ = class_tree.query(X_tr_scaled, k=10)
+        dist_val, _ = class_tree.query(X_val_scaled, k=10)
+        X_train[f"knn_dist_{suffix}"] = dist_tr.mean(axis=1)
+        X_val[f"knn_dist_{suffix}"] = dist_val.mean(axis=1)
+    X_train["knn_dist_ratio"] = X_train["knn_dist_pos"] / (
+        X_train["knn_dist_neg"] + 1e-8
+    )
+    X_val["knn_dist_ratio"] = X_val["knn_dist_pos"] / (X_val["knn_dist_neg"] + 1e-8)
+    # Neighborhood target rate (20-NN)
+    _, idx_tr = tree.query(X_tr_scaled, k=21)  # +1 for self
+    _, idx_val = tree.query(X_val_scaled, k=20)
+    y_arr = y_train.values
+    X_train["knn_target_rate"] = y_arr[idx_tr[:, 1:]].mean(axis=1)
+    X_val["knn_target_rate"] = y_arr[idx_val].mean(axis=1)
+
+    # === 13. Meta-model OOF predictions (5 features) ===
+    # LogReg
+    lr_model = LogisticRegression(max_iter=1000, random_state=42)
+    lr_model.fit(X_tr_scaled, y_train)
+    X_train["lr_oof"] = lr_model.predict_proba(X_tr_scaled)[:, 1]
+    X_val["lr_oof"] = lr_model.predict_proba(X_val_scaled)[:, 1]
+
+    # Naive Bayes
+    nb_model = GaussianNB()
+    nb_model.fit(X_tr_scaled, y_train)
+    X_train["nb_oof"] = nb_model.predict_proba(X_tr_scaled)[:, 1]
+    X_val["nb_oof"] = nb_model.predict_proba(X_val_scaled)[:, 1]
+
+    # KNN
+    knn_model = KNeighborsClassifier(n_neighbors=50, n_jobs=-1)
+    knn_model.fit(X_tr_scaled, y_train)
+    X_train["knn_oof"] = knn_model.predict_proba(X_tr_scaled)[:, 1]
+    X_val["knn_oof"] = knn_model.predict_proba(X_val_scaled)[:, 1]
+
+    # Model disagreement
+    X_train["model_disagreement"] = np.abs(X_train["lr_oof"] - X_train["nb_oof"])
+    X_val["model_disagreement"] = np.abs(X_val["lr_oof"] - X_val["nb_oof"])
+
+    # Decision tree leaf ID (target-encoded)
+    dt = DecisionTreeClassifier(max_depth=5, random_state=42)
+    dt.fit(X_tr_scaled, y_train)
+    leaf_tr = dt.apply(X_tr_scaled)
+    leaf_val = dt.apply(X_val_scaled)
+    leaf_means = y_train.groupby(pd.Series(leaf_tr)).mean()
+    X_train["dt_leaf_te"] = (
+        pd.Series(leaf_tr).map(leaf_means).fillna(y_train.mean()).values
+    )
+    X_val["dt_leaf_te"] = (
+        pd.Series(leaf_val).map(leaf_means).fillna(y_train.mean()).values
+    )
+
+    # === 14. Spline basis functions (~14 features) ===
+    for col in ["Age", "Max HR"]:
+        spline = SplineTransformer(n_knots=5, degree=3)
+        sp_tr = spline.fit_transform(X_train[[col]])
+        sp_val = spline.transform(X_val[[col]])
+        for i in range(sp_tr.shape[1]):
+            X_train[f"{col}_spline_{i}"] = sp_tr[:, i]
+            X_val[f"{col}_spline_{i}"] = sp_val[:, i]
+
+    # === 15. Yeo-Johnson transforms (3 features) ===
+    for col in ["ST depression", "Cholesterol", "BP"]:
+        pt = PowerTransformer(method="yeo-johnson")
+        X_train[f"{col}_yj"] = pt.fit_transform(X_train[[col]]).ravel()
+        X_val[f"{col}_yj"] = pt.transform(X_val[[col]]).ravel()
+
+    return X_train, X_val
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -443,7 +690,16 @@ def main() -> None:
     print(f"Train: {len(train)}, Holdout: {len(holdout)}")
     print(f"Seeds: {seeds}")
 
-    # TODO: Evaluation pipeline (forward selection) added in Task 3.
+    # Generate fold-aware features (fit on train, transform holdout)
+    static_features = [c for c in train.columns if c not in ["id", TARGET]]
+    X_tr = train[static_features].copy()
+    X_ho = holdout[static_features].copy()
+    X_tr, X_ho = _engineer_fold_features(X_tr, pd.Series(y_train), X_ho)
+
+    all_features = [c for c in X_tr.columns if c not in ["id", TARGET]]
+    fold_features = [c for c in all_features if c not in static_features]
+    print(f"  Fold-aware features: {len(fold_features)}")
+    print(f"  Total after fold features: {len(all_features)}")
 
 
 if __name__ == "__main__":
