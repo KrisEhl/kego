@@ -22,8 +22,13 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "ipykernel>=6.30.0",
+    "lightgbm>=4.0.0",
     "pre-commit>=3.6.0",
+    "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.uv.workspace]
 members = [

@@ -23,6 +23,9 @@ setup-new-competition:
 	uv init --name ${KAGGLE_COMPETITION} --no-package --directory ${path_competition}
 
 
+test:
+	uv run pytest tests/ -v
+
 publish:
 	rm -rf dist
 	uv build

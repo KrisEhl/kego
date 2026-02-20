@@ -9,37 +9,48 @@ import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 import ray
-import torch
-import torch.nn as nn
 import xgboost as xgb
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
-from pytabkit import RealMLP_TD_Classifier
-from rtdl_num_embeddings import (
-    PeriodicEmbeddings,
-    PiecewiseLinearEmbeddings,
-    compute_bins,
-)
-from rtdl_revisiting_models import FTTransformer, ResNet
-from scipy.stats import rankdata
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
-from sklearn.isotonic import IsotonicRegression
-from sklearn.linear_model import LogisticRegression, RidgeCV
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import QuantileTransformer, StandardScaler
-from skorch import NeuralNetBinaryClassifier
-from skorch.callbacks import EarlyStopping
-from tabpfn import TabPFNClassifier
 from xgboost import XGBClassifier
 
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
 from kego.datasets.split import build_xy, split_dataset  # noqa: E402
+from kego.ensemble import compute_ensemble  # noqa: E402
+from kego.ensemble.stacking import l2_stacking  # noqa: E402
+from kego.ensemble.weights import hill_climbing  # noqa: E402
+from kego.models.neural.ft_transformer import (  # noqa: E402
+    FTTransformerModule,
+    SkorchFTTransformer,
+)
+from kego.models.neural.noise import GaussianNoise  # noqa: E402
+from kego.models.neural.resnet import ResNetModule, SkorchResNet  # noqa: E402
+from kego.models.wrappers import (  # noqa: E402
+    GPUXGBClassifier,
+    ScaledLogisticRegression,
+    ScaledRealMLP,
+    SubsampledTabPFN,
+)
+from kego.preprocessing import make_te_preprocess  # noqa: E402
+from kego.tracking import (  # noqa: E402
+    get_completed_fingerprints,
+    load_predictions_from_ensemble,
+    load_predictions_from_mlflow,
+    load_predictions_from_runs,
+)
 from kego.train import train_model_split  # noqa: E402
+from kego.utils import (  # noqa: E402
+    filter_model_config,
+    get_seeds_for_learner,
+    make_learner_id,
+    task_fingerprint,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -165,573 +176,6 @@ FEATURE_SETS = {
     "ablation-pruned": FEATURES_ABLATION_PRUNED,
     "forward-selected": FEATURES_FORWARD_SELECTED,
 }
-
-
-def make_te_preprocess(te_features, drop_original=False):
-    """Create a fold_preprocess callback that applies target encoding per CV fold.
-
-    Args:
-        te_features: Columns to target-encode.
-        drop_original: If True, drop the raw categorical columns after adding
-            TE versions. Use for models that can't handle categoricals natively
-            (LogReg, ResNet) to fix the ordinal fallacy.
-    """
-
-    def preprocess(x_train, y_train, x_valid, x_test, x_holdout):
-        for col in te_features:
-            if col not in x_train.columns:
-                continue
-            means = y_train.groupby(x_train[col]).mean()
-            global_mean = y_train.mean()
-            for df in [x_train, x_valid, x_test, x_holdout]:
-                df[f"{col}_te"] = df[col].map(means).fillna(global_mean)
-        if drop_original:
-            cols_to_drop = [c for c in te_features if c in x_train.columns]
-            for df in [x_train, x_valid, x_test, x_holdout]:
-                df.drop(columns=cols_to_drop, inplace=True)
-        return x_train, x_valid, x_test, x_holdout
-
-    return preprocess
-
-
-class ScaledLogisticRegression:
-    """LogisticRegression with StandardScaler preprocessing."""
-
-    def __init__(self, **kwargs):
-        self.pipe = make_pipeline(StandardScaler(), LogisticRegression(**kwargs))
-
-    def fit(self, X, y, **kwargs):
-        self.pipe.fit(X, y)
-        return self
-
-    def predict_proba(self, X):
-        return self.pipe.predict_proba(X)
-
-    def predict(self, X):
-        return self.pipe.predict(X)
-
-
-class SubsampledTabPFN:
-    """TabPFN with stratified subsampling for large datasets."""
-
-    def __init__(
-        self, cat_features=None, max_train_rows=10000, random_state=42, **kwargs
-    ):
-        self.cat_features = cat_features or []
-        self.max_train_rows = max_train_rows
-        self.random_state = random_state
-        self.kwargs = kwargs
-
-    def _prepare(self, X):
-        if isinstance(X, pd.DataFrame) and self.cat_features:
-            X = X.copy()
-            for c in self.cat_features:
-                if c in X.columns:
-                    X[c] = X[c].astype("category")
-        return X
-
-    def fit(self, X, y, **kwargs):
-        X = self._prepare(X)
-        if len(X) > self.max_train_rows:
-            from sklearn.model_selection import train_test_split
-
-            X, _, y, _ = train_test_split(
-                X,
-                y,
-                train_size=self.max_train_rows,
-                stratify=y,
-                random_state=self.random_state,
-            )
-        self.model = TabPFNClassifier(random_state=self.random_state, **self.kwargs)
-        self.model.fit(X, y)
-        return self
-
-    def predict_proba(self, X):
-        return self.model.predict_proba(self._prepare(X))
-
-    def predict(self, X):
-        return self.model.predict(self._prepare(X))
-
-
-class GPUXGBClassifier(XGBClassifier):
-    """XGBClassifier that uses DMatrix for GPU-native prediction."""
-
-    def predict_proba(self, X, **kwargs):
-        dmat = xgb.DMatrix(
-            X, enable_categorical=getattr(self, "enable_categorical", False)
-        )
-        preds = self.get_booster().predict(dmat)
-        return np.column_stack([1 - preds, preds])
-
-    def predict(self, X, **kwargs):
-        proba = self.predict_proba(X)
-        return (proba[:, 1] >= 0.5).astype(int)
-
-
-class ScaledRealMLP:
-    """RealMLP_TD_Classifier with native categorical feature support."""
-
-    def __init__(self, cat_features=None, random_state=42, **kwargs):
-        self.cat_features = cat_features or []
-        self.random_state = random_state
-        self.kwargs = kwargs
-
-    def _prepare(self, X):
-        if isinstance(X, pd.DataFrame) and self.cat_features:
-            X = X.copy()
-            for c in self.cat_features:
-                if c in X.columns:
-                    X[c] = X[c].astype("category")
-            return X
-        return X.values if isinstance(X, pd.DataFrame) else X
-
-    def fit(self, X, y, **kwargs):
-        X_prep = self._prepare(X)
-        y_np = y.values if hasattr(y, "values") else y
-        self.model = RealMLP_TD_Classifier(
-            random_state=self.random_state, **self.kwargs
-        )
-        self.model.fit(X_prep, y_np)
-        return self
-
-    def predict_proba(self, X):
-        return self.model.predict_proba(self._prepare(X))
-
-    def predict(self, X):
-        return self.model.predict(self._prepare(X))
-
-
-class GaussianNoise(nn.Module):
-    """Adds Gaussian noise during training only. Regularization for synthetic data."""
-
-    def __init__(self, std=0.01):
-        super().__init__()
-        self.std = std
-
-    def forward(self, x):
-        if self.training and self.std > 0:
-            return x + torch.randn_like(x) * self.std
-        return x
-
-
-class ResNetModule(nn.Module):
-    """Wraps rtdl ResNet for skorch compatibility, with periodic numerical embeddings."""
-
-    def __init__(
-        self,
-        d_in=1,
-        d_out=1,
-        n_blocks=3,
-        d_block=192,
-        d_hidden_multiplier=2.0,
-        dropout1=0.15,
-        dropout2=0.0,
-        n_frequencies=48,
-        frequency_init_scale=0.01,
-        d_embedding=24,
-        noise_std=0.01,
-        bins=None,
-    ):
-        super().__init__()
-        self.noise = GaussianNoise(std=noise_std)
-        if bins is not None:
-            self.num_embeddings = PiecewiseLinearEmbeddings(
-                bins=bins,
-                d_embedding=d_embedding,
-                activation=True,
-                version="B",
-            )
-        else:
-            self.num_embeddings = PeriodicEmbeddings(
-                n_features=d_in,
-                d_embedding=d_embedding,
-                n_frequencies=n_frequencies,
-                frequency_init_scale=frequency_init_scale,
-                activation=True,
-                lite=False,
-            )
-        self.net = ResNet(
-            d_in=d_in * d_embedding,
-            d_out=d_out,
-            n_blocks=n_blocks,
-            d_block=d_block,
-            d_hidden_multiplier=d_hidden_multiplier,
-            dropout1=dropout1,
-            dropout2=dropout2,
-        )
-
-    def forward(self, X):
-        X = self.noise(X)  # Add noise during training only
-        X = self.num_embeddings(X)  # (B, n_feat) -> (B, n_feat, d_emb)
-        X = X.flatten(1)  # (B, n_feat * d_emb)
-        return self.net(X).squeeze(-1)
-
-
-class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
-    """NeuralNetBinaryClassifier with automatic mixed precision (fp16)."""
-
-    def initialize(self):
-        super().initialize()
-        self.amp_scaler_ = torch.amp.GradScaler("cuda")
-        return self
-
-    def infer(self, x, **fit_params):
-        with torch.amp.autocast("cuda"):
-            return super().infer(x, **fit_params)
-
-    def train_step_single(self, batch, **fit_params):
-        try:
-            from skorch.dataset import unpack_data
-        except ImportError:
-            from skorch.utils import unpack_data
-
-        self._set_training(True)
-        Xi, yi = unpack_data(batch)
-        y_pred = self.infer(Xi, **fit_params)
-        loss = self.get_loss(y_pred, yi, X=Xi, training=True)
-        self.amp_scaler_.scale(loss).backward()
-        return {"loss": loss, "y_pred": y_pred}
-
-    def train_step(self, batch, **fit_params):
-        self.optimizer_.zero_grad()
-        step = self.train_step_single(batch, **fit_params)
-        self.amp_scaler_.step(self.optimizer_)
-        self.amp_scaler_.update()
-        return step
-
-
-class SkorchResNet:
-    """ResNet with QuantileTransformer + periodic/PLE embeddings + Gaussian noise."""
-
-    def __init__(
-        self,
-        d_block=192,
-        n_blocks=3,
-        d_hidden_multiplier=2.0,
-        dropout1=0.15,
-        dropout2=0.0,
-        lr=1e-3,
-        max_epochs=200,
-        patience=20,
-        batch_size=256,
-        num_workers=0,
-        random_state=42,
-        embedding_type="periodic",
-        n_bins=48,
-    ):
-        self.d_block = d_block
-        self.n_blocks = n_blocks
-        self.d_hidden_multiplier = d_hidden_multiplier
-        self.dropout1 = dropout1
-        self.dropout2 = dropout2
-        self.lr = lr
-        self.max_epochs = max_epochs
-        self.patience = patience
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.random_state = random_state
-        self.embedding_type = embedding_type
-        self.n_bins = n_bins
-
-    def fit(self, X, y, **kwargs):
-        torch.manual_seed(self.random_state)
-        self.scaler = QuantileTransformer(
-            output_distribution="normal", random_state=self.random_state
-        )
-        X_np = self.scaler.fit_transform(
-            X.values if isinstance(X, pd.DataFrame) else X
-        ).astype(np.float32)
-        y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
-        d_in = X_np.shape[1]
-
-        bins = None
-        if self.embedding_type == "ple":
-            X_tensor = torch.from_numpy(X_np)
-            y_tensor = torch.from_numpy(y_np)
-            bins = compute_bins(
-                X_tensor,
-                n_bins=self.n_bins,
-                tree_kwargs={"min_samples_leaf": 64},
-                y=y_tensor,
-                regression=False,
-            )
-
-        self.net = AMPNeuralNetBinaryClassifier(
-            ResNetModule,
-            module__d_in=d_in,
-            module__d_out=1,
-            module__n_blocks=self.n_blocks,
-            module__d_block=self.d_block,
-            module__d_hidden_multiplier=self.d_hidden_multiplier,
-            module__dropout1=self.dropout1,
-            module__dropout2=self.dropout2,
-            module__bins=bins,
-            criterion=nn.BCEWithLogitsLoss,
-            optimizer=torch.optim.AdamW,
-            lr=self.lr,
-            max_epochs=self.max_epochs,
-            batch_size=self.batch_size,
-            device="cuda",
-            iterator_train__pin_memory=True,
-            iterator_valid__pin_memory=True,
-            iterator_train__num_workers=self.num_workers,
-            iterator_valid__num_workers=self.num_workers,
-            callbacks=[
-                EarlyStopping(patience=self.patience, monitor="valid_loss"),
-            ],
-            verbose=1,
-        )
-        self.net.initialize()
-        self.net.module_ = torch.compile(self.net.module_)
-        self.net.fit(X_np, y_np)
-        return self
-
-    def predict_proba(self, X):
-        X_np = self.scaler.transform(
-            X.values if isinstance(X, pd.DataFrame) else X
-        ).astype(np.float32)
-        return self.net.predict_proba(X_np)
-
-    def predict(self, X):
-        proba = self.predict_proba(X)
-        return (proba[:, 1] >= 0.5).astype(int)
-
-
-class FTTransformerModule(nn.Module):
-    """Wraps rtdl FTTransformer for skorch (continuous + categorical features).
-
-    Replaces the default LinearEmbeddings for continuous features with
-    PeriodicEmbeddings for richer numerical representations.
-    """
-
-    def __init__(
-        self,
-        n_cont_features=1,
-        cat_cardinalities=None,
-        d_out=1,
-        n_blocks=3,
-        d_block=96,
-        attention_n_heads=8,
-        attention_dropout=0.2,
-        ffn_d_hidden_multiplier=4 / 3,
-        ffn_dropout=0.1,
-        residual_dropout=0.0,
-        n_frequencies=48,
-        frequency_init_scale=0.01,
-        noise_std=0.01,
-        bins=None,
-    ):
-        super().__init__()
-        self.n_cont = n_cont_features
-        self.noise = GaussianNoise(std=noise_std)
-        self.net = FTTransformer(
-            n_cont_features=n_cont_features,
-            cat_cardinalities=cat_cardinalities or [],
-            d_out=d_out,
-            n_blocks=n_blocks,
-            d_block=d_block,
-            attention_n_heads=attention_n_heads,
-            attention_dropout=attention_dropout,
-            ffn_d_hidden_multiplier=ffn_d_hidden_multiplier,
-            ffn_dropout=ffn_dropout,
-            residual_dropout=residual_dropout,
-        )
-        # Replace the default LinearEmbeddings with PLE or PeriodicEmbeddings
-        if n_cont_features > 0:
-            if bins is not None:
-                self.net.cont_embeddings = PiecewiseLinearEmbeddings(
-                    bins=bins,
-                    d_embedding=d_block,
-                    activation=True,
-                    version="B",
-                )
-            else:
-                self.net.cont_embeddings = PeriodicEmbeddings(
-                    n_features=n_cont_features,
-                    d_embedding=d_block,
-                    n_frequencies=n_frequencies,
-                    frequency_init_scale=frequency_init_scale,
-                    activation=True,
-                    lite=False,
-                )
-
-    def forward(self, X):
-        x_cont = X[:, : self.n_cont]
-        x_cont = self.noise(x_cont)  # Add noise to continuous features during training
-        x_cat = X[:, self.n_cont :].long() if X.shape[1] > self.n_cont else None
-        return self.net(x_cont, x_cat=x_cat).squeeze(-1)
-
-
-class SkorchFTTransformer:
-    """FTTransformer with categorical embeddings, wrapped via skorch."""
-
-    def __init__(
-        self,
-        cat_features=None,
-        n_blocks=3,
-        d_block=96,
-        attention_n_heads=8,
-        attention_dropout=0.2,
-        ffn_d_hidden_multiplier=4 / 3,
-        ffn_dropout=0.1,
-        residual_dropout=0.0,
-        lr=1e-4,
-        max_epochs=200,
-        patience=20,
-        batch_size=256,
-        num_workers=0,
-        random_state=42,
-        embedding_type="periodic",
-        n_bins=48,
-    ):
-        self.cat_features = cat_features or []
-        self.n_blocks = n_blocks
-        self.d_block = d_block
-        self.attention_n_heads = attention_n_heads
-        self.attention_dropout = attention_dropout
-        self.ffn_d_hidden_multiplier = ffn_d_hidden_multiplier
-        self.ffn_dropout = ffn_dropout
-        self.residual_dropout = residual_dropout
-        self.lr = lr
-        self.max_epochs = max_epochs
-        self.patience = patience
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.random_state = random_state
-        self.embedding_type = embedding_type
-        self.n_bins = n_bins
-
-    def _prepare(self, X, fit=False):
-        if isinstance(X, pd.DataFrame):
-            cont_cols = [c for c in X.columns if c not in self.cat_features]
-            cat_cols = [c for c in X.columns if c in self.cat_features]
-        else:
-            if fit:
-                self.cont_cols = []
-                self.cat_cols = []
-                self.cat_cardinalities = []
-                self.scaler = QuantileTransformer(
-                    output_distribution="normal", random_state=self.random_state
-                )
-                return self.scaler.fit_transform(X).astype(np.float32)
-            return self.scaler.transform(X).astype(np.float32)
-
-        if fit:
-            self.cont_cols = cont_cols
-            self.cat_cols = cat_cols
-            self.scaler = QuantileTransformer(
-                output_distribution="normal", random_state=self.random_state
-            )
-            self.cat_encoders = {}
-            for c in cat_cols:
-                vals = sorted(X[c].unique())
-                self.cat_encoders[c] = {v: i for i, v in enumerate(vals)}
-            self.cat_cardinalities = [len(self.cat_encoders[c]) for c in cat_cols]
-            X_cont = self.scaler.fit_transform(X[cont_cols].values).astype(np.float32)
-        else:
-            X_cont = self.scaler.transform(X[self.cont_cols].values).astype(np.float32)
-
-        if self.cat_cols:
-            X_cat = np.column_stack(
-                [X[c].map(self.cat_encoders[c]).values for c in self.cat_cols]
-            ).astype(np.float32)
-            return np.hstack([X_cont, X_cat])
-        return X_cont
-
-    def fit(self, X, y, **kwargs):
-        torch.manual_seed(self.random_state)
-        X_prep = self._prepare(X, fit=True)
-        y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
-        n_cont = len(self.cont_cols) if self.cont_cols else X_prep.shape[1]
-
-        bins = None
-        if self.embedding_type == "ple" and n_cont > 0:
-            X_cont = X_prep[:, :n_cont]
-            X_tensor = torch.from_numpy(X_cont)
-            y_tensor = torch.from_numpy(y_np)
-            bins = compute_bins(
-                X_tensor,
-                n_bins=self.n_bins,
-                tree_kwargs={"min_samples_leaf": 64},
-                y=y_tensor,
-                regression=False,
-            )
-
-        self.net = AMPNeuralNetBinaryClassifier(
-            FTTransformerModule,
-            module__n_cont_features=n_cont,
-            module__cat_cardinalities=self.cat_cardinalities,
-            module__d_out=1,
-            module__n_blocks=self.n_blocks,
-            module__d_block=self.d_block,
-            module__attention_n_heads=self.attention_n_heads,
-            module__attention_dropout=self.attention_dropout,
-            module__ffn_d_hidden_multiplier=self.ffn_d_hidden_multiplier,
-            module__ffn_dropout=self.ffn_dropout,
-            module__residual_dropout=self.residual_dropout,
-            module__bins=bins,
-            criterion=nn.BCEWithLogitsLoss,
-            optimizer=torch.optim.AdamW,
-            lr=self.lr,
-            max_epochs=self.max_epochs,
-            batch_size=self.batch_size,
-            device="cuda",
-            iterator_train__pin_memory=True,
-            iterator_valid__pin_memory=True,
-            iterator_train__num_workers=self.num_workers,
-            iterator_valid__num_workers=self.num_workers,
-            callbacks=[
-                EarlyStopping(patience=self.patience, monitor="valid_loss"),
-            ],
-            verbose=1,
-        )
-        self.net.initialize()
-        self.net.module_ = torch.compile(self.net.module_)
-        self.net.fit(X_prep, y_np)
-        return self
-
-    def predict_proba(self, X):
-        X_prep = self._prepare(X)
-        return self.net.predict_proba(X_prep)
-
-    def predict(self, X):
-        proba = self.predict_proba(X)
-        return (proba[:, 1] >= 0.5).astype(int)
-
-
-def _hill_climbing(
-    oof_matrix: np.ndarray,
-    labels: np.ndarray,
-    model_names: list[str],
-    n_iterations: int = 10,
-) -> np.ndarray:
-    """Find ensemble weights by greedy hill climbing on AUC."""
-    n_models = oof_matrix.shape[1]
-    best_weights = np.ones(n_models) / n_models
-    best_auc = roc_auc_score(labels, oof_matrix @ best_weights)
-    step = 0.01
-
-    for _ in range(n_iterations):
-        improved = False
-        for i in range(n_models):
-            for j in range(n_models):
-                if i == j:
-                    continue
-                weights = best_weights.copy()
-                weights[i] += step
-                weights[j] -= step
-                if weights[j] < 0:
-                    continue
-                weights /= weights.sum()
-                auc = roc_auc_score(labels, oof_matrix @ weights)
-                if auc > best_auc:
-                    best_auc = auc
-                    best_weights = weights
-                    improved = True
-        if not improved:
-            break
-
-    return best_weights
 
 
 def get_models(
@@ -1254,58 +698,6 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _make_learner_id(model_name: str, feature_set: str, folds_n: int) -> str:
-    return f"{model_name}/{feature_set}/{folds_n}f"
-
-
-def _get_seeds_for_learner(
-    learner_index: int, seed_pool: list[int], n_seeds: int | None
-) -> list[int]:
-    """Rotate through the seed pool so each learner gets a different subset."""
-    if n_seeds is None or n_seeds >= len(seed_pool):
-        return seed_pool  # all seeds, no rotation (backward compat)
-    offset = learner_index % len(seed_pool)
-    rotated = seed_pool[offset:] + seed_pool[:offset]
-    return rotated[:n_seeds]
-
-
-def _filter_model_config(config: dict, active_features: set[str]) -> dict:
-    """Deep-copy config and filter cat_features to match a feature set."""
-    import copy
-
-    config = copy.deepcopy(config)
-    if "cat_features" in config.get("kwargs", {}):
-        config["kwargs"]["cat_features"] = [
-            c for c in config["kwargs"]["cat_features"] if c in active_features
-        ]
-    if "categorical_feature" in config.get("kwargs_fit", {}):
-        config["kwargs_fit"]["categorical_feature"] = [
-            c
-            for c in config["kwargs_fit"]["categorical_feature"]
-            if c in active_features
-        ]
-    return config
-
-
-def _task_fingerprint(model_name, seed, folds_n, feature_set, features, model_config):
-    """Deterministic hash of all parameters that define a training task."""
-    import hashlib
-    import json
-
-    blob = json.dumps(
-        {
-            "model": model_name,
-            "seed": seed,
-            "folds_n": folds_n,
-            "feature_set": feature_set,
-            "features": sorted(features),
-            "kwargs": {k: repr(v) for k, v in sorted(model_config["kwargs"].items())},
-        },
-        sort_keys=True,
-    )
-    return hashlib.sha256(blob.encode()).hexdigest()[:12]
-
-
 # ---------------------------------------------------------------------------
 # Optuna search spaces
 # ---------------------------------------------------------------------------
@@ -1440,7 +832,7 @@ def _train_single_model(
     os.environ["PYTHONUNBUFFERED"] = "1"
     sys.stdout.reconfigure(line_buffering=True)
     t0 = time.time()
-    learner_id = _make_learner_id(model_name, feature_set, folds_n)
+    learner_id = make_learner_id(model_name, feature_set, folds_n)
     print(f"[{learner_id}] Starting seed={seed}", flush=True)
 
     # Convert cat features to pandas category dtype for models that need it (XGBoost)
@@ -1666,7 +1058,7 @@ def _run_optuna_study(
                     continue
 
             # Filter cat_features to match active feature set
-            trial_config = _filter_model_config(trial_config, active_set)
+            trial_config = filter_model_config(trial_config, active_set)
 
             # Submit Ray task (non-blocking)
             future = _train_single_model.options(**resource_opts).remote(
@@ -1784,56 +1176,6 @@ def _run_optuna_study(
             logger.warning(f"MLflow best-trial logging failed: {e}")
 
 
-def _l2_stacking(
-    oof_matrix,
-    holdout_matrix,
-    test_matrix,
-    train_labels,
-    train_features=None,
-    holdout_features=None,
-    test_features=None,
-    n_splits=5,
-    seed=42,
-):
-    """L2 stacking: train LightGBM meta-model with K-fold CV on L1 predictions."""
-    if train_features is not None:
-        X_train = np.hstack([oof_matrix, train_features])
-        X_holdout = np.hstack([holdout_matrix, holdout_features])
-        X_test = np.hstack([test_matrix, test_features])
-    else:
-        X_train = oof_matrix
-        X_holdout = holdout_matrix
-        X_test = test_matrix
-
-    l2_oof = np.zeros(len(X_train))
-    l2_holdout = np.zeros(len(X_holdout))
-    l2_test = np.zeros(len(X_test))
-
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    for fold_idx, (in_idx, out_idx) in enumerate(skf.split(X_train, train_labels)):
-        lgb = LGBMClassifier(
-            n_estimators=500,
-            num_leaves=15,
-            learning_rate=0.05,
-            min_child_samples=50,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=seed + fold_idx,
-            verbose=-1,
-        )
-        lgb.fit(
-            X_train[in_idx],
-            train_labels[in_idx],
-            eval_set=[(X_train[out_idx], train_labels[out_idx])],
-            callbacks=[lgbm.early_stopping(50, verbose=False)],
-        )
-        l2_oof[out_idx] = lgb.predict_proba(X_train[out_idx])[:, 1]
-        l2_holdout += lgb.predict_proba(X_holdout)[:, 1] / n_splits
-        l2_test += lgb.predict_proba(X_test)[:, 1] / n_splits
-
-    return l2_oof, l2_holdout, l2_test
-
-
 def _ensemble_predictions(
     model_names,
     all_oof_preds,
@@ -1847,317 +1189,79 @@ def _ensemble_predictions(
     test_df=None,
 ):
     """Run ensemble methods on collected predictions and return best test preds."""
-    oof_matrix = np.column_stack([all_oof_preds[n] for n in model_names])
-    holdout_matrix = np.column_stack([all_holdout_preds[n] for n in model_names])
-    test_matrix = np.column_stack([all_test_preds[n] for n in model_names])
+    eval_label = "Holdout" if holdout_labels is not None else "OOF"
 
-    def _eval_label():
-        return "Holdout" if holdout_labels is not None else "OOF"
-
-    # --- Simple average ---
-    avg_holdout = np.mean(holdout_matrix, axis=1)
-    avg_test = np.mean(test_matrix, axis=1)
-    avg_oof = np.mean(oof_matrix, axis=1)
-    logger.info(f"\n{'='*50}")
-    if holdout_labels is not None:
-        logger.info(
-            f"{tag}Simple Average — Holdout AUC: "
-            f"{roc_auc_score(holdout_labels, avg_holdout):.4f}"
-        )
-    else:
-        logger.info(
-            f"{tag}Simple Average — OOF AUC: "
-            f"{roc_auc_score(train_labels, avg_oof):.4f}"
-        )
-
-    # --- Ridge stacking ---
-    ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0])
-    ridge.fit(oof_matrix, train_labels)
-    ridge_holdout = ridge.predict(holdout_matrix)
-    ridge_test = ridge.predict(test_matrix)
-    ridge_oof = ridge.predict(oof_matrix)
-    if holdout_labels is not None:
-        logger.info(
-            f"{tag}Ridge (alpha={ridge.alpha_:.2f}) — Holdout AUC: "
-            f"{roc_auc_score(holdout_labels, ridge_holdout):.4f}"
-        )
-    else:
-        logger.info(
-            f"{tag}Ridge (alpha={ridge.alpha_:.2f}) — OOF AUC: "
-            f"{roc_auc_score(train_labels, ridge_oof):.4f}"
-        )
-    logger.info(f"  Weights: {dict(zip(model_names, ridge.coef_))}")
-
-    # --- Hill Climbing ---
-    best_weights = _hill_climbing(oof_matrix, train_labels, model_names)
-    hc_holdout = holdout_matrix @ best_weights
-    hc_test = test_matrix @ best_weights
-    hc_oof = oof_matrix @ best_weights
-    if holdout_labels is not None:
-        logger.info(
-            f"{tag}Hill Climbing — Holdout AUC: "
-            f"{roc_auc_score(holdout_labels, hc_holdout):.4f}"
-        )
-    else:
-        logger.info(
-            f"{tag}Hill Climbing — OOF AUC: "
-            f"{roc_auc_score(train_labels, hc_oof):.4f}"
-        )
-    logger.info(f"  Weights: {dict(zip(model_names, best_weights))}")
-
-    # --- Rank Blending ---
-    # Normalize predictions to ranks per model, then average.
-    # Robust to different calibrations across models.
-    def _rank_blend(matrix):
-        n = matrix.shape[0]
-        ranked = np.column_stack(
-            [rankdata(matrix[:, i]) / n for i in range(matrix.shape[1])]
-        )
-        return np.mean(ranked, axis=1)
-
-    rb_oof = _rank_blend(oof_matrix)
-    rb_holdout = _rank_blend(holdout_matrix)
-    rb_test = _rank_blend(test_matrix)
-    if holdout_labels is not None:
-        logger.info(
-            f"{tag}Rank Blending — Holdout AUC: "
-            f"{roc_auc_score(holdout_labels, rb_holdout):.4f}"
-        )
-    else:
-        logger.info(
-            f"{tag}Rank Blending — OOF AUC: "
-            f"{roc_auc_score(train_labels, rb_oof):.4f}"
-        )
-
-    # Pick best ensemble method
-    results = {
-        "average": (avg_holdout, avg_test, avg_oof),
-        "ridge": (ridge_holdout, ridge_test, ridge_oof),
-        "hill_climbing": (hc_holdout, hc_test, hc_oof),
-        "rank_blending": (rb_holdout, rb_test, rb_oof),
-    }
-
-    # --- L2 Stacking: LightGBM meta-model with K-fold CV ---
-    l2_feature_sets = [("preds_only", None)]
+    # Build L2 feature configs from competition-specific feature sets
+    l2_feature_configs = None
     if train_df is not None:
-        l2_feature_sets += [
+        l2_feature_configs = []
+        for fs_name, fs_features in [
             ("raw", RAW_FEATURES),
             ("ablation-pruned", FEATURES_ABLATION_PRUNED),
             ("forward-selected", FEATURES_FORWARD_SELECTED),
-        ]
+        ]:
+            train_feat = train_df[fs_features].values
+            holdout_feat = holdout_df[fs_features].values
+            test_feat = test_df[fs_features].values if test_df is not None else None
+            l2_feature_configs.append((fs_name, train_feat, holdout_feat, test_feat))
 
-    for fs_name, fs_features in l2_feature_sets:
-        train_feat = train_df[fs_features].values if fs_features else None
-        holdout_feat = holdout_df[fs_features].values if fs_features else None
-        test_feat = (
-            test_df[fs_features].values if fs_features and test_df is not None else None
-        )
+    result = compute_ensemble(
+        model_names,
+        all_oof_preds,
+        all_holdout_preds,
+        all_test_preds,
+        train_labels,
+        holdout_labels,
+        l2_feature_configs=l2_feature_configs,
+    )
 
-        l2_oof, l2_holdout, l2_test = _l2_stacking(
-            oof_matrix,
-            holdout_matrix,
-            test_matrix,
-            train_labels,
-            train_feat,
-            holdout_feat,
-            test_feat,
-        )
-        label = f"L2 LightGBM ({fs_name})"
-        if holdout_labels is not None:
-            logger.info(
-                f"{tag}{label} — Holdout AUC: "
-                f"{roc_auc_score(holdout_labels, l2_holdout):.4f}"
-            )
-        else:
-            logger.info(
-                f"{tag}{label} — OOF AUC: " f"{roc_auc_score(train_labels, l2_oof):.4f}"
-            )
-        results[f"l2_{fs_name}"] = (l2_holdout, l2_test, l2_oof)
-
+    # --- Display results ---
+    logger.info(f"\n{'='*50}")
+    for m in result.methods:
+        extra = ""
+        if "weights" in m.metadata:
+            extra = f"\n  Weights: {m.metadata['weights']}"
+        if "alpha" in m.metadata:
+            extra = f" (alpha={m.metadata['alpha']:.2f})" + extra
+        logger.info(f"{tag}{m.name}{extra} — {eval_label} AUC: {m.auc:.4f}")
     logger.info(f"{'='*50}")
-    if holdout_labels is not None:
-        all_aucs = {k: roc_auc_score(holdout_labels, v[0]) for k, v in results.items()}
-    else:
-        all_aucs = {k: roc_auc_score(train_labels, v[2]) for k, v in results.items()}
+
+    if holdout_labels is None:
         logger.info(f"{tag}(retrain-full: method selection based on OOF AUC)")
-    best_name = max(all_aucs, key=all_aucs.get)
-    best_holdout, best_test, best_oof = results[best_name]
-    auc = all_aucs[best_name]
-    logger.info(f"{tag}Best method: {best_name} ({_eval_label()} AUC: {auc:.4f})")
 
-    # --- Post-processing: Isotonic calibration ---
-    iso = IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip")
-    iso.fit(best_oof, train_labels)
-    cal_holdout = iso.predict(best_holdout)
-    cal_test = iso.predict(best_test)
-    if holdout_labels is not None:
-        cal_auc = roc_auc_score(holdout_labels, cal_holdout)
-        logger.info(f"{tag}Calibrated ({best_name}) — Holdout AUC: {cal_auc:.4f}")
-
-        if cal_auc > auc:
-            logger.info(
-                f"{tag}Calibration improved AUC by {cal_auc - auc:.5f}, using calibrated"
-            )
-            best_test = cal_test
-            auc = cal_auc
-        else:
-            logger.info(
-                f"{tag}Calibration did not improve AUC "
-                f"({cal_auc:.4f} vs {auc:.4f}), using raw"
-            )
+    logger.info(
+        f"{tag}Best method: {result.best_method} ({eval_label} AUC: {result.best_auc:.4f})"
+    )
+    if result.calibrated:
+        logger.info(f"{tag}Calibration improved AUC, using calibrated predictions")
+    elif holdout_labels is not None:
+        logger.info(f"{tag}Calibration did not improve AUC, using raw predictions")
     else:
         logger.info(f"{tag}Skipping calibration comparison (no holdout for evaluation)")
-
     logger.info(f"{'='*50}")
-    return best_test, best_name, auc, all_aucs
+
+    return result.best_test_preds, result.best_method, result.best_auc, result.all_aucs
 
 
-def _load_predictions_from_runs(runs_df, tracking_uri):
-    """Load and average predictions from a DataFrame of MLflow runs.
+def _log_run_to_mlflow(mlflow, learner_id, seed, logging_data, description):
+    """Log a single model run to MLflow (params, metrics, prediction artifacts)."""
+    import tempfile
 
-    Shared logic for --from-experiment and --from-ensemble.
-    Groups by learner ID (model/feature_set/folds_nf) when params are available,
-    falls back to bare model_name for backward compatibility.
-    """
-    import mlflow
-
-    mlflow.set_tracking_uri(tracking_uri)
-    client = mlflow.tracking.MlflowClient()
-
-    all_oof = {}
-    all_holdout = {}
-    all_test = {}
-    seed_counts = {}
-
-    for _, run in runs_df.iterrows():
-        model_name = run.get("params.model")
-        if model_name is None:
-            continue
-
-        # Build learner ID from params (backward compat: fall back to model_name)
-        feature_set = run.get("params.feature_set", "")
-        folds_n = run.get("params.folds_n", "")
-        if feature_set and folds_n:
-            learner_id = f"{model_name}/{feature_set}/{folds_n}f"
-        else:
-            learner_id = model_name
-
-        artifact_dir = client.download_artifacts(run.run_id, "predictions")
-        oof = np.load(os.path.join(artifact_dir, "oof.npy"))
-        holdout = np.load(os.path.join(artifact_dir, "holdout.npy"))
-        test = np.load(os.path.join(artifact_dir, "test.npy"))
-
-        if learner_id not in all_oof:
-            all_oof[learner_id] = np.zeros_like(oof)
-            all_holdout[learner_id] = np.zeros_like(holdout)
-            all_test[learner_id] = np.zeros_like(test)
-            seed_counts[learner_id] = 0
-
-        all_oof[learner_id] += oof
-        all_holdout[learner_id] += holdout
-        all_test[learner_id] += test
-        seed_counts[learner_id] += 1
-
-        seed = run.get("params.seed", "?")
-        logger.info(f"  Loaded {learner_id} seed={seed}")
-
-    # Average across seeds
-    for name in all_oof:
-        n = seed_counts[name]
-        all_oof[name] /= n
-        all_holdout[name] /= n
-        all_test[name] /= n
-        logger.info(f"{name}: averaged over {n} seed(s)")
-
-    learner_names = list(all_oof.keys())
-    logger.info(f"Total learners loaded: {len(learner_names)}")
-    return learner_names, all_oof, all_holdout, all_test
-
-
-def _get_completed_fingerprints(experiment_name, tracking_uri):
-    """Query MLflow for completed runs and return their config fingerprints.
-
-    Returns:
-        (set of fingerprint strings, runs DataFrame)
-    """
-    import mlflow
-
-    mlflow.set_tracking_uri(tracking_uri)
-    exp = mlflow.get_experiment_by_name(experiment_name)
-    if exp is None:
-        logger.warning(f"Experiment '{experiment_name}' not found")
-        return set(), pd.DataFrame()
-
-    runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
-    # Filter out ensemble runs
-    runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
-    # Only keep runs that have a config_fingerprint param
-    fp_col = "params.config_fingerprint"
-    if fp_col not in runs.columns:
-        logger.warning(
-            f"No runs with config_fingerprint in '{experiment_name}' "
-            f"(old experiment without fingerprints?)"
-        )
-        return set(), runs
-
-    has_fp = runs[fp_col].notna()
-    fingerprints = set(runs.loc[has_fp, fp_col].tolist())
-    logger.info(
-        f"Experiment '{experiment_name}': {len(runs)} runs, "
-        f"{len(fingerprints)} with fingerprints"
-    )
-    return fingerprints, runs[has_fp]
-
-
-def _load_predictions_from_mlflow(experiment_names, tracking_uri):
-    """Load per-model averaged predictions from MLflow experiments."""
-    import mlflow
-
-    mlflow.set_tracking_uri(tracking_uri)
-
-    all_runs = []
-    for exp_name in experiment_names:
-        exp = mlflow.get_experiment_by_name(exp_name)
-        if exp is None:
-            logger.warning(f"Experiment '{exp_name}' not found, skipping")
-            continue
-
-        runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
-        # Filter out ensemble runs (NOT LIKE not supported by MLflow API)
-        runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
-        logger.info(f"Experiment '{exp_name}': {len(runs)} model runs")
-        all_runs.append(runs)
-
-    if not all_runs:
-        return [], {}, {}, {}
-
-    import pandas as pd
-
-    runs_df = pd.concat(all_runs, ignore_index=True)
-    return _load_predictions_from_runs(runs_df, tracking_uri)
-
-
-def _load_predictions_from_ensemble(ensemble_name, tracking_uri):
-    """Load predictions from runs tagged with a named ensemble."""
-    import mlflow
-
-    mlflow.set_tracking_uri(tracking_uri)
-
-    tag_key = f"ensemble:{ensemble_name}"
-    runs = mlflow.search_runs(
-        search_all_experiments=True,
-        filter_string=f"tags.`{tag_key}` = 'true'",
-    )
-
-    if runs.empty:
-        logger.error(f"No runs found in ensemble '{ensemble_name}'")
-        return [], {}, {}, {}
-
-    # Filter out ensemble summary runs
-    runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
-    logger.info(f"Ensemble '{ensemble_name}': {len(runs)} model runs")
-
-    return _load_predictions_from_runs(runs, tracking_uri)
+    run_name = f"{learner_id}_seed{seed}"
+    with mlflow.start_run(run_name=run_name):
+        mlflow.log_params(logging_data["params"])
+        if description:
+            mlflow.log_param("description", description)
+        mlflow.log_metrics(logging_data["metrics"])
+        with tempfile.TemporaryDirectory() as tmp:
+            for arr_name, arr in [
+                ("oof", logging_data["oof"]),
+                ("holdout", logging_data["holdout"]),
+                ("test", logging_data["test"]),
+            ]:
+                path = os.path.join(tmp, f"{arr_name}.npy")
+                np.save(path, arr)
+            mlflow.log_artifacts(tmp, artifact_path="predictions")
 
 
 def _train_ensemble(
@@ -2194,9 +1298,9 @@ def _train_ensemble(
         active_set = set(fs_features)
         for folds_n in folds_list:
             for model_name, config in models.items():
-                filtered_config = _filter_model_config(config, active_set)
-                learner_id = _make_learner_id(model_name, fs_name, folds_n)
-                learner_seeds = _get_seeds_for_learner(
+                filtered_config = filter_model_config(config, active_set)
+                learner_id = make_learner_id(model_name, fs_name, folds_n)
+                learner_seeds = get_seeds_for_learner(
                     learner_index, seed_pool, seeds_per_learner
                 )
                 seeds_per_lid[learner_id] = len(learner_seeds)
@@ -2206,7 +1310,7 @@ def _train_ensemble(
                 is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
 
                 for seed in learner_seeds:
-                    fp = _task_fingerprint(
+                    fp = task_fingerprint(
                         model_name, seed, folds_n, fs_name, fs_features, filtered_config
                     )
                     if skip_fingerprints and fp in skip_fingerprints:
@@ -2282,8 +1386,6 @@ def _train_ensemble(
     mlflow_ready = False
     if tracking_uri:
         try:
-            import tempfile
-
             import mlflow
 
             mlflow.set_tracking_uri(tracking_uri)
@@ -2328,7 +1430,7 @@ def _train_ensemble(
             continue
         completed += 1
 
-        learner_id = _make_learner_id(model_name, fs_name, folds_n_val)
+        learner_id = make_learner_id(model_name, fs_name, folds_n_val)
 
         if learner_id not in all_oof_preds:
             all_oof_preds[learner_id] = np.zeros(len(train))
@@ -2355,21 +1457,7 @@ def _train_ensemble(
         # Log to MLflow immediately
         if mlflow_ready:
             try:
-                run_name = f"{learner_id}_seed{seed}"
-                with mlflow.start_run(run_name=run_name):
-                    mlflow.log_params(logging_data["params"])
-                    if description:
-                        mlflow.log_param("description", description)
-                    mlflow.log_metrics(logging_data["metrics"])
-                    with tempfile.TemporaryDirectory() as tmp:
-                        for arr_name, arr in [
-                            ("oof", logging_data["oof"]),
-                            ("holdout", logging_data["holdout"]),
-                            ("test", logging_data["test"]),
-                        ]:
-                            path = os.path.join(tmp, f"{arr_name}.npy")
-                            np.save(path, arr)
-                        mlflow.log_artifacts(tmp, artifact_path="predictions")
+                _log_run_to_mlflow(mlflow, learner_id, seed, logging_data, description)
             except Exception as e:
                 logger.warning(f"MLflow logging failed for {learner_id}: {e}")
 
@@ -2672,7 +1760,7 @@ def main():
             sys.exit(1)
         models = {k: v for k, v in models.items() if k in args.models}
 
-    # Cat feature filtering now happens inside _train_ensemble via _filter_model_config
+    # Cat feature filtering now happens inside _train_ensemble via filter_model_config
 
     # Configure seed pool and folds list based on mode
     if args.debug:
@@ -2714,11 +1802,11 @@ def main():
         if args.from_ensemble:
             logger.info(f"Loading predictions from ensemble: {args.from_ensemble}")
             model_names, all_oof, all_holdout, all_test = (
-                _load_predictions_from_ensemble(args.from_ensemble, tracking_uri)
+                load_predictions_from_ensemble(args.from_ensemble, tracking_uri)
             )
         else:
             logger.info(f"Loading predictions from experiments: {args.from_experiment}")
-            model_names, all_oof, all_holdout, all_test = _load_predictions_from_mlflow(
+            model_names, all_oof, all_holdout, all_test = load_predictions_from_mlflow(
                 args.from_experiment, tracking_uri
             )
 
@@ -2830,14 +1918,14 @@ def main():
             if not tracking_uri:
                 logger.error("MLFLOW_TRACKING_URI must be set for --resume")
                 sys.exit(1)
-            skip_fingerprints, runs_df = _get_completed_fingerprints(
+            skip_fingerprints, runs_df = get_completed_fingerprints(
                 args.resume, tracking_uri
             )
             logger.info(
                 f"Resuming '{args.resume}': {len(skip_fingerprints)} completed tasks"
             )
             if not runs_df.empty:
-                _, pre_oof, pre_holdout, pre_test = _load_predictions_from_runs(
+                _, pre_oof, pre_holdout, pre_test = load_predictions_from_runs(
                     runs_df, tracking_uri
                 )
                 preloaded = (pre_oof, pre_holdout, pre_test)
