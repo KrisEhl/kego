@@ -11,9 +11,11 @@ Usage:
 """
 
 import argparse
+import gc
 import os
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import lightgbm as lgb
@@ -391,6 +393,9 @@ def _engineer_fold_features(
     X_val = X_val.copy()
     y_train = pd.Series(y_train.values, index=X_train.index)
 
+    # Suppress numerical warnings from near-singular covariance / small samples
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
+
     ENCODE_CATS = [
         "Thallium",
         "Chest pain type",
@@ -418,6 +423,7 @@ def _engineer_fold_features(
         for col in ENCODE_CATS:
             X_train[f"{col}_glmm"] = glmm_tr[col].values
             X_val[f"{col}_glmm"] = glmm_val[col].values
+        del enc, glmm_tr, glmm_val
     except ImportError:
         pass
 
@@ -432,6 +438,7 @@ def _engineer_fold_features(
         for col in ENCODE_CATS:
             X_train[f"{col}_js"] = js_tr[col].values
             X_val[f"{col}_js"] = js_val[col].values
+        del enc, js_tr, js_val
     except ImportError:
         pass
 
@@ -445,6 +452,7 @@ def _engineer_fold_features(
         for col in ENCODE_CATS:
             X_train[f"{col}_loo"] = loo_tr[col].values
             X_val[f"{col}_loo"] = loo_val[col].values
+        del enc, loo_tr, loo_val
     except ImportError:
         pass
 
@@ -514,6 +522,7 @@ def _engineer_fold_features(
         X_train["umap_1"] = umap_tr[:, 1]
         X_val["umap_0"] = umap_val[:, 0]
         X_val["umap_1"] = umap_val[:, 1]
+        del reducer, umap_tr, umap_val
     except ImportError:
         pass
 
@@ -533,10 +542,11 @@ def _engineer_fold_features(
     X_val["mahal_ratio"] = X_val["mahal_neg"] / (X_val["mahal_pos"] + 1e-8)
 
     # === 11. Isolation Forest anomaly score (1 feature) ===
-    iso = IsolationForest(n_estimators=100, random_state=42, n_jobs=-1)
+    iso = IsolationForest(n_estimators=100, random_state=42, n_jobs=1)
     iso.fit(X_tr_scaled)
     X_train["isolation_score"] = iso.decision_function(X_tr_scaled)
     X_val["isolation_score"] = iso.decision_function(X_val_scaled)
+    del iso
 
     # === 12. KNN features (4 features) ===
     tree = BallTree(X_tr_scaled)
@@ -554,9 +564,11 @@ def _engineer_fold_features(
     # Neighborhood target rate (20-NN)
     _, idx_tr = tree.query(X_tr_scaled, k=21)  # +1 for self
     _, idx_val = tree.query(X_val_scaled, k=20)
+    del tree
     y_arr = y_train.values
     X_train["knn_target_rate"] = y_arr[idx_tr[:, 1:]].mean(axis=1)
     X_val["knn_target_rate"] = y_arr[idx_val].mean(axis=1)
+    del idx_tr, idx_val
 
     # === 13. Meta-model OOF predictions (5 features) ===
     # LogReg
@@ -572,10 +584,11 @@ def _engineer_fold_features(
     X_val["nb_oof"] = nb_model.predict_proba(X_val_scaled)[:, 1]
 
     # KNN
-    knn_model = KNeighborsClassifier(n_neighbors=50, n_jobs=-1)
+    knn_model = KNeighborsClassifier(n_neighbors=50, n_jobs=1)
     knn_model.fit(X_tr_scaled, y_train)
     X_train["knn_oof"] = knn_model.predict_proba(X_tr_scaled)[:, 1]
     X_val["knn_oof"] = knn_model.predict_proba(X_val_scaled)[:, 1]
+    del lr_model, nb_model, knn_model
 
     # Model disagreement
     X_train["model_disagreement"] = np.abs(X_train["lr_oof"] - X_train["nb_oof"])
@@ -609,6 +622,14 @@ def _engineer_fold_features(
         X_train[f"{col}_yj"] = pt.fit_transform(X_train[[col]]).ravel()
         X_val[f"{col}_yj"] = pt.transform(X_val[[col]]).ravel()
 
+    del X_tr_scaled, X_val_scaled
+
+    # Replace any NaN/inf from numerical instability (near-singular covariance etc.)
+    X_train = X_train.replace([np.inf, -np.inf], np.nan).fillna(0)
+    X_val = X_val.replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    warnings.resetwarnings()
+    gc.collect()
     return X_train, X_val
 
 
@@ -636,6 +657,7 @@ def _eval_features_multiseed(
         )
         preds = model.predict_proba(X_ho[features])[:, 1]
         aucs.append(roc_auc_score(y_holdout, preds))
+        del model
     return float(np.mean(aucs))
 
 
@@ -657,14 +679,14 @@ def main() -> None:
     parser.add_argument(
         "--train-sample",
         type=int,
-        default=50000,
-        help="Subsample training set to N rows (default: 50000, 0=no sampling)",
+        default=30000,
+        help="Subsample training set to N rows (default: 30000, 0=no sampling)",
     )
     parser.add_argument(
         "--holdout-sample",
         type=int,
-        default=20000,
-        help="Subsample holdout set to N rows (default: 20000, 0=no sampling)",
+        default=10000,
+        help="Subsample holdout set to N rows (default: 10000, 0=no sampling)",
     )
     args = parser.parse_args()
     seeds = [int(s) for s in args.seeds.split(",")]
@@ -722,6 +744,8 @@ def main() -> None:
     static_features = [c for c in train.columns if c not in ["id", TARGET]]
     X_tr = train[static_features].copy()
     X_ho = holdout[static_features].copy()
+    del train, holdout  # free originals — all data is now in X_tr/X_ho
+    gc.collect()
     X_tr, X_ho = _engineer_fold_features(X_tr, pd.Series(y_train), X_ho)
 
     all_features = [c for c in X_tr.columns if c not in ["id", TARGET]]
@@ -789,7 +813,7 @@ def main() -> None:
         n_repeats=10,
         scoring="roc_auc",
         random_state=42,
-        n_jobs=-1,
+        n_jobs=1,
     )
 
     imp_df = pd.DataFrame(
@@ -812,6 +836,8 @@ def main() -> None:
         )
 
     features_by_importance = imp_df["feature"].tolist()
+    del model_all, result, imp_df
+    gc.collect()
 
     # ===================================================================
     # Step 3: Drop-one-at-a-time ablation (multi-seed)
