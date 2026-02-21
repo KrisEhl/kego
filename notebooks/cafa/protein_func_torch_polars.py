@@ -43,9 +43,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 AMINO = "ACDEFGHIKLMNPQRSTVWY"  # 20 canonical AAs
-AA2IDX = {
-    aa: i + 1 for i, aa in enumerate(AMINO)
-}  # 0 reserved for padding/unknown
+AA2IDX = {aa: i + 1 for i, aa in enumerate(AMINO)}  # 0 reserved for padding/unknown
 PAD_IDX = 0
 
 REQUIRED_COLS = [
@@ -133,9 +131,7 @@ class ProtDataset(Dataset):
         return len(self.seqs)
 
     def __getitem__(self, idx):
-        x = torch.tensor(
-            seq_to_indices(self.seqs[idx], self.max_len), dtype=torch.long
-        )
+        x = torch.tensor(seq_to_indices(self.seqs[idx], self.max_len), dtype=torch.long)
         y = torch.zeros(self.C, dtype=torch.float32)
         for t in self.term_lists[idx] or []:
             j = self.lbl_map.get(t)
@@ -237,18 +233,14 @@ class FocalBCEWithLogits(nn.Module):
         p = torch.sigmoid(logits)
         pt = p * targets + (1 - p) * (1 - targets)  # if y=1 -> p, else 1-p
         focal = (1 - pt).pow(self.gamma)
-        bce = F.binary_cross_entropy_with_logits(
-            logits, targets, reduction="none"
-        )
+        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
         loss = focal * bce
         if self.class_weight is not None:
             loss = loss * self.class_weight  # broadcast [C]
         return loss.mean()
 
 
-def macro_f1(
-    y_true: np.ndarray, y_prob: np.ndarray, thresh=0.5, eps=1e-9
-) -> float:
+def macro_f1(y_true: np.ndarray, y_prob: np.ndarray, thresh=0.5, eps=1e-9) -> float:
     y_pred = (y_prob >= thresh).astype(np.float32)
     tp = (y_true * y_pred).sum(axis=0)
     fp = ((1 - y_true) * y_pred).sum(axis=0)
@@ -459,15 +451,13 @@ def train(args):
         except Exception as e:
             print(f"[WARN] Could not compute weight coverage: {e}")
 
-    criterion = FocalBCEWithLogits(
-        gamma=args.focal_gamma, class_weights=class_w
-    ).to(device)
+    criterion = FocalBCEWithLogits(gamma=args.focal_gamma, class_weights=class_w).to(
+        device
+    )
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
-    scaler = torch.cuda.amp.GradScaler(
-        enabled=args.amp and device.type == "cuda"
-    )
+    scaler = torch.cuda.amp.GradScaler(enabled=args.amp and device.type == "cuda")
 
     best_f1 = -1
     os.makedirs(args.outdir, exist_ok=True)
@@ -480,17 +470,13 @@ def train(args):
             xb = xb.to(device, non_blocking=True)
             yb = yb.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
-            with torch.cuda.amp.autocast(
-                enabled=args.amp and device.type == "cuda"
-            ):
+            with torch.cuda.amp.autocast(enabled=args.amp and device.type == "cuda"):
                 logits = model(xb)
                 loss = criterion(logits, yb)
             scaler.scale(loss).backward()
             if args.grad_clip and args.grad_clip > 0:
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    model.parameters(), args.grad_clip
-                )
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             scaler.step(optimizer)
             scaler.update()
             total += float(loss)
@@ -561,9 +547,7 @@ def train(args):
     if args.hierarchy:
         edges = load_hierarchy(args.hierarchy)
         if edges is not None:
-            with open(
-                os.path.join(args.outdir, "hierarchy_edges.json"), "w"
-            ) as f:
+            with open(os.path.join(args.outdir, "hierarchy_edges.json"), "w") as f:
                 json.dump(edges, f)
 
     print(f"[DONE] Saved model to {args.outdir}")
@@ -604,9 +588,7 @@ def predict(args):
         raise ValueError("Input must contain 'sequence'")
     if "EntryID" not in df.columns:
         # create stable string IDs if missing
-        df = df.with_columns(
-            pl.int_range(0, df.height).cast(pl.Utf8).alias("EntryID")
-        )
+        df = df.with_columns(pl.int_range(0, df.height).cast(pl.Utf8).alias("EntryID"))
 
     seqs = df["sequence"].to_list()
     eids = df["EntryID"].to_list()
@@ -626,12 +608,8 @@ def predict(args):
                 child_idx.append(ci)
                 parent_idx.append(pi)
         if child_idx:
-            child_idx_t = torch.tensor(
-                child_idx, dtype=torch.long, device=device
-            )
-            parent_idx_t = torch.tensor(
-                parent_idx, dtype=torch.long, device=device
-            )
+            child_idx_t = torch.tensor(child_idx, dtype=torch.long, device=device)
+            parent_idx_t = torch.tensor(parent_idx, dtype=torch.long, device=device)
 
     # --- streaming writer (CAFA TSV; no header) ---
     out_path = args.output
@@ -644,9 +622,7 @@ def predict(args):
         if term_idx_t.numel() == 0:
             return
         # gather GO term strings on CPU once per protein
-        terms_np = np.asarray(labels, dtype=object)[
-            term_idx_t.detach().cpu().numpy()
-        ]
+        terms_np = np.asarray(labels, dtype=object)[term_idx_t.detach().cpu().numpy()]
         probs_np = prob_t.detach().float().cpu().numpy()
         for go, p in zip(terms_np, probs_np):
             f.write(f"{pid}\t{go}\t{p:.3f}\n")
@@ -678,9 +654,7 @@ def predict(args):
             if child_idx_t is not None and child_idx_t.numel() > 0:
                 for _ in range(3):
                     before = P_b.index_select(1, parent_idx_t)
-                    after = torch.maximum(
-                        before, P_b.index_select(1, child_idx_t)
-                    )
+                    after = torch.maximum(before, P_b.index_select(1, child_idx_t))
                     if torch.equal(before, after):
                         break
                     P_b[:, parent_idx_t] = after
@@ -728,9 +702,7 @@ def main():
         help="Enable mixed precision (recommended on CUDA)",
     )
     p_tr.add_argument("--grad_clip", type=float, default=1.0)
-    p_tr.add_argument(
-        "--workers", type=int, default=4, help="Dataloader workers"
-    )
+    p_tr.add_argument("--workers", type=int, default=4, help="Dataloader workers")
     p_tr.add_argument(
         "--weights",
         "--weight",

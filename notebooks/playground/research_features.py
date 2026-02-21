@@ -542,7 +542,7 @@ def _engineer_fold_features(
     X_val["mahal_ratio"] = X_val["mahal_neg"] / (X_val["mahal_pos"] + 1e-8)
 
     # === 11. Isolation Forest anomaly score (1 feature) ===
-    iso = IsolationForest(n_estimators=100, random_state=42, n_jobs=1)
+    iso = IsolationForest(n_estimators=100, random_state=42, n_jobs=-1)
     iso.fit(X_tr_scaled)
     X_train["isolation_score"] = iso.decision_function(X_tr_scaled)
     X_val["isolation_score"] = iso.decision_function(X_val_scaled)
@@ -584,7 +584,7 @@ def _engineer_fold_features(
     X_val["nb_oof"] = nb_model.predict_proba(X_val_scaled)[:, 1]
 
     # KNN
-    knn_model = KNeighborsClassifier(n_neighbors=50, n_jobs=1)
+    knn_model = KNeighborsClassifier(n_neighbors=50, n_jobs=-1)
     knn_model.fit(X_tr_scaled, y_train)
     X_train["knn_oof"] = knn_model.predict_proba(X_tr_scaled)[:, 1]
     X_val["knn_oof"] = knn_model.predict_proba(X_val_scaled)[:, 1]
@@ -813,7 +813,7 @@ def main() -> None:
         n_repeats=10,
         scoring="roc_auc",
         random_state=42,
-        n_jobs=1,
+        n_jobs=4,
     )
 
     imp_df = pd.DataFrame(
@@ -928,14 +928,17 @@ def main() -> None:
         (f"Raw only ({len(raw_in_xtr)})", auc_raw),
         (f"Ablation-pruned ref ({len(abl_pruned_in_xtr)})", auc_abl_ref),
         (f"All features ({len(all_features)})", auc_all_native),
-        (
-            f"New ablation-pruned ({len(ablation_pruned)})",
-            _eval_features_multiseed(
-                X_tr, y_train, X_ho, y_holdout, ablation_pruned, seeds
-            ),
-        ),
-        (f"Forward-selected ({len(forward_selected)})", best_fwd_auc),
     ]
+
+    if ablation_pruned:
+        auc_ablation = _eval_features_multiseed(
+            X_tr, y_train, X_ho, y_holdout, ablation_pruned, seeds
+        )
+        results.append((f"New ablation-pruned ({len(ablation_pruned)})", auc_ablation))
+    else:
+        print("\n  (Skipping new ablation-pruned — no features survived ablation)")
+
+    results.append((f"Forward-selected ({len(forward_selected)})", best_fwd_auc))
 
     print(f"\n{'Feature set':<45} {'AUC':>10} {'Delta vs raw':>14}")
     print("-" * 73)
