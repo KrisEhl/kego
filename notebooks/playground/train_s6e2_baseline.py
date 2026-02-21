@@ -35,6 +35,7 @@ from kego.models.wrappers import (  # noqa: E402
     GPUXGBClassifier,
     ScaledLogisticRegression,
     ScaledRealMLP,
+    SubsampledSVC,
     SubsampledTabPFN,
 )
 from kego.preprocessing import make_te_preprocess  # noqa: E402
@@ -242,6 +243,21 @@ def get_models(
             },
             "seed_key": "random_state",
             "use_eval_set": False,
+        },
+        "svm": {
+            "model": SubsampledSVC,
+            "kwargs": {
+                "kernel": "rbf",
+                "C": 1.0,
+                "gamma": "scale",
+                "max_train_rows": 50000,
+                "random_state": 42,
+            },
+            "seed_key": "random_state",
+            "use_eval_set": False,
+            "fold_preprocess": make_te_preprocess(
+                TE_FEATURES, drop_original=True, loo_features=LOO_FEATURES
+            ),
         },
         # === XGBoost variants (GPU) ===
         "xgboost": {

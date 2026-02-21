@@ -31,6 +31,41 @@ class ScaledLogisticRegression:
         return self.pipe.predict(X)
 
 
+class SubsampledSVC:
+    """SVC with StandardScaler and stratified subsampling for large datasets."""
+
+    def __init__(self, max_train_rows=50000, random_state=42, **kwargs):
+        self.max_train_rows = max_train_rows
+        self.random_state = random_state
+        self.kwargs = kwargs
+        self.kwargs.setdefault("probability", True)
+        self.kwargs.setdefault("kernel", "rbf")
+
+    def fit(self, X, y, **kwargs):
+        from sklearn.model_selection import train_test_split
+        from sklearn.svm import SVC
+
+        if len(X) > self.max_train_rows:
+            X, _, y, _ = train_test_split(
+                X,
+                y,
+                train_size=self.max_train_rows,
+                stratify=y,
+                random_state=self.random_state,
+            )
+        self.pipe = make_pipeline(
+            StandardScaler(), SVC(random_state=self.random_state, **self.kwargs)
+        )
+        self.pipe.fit(X, y)
+        return self
+
+    def predict_proba(self, X):
+        return self.pipe.predict_proba(X)
+
+    def predict(self, X):
+        return self.pipe.predict(X)
+
+
 class SubsampledTabPFN:
     """TabPFN with stratified subsampling for large datasets."""
 
