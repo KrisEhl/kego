@@ -106,6 +106,7 @@ CAT_FEATURES = [
     "Thallium",
 ]
 TE_FEATURES = ["Thallium", "Chest pain type", "Slope of ST", "EKG results"]
+LOO_FEATURES = ["Thallium", "Slope of ST"]
 
 # Feature sets identified by select_features.py (multi-seed ablation + forward selection).
 # See notebooks/playground/README.md "Feature Selection (Fine-Grained)" for details.
@@ -154,6 +155,17 @@ FEATURES_FORWARD_SELECTED = [
     "chestpain_x_angina",
 ]
 
+FEATURES_RESEARCH = FEATURES_ABLATION_PRUNED + [
+    "framingham_partial",
+    "Thallium_loo",
+    "heart_score_partial",
+    "duke_treadmill_approx",
+    "heart_load",
+    "Slope of ST_loo",
+    "cholesterol_squared",
+    "Cholesterol_yj",
+]
+
 RAW_FEATURES = [
     "Age",
     "Sex",
@@ -175,6 +187,7 @@ FEATURE_SETS = {
     "raw": RAW_FEATURES,
     "ablation-pruned": FEATURES_ABLATION_PRUNED,
     "forward-selected": FEATURES_FORWARD_SELECTED,
+    "research": FEATURES_RESEARCH,
 }
 
 
@@ -192,7 +205,9 @@ def get_models(
             "kwargs": {"max_iter": 1000, "C": 1.0, "random_state": 42},
             "seed_key": "random_state",
             "use_eval_set": False,
-            "fold_preprocess": make_te_preprocess(TE_FEATURES, drop_original=True),
+            "fold_preprocess": make_te_preprocess(
+                TE_FEATURES, drop_original=True, loo_features=LOO_FEATURES
+            ),
         },
         "tabpfn": {
             "model": SubsampledTabPFN,
@@ -515,7 +530,9 @@ def get_models(
             },
             "seed_key": "random_state",
             "use_eval_set": False,
-            "fold_preprocess": make_te_preprocess(TE_FEATURES),
+            "fold_preprocess": make_te_preprocess(
+                TE_FEATURES, loo_features=LOO_FEATURES
+            ),
         },
         # "realmlp_large" removed — too slow for regular runs, marginal gain
         "resnet": {
@@ -533,7 +550,9 @@ def get_models(
             },
             "seed_key": "random_state",
             "use_eval_set": False,
-            "fold_preprocess": make_te_preprocess(TE_FEATURES, drop_original=True),
+            "fold_preprocess": make_te_preprocess(
+                TE_FEATURES, drop_original=True, loo_features=LOO_FEATURES
+            ),
         },
         "ft_transformer": {
             "model": SkorchFTTransformer,
@@ -551,7 +570,9 @@ def get_models(
             },
             "seed_key": "random_state",
             "use_eval_set": False,
-            "fold_preprocess": make_te_preprocess(TE_FEATURES),
+            "fold_preprocess": make_te_preprocess(
+                TE_FEATURES, loo_features=LOO_FEATURES
+            ),
         },
         "resnet_ple": {
             "model": SkorchResNet,
@@ -570,7 +591,9 @@ def get_models(
             },
             "seed_key": "random_state",
             "use_eval_set": False,
-            "fold_preprocess": make_te_preprocess(TE_FEATURES, drop_original=True),
+            "fold_preprocess": make_te_preprocess(
+                TE_FEATURES, drop_original=True, loo_features=LOO_FEATURES
+            ),
         },
         "ft_transformer_ple": {
             "model": SkorchFTTransformer,
@@ -590,7 +613,9 @@ def get_models(
             },
             "seed_key": "random_state",
             "use_eval_set": False,
-            "fold_preprocess": make_te_preprocess(TE_FEATURES),
+            "fold_preprocess": make_te_preprocess(
+                TE_FEATURES, loo_features=LOO_FEATURES
+            ),
         },
     }
 
@@ -694,6 +719,35 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["signal_conflict"] = (
         (df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)
     ).astype(int) + ((df["Thallium"] == 3) & (df["Chest pain type"] == 4)).astype(int)
+
+    # --- Clinical scores (from research_features.py) ---
+    log_age = np.log(df["Age"].clip(lower=20))
+    log_chol = np.log(df["Cholesterol"].clip(lower=100))
+    log_bp = np.log(df["BP"].clip(lower=80))
+    df["framingham_partial"] = np.where(
+        df["Sex"] == 1,
+        3.06 * log_age + 1.12 * log_chol + 1.93 * log_bp + 0.57 * df["FBS over 120"],
+        2.33 * log_age + 1.21 * log_chol + 2.76 * log_bp + 0.69 * df["FBS over 120"],
+    )
+
+    age_pts = np.where(df["Age"] < 45, 0, np.where(df["Age"] < 65, 1, 2))
+    ekg_pts = np.where(
+        df["EKG results"] == 0, 0, np.where(df["EKG results"] == 1, 1, 2)
+    )
+    risk_pts = np.minimum(df["FBS over 120"] + (df["BP"] > 140).astype(int), 2)
+    df["heart_score_partial"] = age_pts + ekg_pts + risk_pts
+
+    est_exercise_min = ((df["Max HR"] - 80) / 8).clip(0, 21)
+    df["duke_treadmill_approx"] = (
+        est_exercise_min - 5 * df["ST depression"] - 4 * df["Exercise angina"] * 2
+    )
+
+    df["cholesterol_squared"] = df["Cholesterol"] ** 2
+
+    from sklearn.preprocessing import PowerTransformer
+
+    pt = PowerTransformer(method="yeo-johnson")
+    df["Cholesterol_yj"] = pt.fit_transform(df[["Cholesterol"]]).ravel()
 
     return df
 
