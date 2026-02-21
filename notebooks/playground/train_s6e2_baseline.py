@@ -157,11 +157,9 @@ FEATURES_FORWARD_SELECTED = [
 
 FEATURES_RESEARCH = FEATURES_ABLATION_PRUNED + [
     "framingham_partial",
-    "Thallium_loo",
     "heart_score_partial",
     "duke_treadmill_approx",
     "heart_load",
-    "Slope of ST_loo",
     "cholesterol_squared",
     "Cholesterol_yj",
 ]
