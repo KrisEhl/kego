@@ -26,7 +26,7 @@ The original data is combined with the synthetic training data during training t
 - `analyze_disagreement.py` — Model disagreement matrix and best-run analysis using OOF predictions from MLflow
 - `benchmark_models.py` — Standalone neural model benchmarking (no Ray): timing, profiling, MLflow logging
 - `select_features.py` — Fine-grained feature selection: per-feature ablation + forward selection with multi-seed averaging
-- `research_features.py` — Domain-driven feature research: generates ~140 candidates from clinical literature and evaluates via clean-slate forward selection
+- `research_features.py` — Domain-driven feature research: generates ~140 candidates from clinical literature, evaluates via add-one screening against the ablation-pruned baseline
 - `test_features_local.py` — Local CPU feature engineering comparison (LightGBM + LogReg)
 - `submit_s6e2.sh` — Submit predictions via Kaggle CLI
 - `explore_s6e2.py` — EDA and data exploration
@@ -97,7 +97,7 @@ uv run python notebooks/playground/train_s6e2_baseline.py --fast --tag local-tes
 
 ## CLI Reference — `research_features.py`
 
-Domain-driven feature research script. Generates ~140 feature candidates from clinical literature (Framingham, HEART, Duke Treadmill scores, exercise physiology, advanced encodings, meta-models) and evaluates via 5-step pipeline: baselines, permutation importance, ablation, forward selection, comparison.
+Domain-driven feature research script. Generates ~140 feature candidates from clinical literature (Framingham, HEART, Duke Treadmill scores, exercise physiology, advanced encodings, meta-models) and evaluates via add-one screening against the ablation-pruned baseline. Each candidate is tested individually (baseline + 1 feature), then helpful candidates go through greedy forward selection and drop-one validation.
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -522,6 +522,86 @@ The first 6 features get 99.5% of the way there. Features 17+ actively degrade A
 - **For trees (LightGBM/XGBoost/CatBoost):** Use ablation-pruned (21 features) — it scored highest at 0.95122. Alternatively, raw-only (13) at 0.95097 is simpler and nearly as good.
 - **For NNs (ResNet/FTTransformer/RealMLP):** Use forward-selected (16 features) or raw-only. NNs benefit more from engineered composites (abnormal_count, top4_sum) since they struggle with discrete interactions. LogReg AUC (proxy for NNs) favors keeping engineered features.
 - **For ensemble diversity:** Train tree models on ablation-pruned and NNs on forward-selected to maximize prediction decorrelation.
+
+## Feature Research (140 Candidates)
+
+Script: `research_features.py` — generates ~140 feature candidates (13 raw + 22 existing + ~44 research + ~62 fold-aware) and evaluates each one individually against the ablation-pruned baseline (21 features, AUC 0.95663). Uses full LightGBM params (1500 trees, lr=0.08), 3-seed averaging, 32K train / 8K holdout.
+
+### Method
+
+1. **Add-one screening** — for each of 120 candidate features not in the baseline, test baseline + candidate and measure AUC delta
+2. **Greedy forward selection** — starting from baseline, add candidates sorted by Step 1 delta, keep only if AUC improves
+3. **Drop-one validation** — verify each added feature still helps in the combined set, drop any that became redundant
+
+### Add-One Screening Results (top 10 of 120 candidates)
+
+| Feature | AUC | Delta | Source |
+|---|---|---|---|
+| framingham_partial | 0.95684 | +0.00021 | RESEARCH |
+| Thallium_loo | 0.95680 | +0.00017 | FOLD |
+| heart_score_partial | 0.95680 | +0.00016 | RESEARCH |
+| cholesterol_age_risk | 0.95677 | +0.00014 | RESEARCH |
+| age_sex_interaction | 0.95674 | +0.00011 | RESEARCH |
+| duke_treadmill_approx | 0.95673 | +0.00009 | RESEARCH |
+| Age_spline_4 | 0.95672 | +0.00009 | FOLD |
+| thallium_x_stdep | 0.95672 | +0.00009 | EXISTING |
+| model_disagreement | 0.95672 | +0.00009 | FOLD |
+| Max HR_spline_2 | 0.95671 | +0.00008 | FOLD |
+
+50/120 candidates showed positive delta. All deltas are tiny (max +0.00021).
+
+### Most Harmful Features
+
+| Feature | AUC | Delta | Source |
+|---|---|---|---|
+| umap_0 | 0.90150 | -0.05513 | FOLD |
+| umap_1 | 0.93618 | -0.02045 | FOLD |
+| knn_dist_ratio | 0.94305 | -0.01358 | FOLD |
+| knn_dist_pos | 0.95396 | -0.00268 | FOLD |
+| knn_dist_neg | 0.95474 | -0.00190 | FOLD |
+| knn_oof | 0.95566 | -0.00097 | FOLD |
+
+UMAP and KNN features are catastrophically harmful. Supervised UMAP overfits to training fold structure and creates out-of-distribution values on holdout. KNN distance features have similar leakage issues.
+
+### Greedy Forward Selection (from 50 helpful candidates)
+
+8 features survived greedy forward selection (each improved cumulative AUC when added):
+
+| Order | Feature | AUC | Delta | Source |
+|---|---|---|---|---|
+| 1 | framingham_partial | 0.95684 | +0.00021 | RESEARCH |
+| 2 | Thallium_loo | 0.95692 | +0.00008 | FOLD |
+| 3 | heart_score_partial | 0.95697 | +0.00005 | RESEARCH |
+| 4 | duke_treadmill_approx | 0.95697 | +0.00000 | RESEARCH |
+| 5 | heart_load | 0.95701 | +0.00004 | EXISTING |
+| 6 | Slope of ST_loo | 0.95703 | +0.00002 | FOLD |
+| 7 | cholesterol_squared | 0.95715 | +0.00012 | RESEARCH |
+| 8 | Cholesterol_yj | 0.95716 | +0.00001 | FOLD |
+
+All 8 validated in drop-one check (none dropped).
+
+### Final Comparison
+
+| Feature set | Features | AUC | Delta vs baseline |
+|---|---|---|---|
+| Raw only | 13 | 0.95658 | -0.00005 |
+| Ablation-pruned ref | 21 | 0.95663 | baseline |
+| Forward-selected (new) | 29 | 0.95716 | +0.00053 |
+
+### New Features (not yet in training script)
+
+| Feature | Formula | Available in train script? |
+|---|---|---|
+| framingham_partial | Sex-differentiated log(age/chol/bp) clinical score | No |
+| Thallium_loo | Leave-one-out encoding of Thallium | No (needs `category_encoders`) |
+| heart_score_partial | Age + EKG + risk factor points | No |
+| duke_treadmill_approx | Exercise time - 5*ST_dep - 4*angina | No |
+| heart_load | BP * Cholesterol / Max HR | Yes (engineered but not in feature set) |
+| Slope of ST_loo | Leave-one-out encoding of Slope of ST | No (needs `category_encoders`) |
+| cholesterol_squared | Cholesterol^2 | No |
+| Cholesterol_yj | Yeo-Johnson transform of Cholesterol | No (needs `PowerTransformer`) |
+
+**Key insight:** The +0.00053 improvement is real but small. The ablation-pruned baseline is already well-optimized. Clinical scores (framingham, heart_score, duke_treadmill) are the most valuable new features — they encode domain knowledge that trees can't easily reconstruct. LOO encodings provide marginal value as regularized alternatives to target encoding. UMAP and KNN features, which dominated the previous (flawed) analysis, are actually catastrophically harmful.
 
 ## Ideas To Try
 
