@@ -75,47 +75,29 @@ class SubsampledTabPFN:
         return self.model.predict(self._prepare(X))
 
 
-def _get_gpu_xgb_base():
-    """Lazily resolve the XGBClassifier base class."""
-    from xgboost import XGBClassifier
+class GPUXGBClassifier:
+    """XGBClassifier wrapper that uses DMatrix for GPU-native prediction.
 
-    return XGBClassifier
-
-
-class _GPUXGBMeta(type):
-    """Metaclass that sets XGBClassifier as base when the class is first used."""
-
-    _resolved = False
-
-    def __instancecheck__(cls, instance):
-        cls._ensure_base()
-        return super().__instancecheck__(instance)
-
-    def _ensure_base(cls):
-        if not cls._resolved:
-            from xgboost import XGBClassifier
-
-            cls.__bases__ = (XGBClassifier,)
-            cls._resolved = True
-
-    def __call__(cls, *args, **kwargs):
-        cls._ensure_base()
-        return super().__call__(*args, **kwargs)
-
-
-class GPUXGBClassifier(metaclass=_GPUXGBMeta):
-    """XGBClassifier that uses DMatrix for GPU-native prediction.
-
-    Inherits from XGBClassifier at first instantiation (lazy import).
+    Uses composition to avoid Python 3.13 __bases__ assignment issues.
     """
+
+    def __init__(self, **kwargs):
+        from xgboost import XGBClassifier
+
+        self._model = XGBClassifier(**kwargs)
+
+    def fit(self, X, y, **kwargs):
+        self._model.fit(X, y, **kwargs)
+        return self
 
     def predict_proba(self, X, **kwargs):
         import xgboost as xgb
 
         dmat = xgb.DMatrix(
-            X, enable_categorical=getattr(self, "enable_categorical", False)
+            X,
+            enable_categorical=getattr(self._model, "enable_categorical", False),
         )
-        preds = self.get_booster().predict(dmat)
+        preds = self._model.get_booster().predict(dmat)
         return np.column_stack([1 - preds, preds])
 
     def predict(self, X, **kwargs):
