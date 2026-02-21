@@ -101,6 +101,14 @@ LGBM_PARAMS = {
     "reg_lambda": 0.1,
     "random_state": 123,
     "verbosity": -1,
+    "num_threads": -1,  # use all cores for training (default, explicit)
+}
+
+# Faster params for screening passes (ablation, forward selection)
+LGBM_SCREEN_PARAMS = {
+    **LGBM_PARAMS,
+    "n_estimators": 500,
+    "learning_rate": 0.1,
 }
 
 
@@ -542,7 +550,7 @@ def _engineer_fold_features(
     X_val["mahal_ratio"] = X_val["mahal_neg"] / (X_val["mahal_pos"] + 1e-8)
 
     # === 11. Isolation Forest anomaly score (1 feature) ===
-    iso = IsolationForest(n_estimators=100, random_state=42, n_jobs=-1)
+    iso = IsolationForest(n_estimators=100, random_state=42, n_jobs=1)
     iso.fit(X_tr_scaled)
     X_train["isolation_score"] = iso.decision_function(X_tr_scaled)
     X_val["isolation_score"] = iso.decision_function(X_val_scaled)
@@ -584,7 +592,7 @@ def _engineer_fold_features(
     X_val["nb_oof"] = nb_model.predict_proba(X_val_scaled)[:, 1]
 
     # KNN
-    knn_model = KNeighborsClassifier(n_neighbors=50, n_jobs=-1)
+    knn_model = KNeighborsClassifier(n_neighbors=50, n_jobs=1)
     knn_model.fit(X_tr_scaled, y_train)
     X_train["knn_oof"] = knn_model.predict_proba(X_tr_scaled)[:, 1]
     X_val["knn_oof"] = knn_model.predict_proba(X_val_scaled)[:, 1]
@@ -639,14 +647,21 @@ def _engineer_fold_features(
 
 
 def _eval_features_multiseed(
-    X_tr, y_train, X_ho, y_holdout, features, seeds, use_native_cats=True
+    X_tr,
+    y_train,
+    X_ho,
+    y_holdout,
+    features,
+    seeds,
+    use_native_cats=True,
+    lgbm_params=None,
 ):
     """Evaluate a feature subset with multi-seed LightGBM on pre-computed DataFrames."""
-
+    base_params = lgbm_params or LGBM_PARAMS
     cat_feats = [c for c in CAT_FEATURES if c in features] if use_native_cats else []
     aucs = []
     for seed in seeds:
-        params = {**LGBM_PARAMS, "random_state": seed}
+        params = {**base_params, "random_state": seed}
         model = lgb.LGBMClassifier(**params)
         model.fit(
             X_tr[features],
@@ -806,6 +821,10 @@ def main() -> None:
         callbacks=[lgb.early_stopping(80), lgb.log_evaluation(0)],
     )
 
+    gc.collect()
+
+    # n_jobs=1: no loky process spawning (each spawn duplicates ~350MB on macOS).
+    # LightGBM predict_proba is already fast single-threaded on 10K holdout rows.
     result = permutation_importance(
         model_all,
         X_ho[all_features],
@@ -813,7 +832,7 @@ def main() -> None:
         n_repeats=10,
         scoring="roc_auc",
         random_state=42,
-        n_jobs=4,
+        n_jobs=1,
     )
 
     imp_df = pd.DataFrame(
@@ -836,37 +855,67 @@ def main() -> None:
         )
 
     features_by_importance = imp_df["feature"].tolist()
+
+    # Identify clearly helpful features (skip ablation for these)
+    significant_positive = set(
+        imp_df[imp_df["significant"] & (imp_df["importance_mean"] > 0)][
+            "feature"
+        ].tolist()
+    )
     del model_all, result, imp_df
     gc.collect()
 
     # ===================================================================
-    # Step 3: Drop-one-at-a-time ablation (multi-seed)
+    # Step 3: Drop-one-at-a-time ablation (smart scope, screening params)
     # ===================================================================
+    # Only ablate features with ambiguous permutation importance (not clearly
+    # helpful). Features with importance > 2*std are kept without testing.
+    # Uses LGBM_SCREEN_PARAMS (500 trees) for speed; final sets validated later.
+    ablation_candidates = [f for f in all_features if f not in significant_positive]
+
     print(f"\n{'='*70}")
-    print(f"STEP 3: ABLATION ({len(all_features)} features x {len(seeds)} seeds)")
+    print(
+        f"STEP 3: ABLATION ({len(ablation_candidates)}/{len(all_features)} "
+        f"candidates x {len(seeds)} seeds)"
+    )
+    print(f"  Skipping {len(significant_positive)} clearly helpful features")
     print(f"{'='*70}")
 
     baseline_ms = _eval_features_multiseed(
-        X_tr, y_train, X_ho, y_holdout, all_features, seeds
+        X_tr,
+        y_train,
+        X_ho,
+        y_holdout,
+        all_features,
+        seeds,
+        lgbm_params=LGBM_SCREEN_PARAMS,
     )
-    print(f"\nAll-features baseline: {baseline_ms:.5f}")
+    print(f"\nAll-features baseline (screen): {baseline_ms:.5f}")
 
     ablation_results = []
     t0 = time.perf_counter()
-    for i, feat in enumerate(all_features):
+    for i, feat in enumerate(ablation_candidates):
         reduced = [f for f in all_features if f != feat]
         auc_without = _eval_features_multiseed(
-            X_tr, y_train, X_ho, y_holdout, reduced, seeds
+            X_tr,
+            y_train,
+            X_ho,
+            y_holdout,
+            reduced,
+            seeds,
+            lgbm_params=LGBM_SCREEN_PARAMS,
         )
         delta = auc_without - baseline_ms
         ablation_results.append((feat, auc_without, delta))
         elapsed = time.perf_counter() - t0
-        eta = elapsed / (i + 1) * (len(all_features) - i - 1)
+        eta = elapsed / (i + 1) * (len(ablation_candidates) - i - 1)
         print(
-            f"  [{i+1}/{len(all_features)}] -{feat:<35} "
+            f"  [{i+1}/{len(ablation_candidates)}] -{feat:<35} "
             f"AUC={auc_without:.5f} (delta={delta:+.5f}) "
             f"[ETA: {eta/60:.1f}min]"
         )
+        if (i + 1) % 20 == 0:
+            gc.collect()
 
     ablation_results.sort(key=lambda x: x[2], reverse=True)
 
@@ -876,32 +925,65 @@ def main() -> None:
         verdict = "HARMFUL" if delta > 0 else "helpful"
         print(f"{feat:<40} {auc_without:>12.5f} {delta:>+10.5f} {verdict:>10}")
 
-    harmful_features = [f for f, _, d in ablation_results if d > 0]
+    harmful_features = {f for f, _, d in ablation_results if d > 0}
     ablation_pruned = [f for f in all_features if f not in harmful_features]
-    print(f"\nHarmful ({len(harmful_features)}): {harmful_features}")
+    print(f"\nHarmful ({len(harmful_features)}): {sorted(harmful_features)}")
     print(f"Ablation-pruned set: {len(ablation_pruned)} features")
+    gc.collect()
 
     # ===================================================================
-    # Step 4: Forward selection (greedy, importance order)
+    # Step 4: Forward selection (greedy, importance order, early stopping)
     # ===================================================================
+    # Uses screening params for speed. Stops after 20 consecutive additions
+    # without improvement.
+    PATIENCE = 20
+
     print(f"\n{'='*70}")
-    print(f"STEP 4: FORWARD SELECTION ({len(all_features)} features)")
+    print(
+        f"STEP 4: FORWARD SELECTION ({len(all_features)} features, "
+        f"patience={PATIENCE})"
+    )
     print(f"{'='*70}")
 
     forward_history = []
+    best_so_far = 0.0
+    no_improve_count = 0
     t0 = time.perf_counter()
     for i, _ in enumerate(features_by_importance, start=1):
         subset = features_by_importance[:i]
         auc_fwd = _eval_features_multiseed(
-            X_tr, y_train, X_ho, y_holdout, subset, seeds
+            X_tr,
+            y_train,
+            X_ho,
+            y_holdout,
+            subset,
+            seeds,
+            lgbm_params=LGBM_SCREEN_PARAMS,
         )
         forward_history.append((i, subset[-1], auc_fwd))
         elapsed = time.perf_counter() - t0
-        eta = elapsed / i * (len(features_by_importance) - i)
+        remaining = len(features_by_importance) - i
+        eta = elapsed / i * remaining
         print(
             f"  [{i}/{len(features_by_importance)}] +{subset[-1]:<35} "
             f"AUC={auc_fwd:.5f} [ETA: {eta/60:.1f}min]"
         )
+
+        # Early stopping
+        if auc_fwd > best_so_far + 1e-5:
+            best_so_far = auc_fwd
+            no_improve_count = 0
+        else:
+            no_improve_count += 1
+        if no_improve_count >= PATIENCE and i >= 30:
+            print(
+                f"  Early stopping at {i} features "
+                f"(no improvement for {PATIENCE} steps)"
+            )
+            break
+
+        if i % 20 == 0:
+            gc.collect()
 
     # Find optimal
     best_n, best_feat, best_fwd_auc = max(forward_history, key=lambda x: x[2])
@@ -916,12 +998,13 @@ def main() -> None:
         prev_auc = auc
 
     print(f"\nOptimal: {best_n} features, AUC={best_fwd_auc:.5f}")
+    gc.collect()
 
     # ===================================================================
-    # Step 5: Comparison
+    # Step 5: Comparison (full params — final validation)
     # ===================================================================
     print(f"\n{'='*70}")
-    print("STEP 5: COMPARISON")
+    print("STEP 5: COMPARISON (full LightGBM params)")
     print(f"{'='*70}")
 
     results = [
@@ -938,7 +1021,11 @@ def main() -> None:
     else:
         print("\n  (Skipping new ablation-pruned — no features survived ablation)")
 
-    results.append((f"Forward-selected ({len(forward_selected)})", best_fwd_auc))
+    # Re-evaluate forward-selected with full params (screening used fewer trees)
+    auc_fwd_full = _eval_features_multiseed(
+        X_tr, y_train, X_ho, y_holdout, forward_selected, seeds
+    )
+    results.append((f"Forward-selected ({len(forward_selected)})", auc_fwd_full))
 
     print(f"\n{'Feature set':<45} {'AUC':>10} {'Delta vs raw':>14}")
     print("-" * 73)
