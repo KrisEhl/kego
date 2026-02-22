@@ -94,7 +94,7 @@ submit-full:
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-neural:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --neural $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --neural $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-debug:
 	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
