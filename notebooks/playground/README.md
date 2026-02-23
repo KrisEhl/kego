@@ -198,9 +198,9 @@ uv run python notebooks/playground/train_s6e2_baseline.py --resume playground-s6
 
 ## Current Best
 
-- **Leaderboard (public)**: 0.95372
-- **Holdout AUC (ensemble)**: 0.9563
-- **Method**: Ridge stacking over 8 greedy-selected models x 3 seeds (submit-v9)
+- **Leaderboard (public)**: 0.95380
+- **OOF AUC (ensemble)**: 0.9557
+- **Method**: Ridge stacking over 104 learners trained on full data (retrain-full-v2)
 
 ## Local Validation vs Leaderboard
 
@@ -212,8 +212,13 @@ uv run python notebooks/playground/train_s6e2_baseline.py --resume playground-s6
 | submit-v1 | Ridge stacking, all models, 10 folds | — | 0.95341 | — |
 | submit-v9 | Ridge stacking, 8 greedy-selected models x 3 seeds | 0.9563 | 0.95372 | -0.0026 |
 | submit-v2* | Ridge stacking, 65 learners (19 models + TabPFN), 223 runs | 0.9562 | 0.95372 | -0.0026 |
+| submit-v10 | Ridge stacking, 93 learners from 4 experiments | 0.9562 | 0.95372 | -0.0026 |
+| retrain-full-v2 | Ridge stacking, 104 learners trained on full data | 0.9557† | **0.95380** | — |
+| submit-v11 | Ridge stacking, 8 curated learners trained on full data | 0.9556† | 0.95378 | — |
 
 *\*New submit-v2 = rebuilt ensemble from `full` + `diverse-v1` experiments (223 runs, 19 model types including TabPFN, 3 feature sets, 5/10 folds). Same LB as submit-v9 despite 8x more learners.*
+
+*†retrain-full submissions use OOF AUC (no holdout set), so not directly comparable to holdout AUC.*
 
 The holdout AUC consistently overestimates the leaderboard score by ~0.0026. This gap is stable across runs, so holdout improvements should translate 1:1 to LB improvements.
 
@@ -255,6 +260,9 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | 7 | Feature selection: ablation-pruned (21 features), 18 models x 3 seeds x 10 folds | — | — | — | All models complete. Top GBDTs at 0.9560, neural models 0.9539-0.9547 |
 | submit-v9 | Greedy-selected 8 of 28 learners, Ridge stacking, 3 seeds | 0.9563 | 0.95372 | +0.00012 | Best 8 from multi-strategy greedy forward selection. XGB, FT-Transformer, LGB, CatBoost, LogReg across raw/ablation-pruned/forward-selected features |
 | submit-v2* | Ridge stacking, 65 learners from 223 runs (19 models + TabPFN) | 0.9562 | 0.95372 | +0.00000 | Massive ensemble from `full` + `diverse-v1`. TabPFN adds negligible value. Same LB as lean submit-v9 |
+| submit-v10 | Ridge stacking, 93 learners from 4 experiments (+ SVM + research features) | 0.9562 | 0.95372 | +0.00000 | Added SVM (near-zero weight) and research features (marginal). Same LB |
+| retrain-full-v2 | Ridge stacking, 104 learners trained on full data (train+holdout) | 0.9557† | **0.95380** | **+0.00008** | **New best.** First retrain-full submission. 19 models x 3 feature sets x 10f. OOF AUC for method selection |
+| submit-v11 | Ridge stacking, 8 curated learners trained on full data | 0.9556† | 0.95378 | +0.00006 | Curated subset of retrain-full-v2: xgboost, catboost, lightgbm, ft_transformer on raw/ablation-pruned |
 
 ### Local Feature Validation (5-fold CV on full train, CPU, single LightGBM/LogReg)
 
@@ -407,6 +415,9 @@ All 28 models are neutral under Ridge stacking — no model is harmful, none is 
 - TabPFN (prior-fitted network) underperforms GBDTs despite being a strong baseline on small datasets — likely because the 630K training set is well beyond TabPFN's sweet spot
 - Improvements are in the 5th decimal place — this competition has a very tight leaderboard
 - **Ensemble size doesn't matter**: 8 learners (submit-v9) ties 65 learners (submit-v2) at 0.95372 LB. Ridge stacking extracts the same signal from a lean or massive ensemble
+- **Retrain-full helps slightly**: Training on 100% of labeled data (train+holdout combined) gives +0.00008 LB improvement (0.95372 → 0.95380). The full 104-learner ensemble edges out the 8-learner curated version (0.95380 vs 0.95378)
+- **SVM not useful**: SubsampledSVC (RBF kernel) gets near-zero weight in all ensemble methods. Best individual AUC was 0.9368 — far below GBDTs (~0.9560)
+- **Research features marginal**: 6 new clinical features (+0.00053 local AUC) didn't move LB. Small positive Ridge weights for catboost/research (0.125) and xgboost_dart/research (0.081) but no generalization improvement
 
 ## Feature Importance
 
@@ -624,3 +635,5 @@ Researched from Playground Series winner writeups and top solutions. Ranked by e
 - **TabPFN**: Added to ensemble (6 learners across 3 feature sets x 2 fold counts, 18 runs). Ridge assigns near-zero/negative weights. Greedy forward selection picks it at step 11 of 65 with <0.0001 AUC gain. LB unchanged at 0.95372. Not helpful for this dataset (630K rows — TabPFN is designed for smaller datasets)
 - **Massive ensemble (65 learners, 19 model types)**: submit-v2 with 223 runs from `full` + `diverse-v1` scores identically to submit-v9 (8 learners). More models ≠ better LB when Ridge stacking is already optimal
 - **2-level stacking (L2 LightGBM)**: Tested 4 variants — preds-only, +raw features, +ablation-pruned, +forward-selected. All tie Ridge at 0.9562 holdout AUC. The 65-model L1 predictions are already well-captured by linear combination; LightGBM meta-model can't find non-linear interactions to exploit on this dataset
+- **SVM (SubsampledSVC, RBF kernel)**: 24 runs across all feature sets and folds. Best individual AUC 0.9368 (research/10f). Near-zero ensemble weight — not useful for this 630K-row dataset
+- **Research features (6 clinical features)**: framingham_partial, heart_score_partial, duke_treadmill_approx, cholesterol_squared, cholesterol_age_risk, age_sex_interaction. +0.00053 local AUC improvement but no LB gain. Neural models degraded on research features (resnet broken at 0.72-0.86 AUC, ft_transformer at 0.91)

@@ -1,24 +1,27 @@
 # Plan: Next Steps — Maximize LB Score
 
-## Status (2026-02-22)
+## Status (2026-02-23)
 
-Steps 1-6 completed. **No LB improvement** — 93-learner Ridge ensemble scored **0.95372 LB** (same as submit-v9 with 8 models). Step 7 (retrain-full) skipped since no improvement.
+Steps 1-7 completed. **Retrain-full achieved new best: 0.95380 LB** (+0.00008 over submit-v9).
 
 ### Results Summary
 
-| Submission | Holdout AUC | Public LB | Models | Method |
+| Submission | AUC | Public LB | Models | Method |
 |---|---|---|---|---|
-| submit-v9 (previous best) | ~0.9558 | **0.95372** | 8 greedy-selected x 3 seeds | Ridge |
-| submit-v10 (93 learners) | 0.9562 | **0.95372** | 93 learners from 4 experiments | Ridge |
+| submit-v9 (previous best) | 0.9558 holdout | 0.95372 | 8 greedy-selected x 3 seeds | Ridge |
+| submit-v10 (93 learners) | 0.9562 holdout | 0.95372 | 93 learners from 4 experiments | Ridge |
+| **retrain-full-v2 (104 learners)** | **0.9557 OOF** | **0.95380** | **104 learners trained on full data** | **Ridge** |
+| submit-v11 (8 curated) | 0.9556 OOF | 0.95378 | 8 curated learners trained on full data | Ridge |
 
 ### Key Findings
 
+- **Retrain-full works**: Training on 100% of labeled data (train+holdout) gives +0.00008 LB improvement. This is the only change that has moved the LB needle since submit-v9.
+- **More models still helps slightly for retrain-full**: 104 learners (0.95380) edges out 8 curated (0.95378).
 - **SVM**: near-zero ensemble weight across all methods. Not useful for this dataset.
 - **Research features**: small positive Ridge weights for `catboost/research/10f` (0.125) and `xgboost_dart/research/10f` (0.081), but didn't move the LB needle.
 - **Neural models on research features**: resnet completely broken (AUC 0.72-0.86), ft_transformer degraded (0.91), only realmlp performed well (0.9547).
-- **Hill climbing** heavily concentrated: 66% on `xgboost/raw/10f`, 12% `lightgbm/forward-selected/10f`, 11% `lightgbm/raw/10f`.
-- **Ridge top weights**: `xgboost/raw/10f` (0.42), `xgboost/ablation-pruned/10f` (0.23), `catboost/raw/10f` (0.22), `lightgbm_large/all/10f` (0.17).
-- More models != better LB. The marginal holdout improvement (+0.0004) didn't generalize.
+- **Ridge top weights (retrain-full-v2)**: `xgboost/raw/10f` (0.42), `xgboost/forward-selected/10f` (0.26), `catboost_shallow/raw/10f` (0.26), `catboost_shallow/raw/5f` (0.22).
+- More models != better LB for holdout-evaluated ensembles. But retrain-full benefits slightly from more learners.
 
 ### Experiments Available
 
@@ -56,12 +59,24 @@ All GBDTs completed on research features. Neural models: realmlp done (0.9547), 
 
 Public LB: **0.95372** (no improvement over submit-v9).
 
-### 7. Retrain-full — SKIPPED (no LB improvement)
+### 7. Submit retrain-full-v2 — DONE (new best!)
+
+Fixed code to allow `--retrain-full` with `--from-experiment` and `--from-ensemble` (needed to set correct data dimensions: holdout=test, 270K rows, OOF AUC for method selection).
+
+- **retrain-full-v2 (all 104 learners)**: Ridge stacking, OOF AUC 0.9557, **Public LB: 0.95380** (+0.00008)
+- **submit-v11 (8 curated learners)**: xgboost/raw/10f, xgboost/ablation-pruned/10f, catboost/raw/10f, lightgbm/ablation-pruned/10f, ft_transformer/raw/10f, xgboost/raw/5f, catboost/raw/5f, ft_transformer/raw/5f. Ridge OOF AUC 0.9556, **Public LB: 0.95378**
+
+### Fixes Applied
+
+- Fixed `submit-neural` Makefile target (was missing `FEATURES` passthrough)
+- Had to `git pull` on worker node (was missing `SubsampledSVC` class)
+- Ran jobs sequentially to avoid OOM on worker (15GB RAM)
+- Allowed `--retrain-full` with `--from-experiment`/`--from-ensemble` for retrain-full ensembles
 
 ## Possible Next Steps
 
-- **Try different ensemble strategies**: greedy forward selection with fewer models, different alpha values for Ridge
-- **Feature engineering**: look for new features beyond the 6 research features
-- **Hyperparameter tuning**: Optuna tuning for top models on best feature sets
-- **Post-processing**: calibration, rank averaging with submit-v9
-- **Blend with submit-v9**: average the two submission files (same LB but different internal weights might help)
+- **Blend submissions**: rank-average retrain-full-v2 (0.95380) with submit-v9 (0.95372) — different training data and weights might complement each other
+- **Train new models on full data**: retrain-full-v2 only has raw/ablation-pruned/forward-selected. Could add research features or new model variants
+- **Hyperparameter tuning**: Optuna tuning for top models (xgboost, catboost), then retrain-full with tuned params
+- **Post-processing**: isotonic calibration, probability clipping
+- **Feature engineering**: generate more candidates beyond the 6 research features
