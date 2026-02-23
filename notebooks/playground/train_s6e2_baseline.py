@@ -1711,10 +1711,6 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.retrain_full and args.from_ensemble:
-        logger.error("--retrain-full cannot be combined with --from-ensemble")
-        sys.exit(1)
-
     if args.resume and (args.from_ensemble or args.from_experiment):
         logger.error(
             "--resume cannot be combined with --from-ensemble/--from-experiment"
