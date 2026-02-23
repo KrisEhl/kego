@@ -261,8 +261,9 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | submit-v9 | Greedy-selected 8 of 28 learners, Ridge stacking, 3 seeds | 0.9563 | 0.95372 | +0.00012 | Best 8 from multi-strategy greedy forward selection. XGB, FT-Transformer, LGB, CatBoost, LogReg across raw/ablation-pruned/forward-selected features |
 | submit-v2* | Ridge stacking, 65 learners from 223 runs (19 models + TabPFN) | 0.9562 | 0.95372 | +0.00000 | Massive ensemble from `full` + `diverse-v1`. TabPFN adds negligible value. Same LB as lean submit-v9 |
 | submit-v10 | Ridge stacking, 93 learners from 4 experiments (+ SVM + research features) | 0.9562 | 0.95372 | +0.00000 | Added SVM (near-zero weight) and research features (marginal). Same LB |
-| retrain-full-v2 | Ridge stacking, 104 learners trained on full data (train+holdout) | 0.9557† | **0.95380** | **+0.00008** | **New best.** First retrain-full submission. 19 models x 3 feature sets x 10f. OOF AUC for method selection |
+| retrain-full-v2 | Ridge stacking, 104 learners trained on full data (train+holdout) | 0.9557† | **0.95380** | **+0.00008** | **Current best.** 19 models x 3 feature sets x 10f. OOF AUC for method selection |
 | submit-v11 | Ridge stacking, 8 curated learners trained on full data | 0.9556† | 0.95378 | +0.00006 | Curated subset of retrain-full-v2: xgboost, catboost, lightgbm, ft_transformer on raw/ablation-pruned |
+| cpu-retrain-v1 | Ridge, 20 CPU learners (lgbm variants + logreg) on `all` + `ablation-pruned`, retrain-full | 0.9554† | — | — | Local Mac run. lgbm/all ≈ lgbm/ablation-pruned (0.9552 vs 0.9553). logreg/all +0.0003 vs ablation-pruned. Combined with retrain-full-v2 (124 learners total): 0.95568 — zero improvement. CPU learners don't displace GPU model dominance |
 
 ### Local Feature Validation (5-fold CV on full train, CPU, single LightGBM/LogReg)
 
@@ -271,8 +272,12 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | Raw features (no engineering) | **0.95532** | 0.95047 |
 | New FE (Thallium interactions + risk scores) | 0.95522 | **0.95113** (+0.00066) |
 | Old FE (age/bp/chol interactions) | 0.95514 | 0.95048 |
+| Ablation-pruned baseline | 0.95526 | — |
+| Ablation-pruned + notebook features (13 new) | 0.95515 (-0.00011) | — |
+| Ablation-pruned + TE(8) + freq(8) | 0.95525 (neutral) | — |
+| All features (53) + TE(8) + freq(8) | 0.95509 (-0.00016) | — |
 
-Trees discover interactions natively — FE doesn't help them. New features improve LogReg (+0.00066) which helps ensemble diversity.
+Trees discover interactions natively — FE doesn't help them. New features improve LogReg (+0.00066) which helps ensemble diversity. The 13 notebook features are neutral for LightGBM alone; benefit expected in GPU model ensemble diversity.
 
 ## Stacking Comparison (15 models, 10 folds, 3 seeds)
 
@@ -321,7 +326,7 @@ Each model family uses a different combination of categorical encoding, numerica
 | FT-Transformer / FT-Transformer-PLE | label encoding (integer mapping) → learned categorical embeddings, plus target encoding for TE features |
 | RealMLP | pandas `category` dtype (native handling), plus target encoding for TE features |
 
-**Target encoding** is applied to 4 high-cardinality categoricals (Thallium, Chest pain type, Slope of ST, EKG results) via `make_te_preprocess`. It creates `{col}_te` columns with the mean target value per category, computed from fold training data only.
+**Target encoding** is applied to all 8 categorical features via `make_te_preprocess`. It creates `{col}_te` columns with the mean target value per category, computed from fold training data only. **Frequency encoding** (`{col}_freq`) is also computed for all 8 categoricals, providing value-count normalized frequencies from the training fold.
 
 ### Numerical Preprocessing
 
@@ -418,6 +423,8 @@ All 28 models are neutral under Ridge stacking — no model is harmful, none is 
 - **Retrain-full helps slightly**: Training on 100% of labeled data (train+holdout combined) gives +0.00008 LB improvement (0.95372 → 0.95380). The full 104-learner ensemble edges out the 8-learner curated version (0.95380 vs 0.95378)
 - **SVM not useful**: SubsampledSVC (RBF kernel) gets near-zero weight in all ensemble methods. Best individual AUC was 0.9368 — far below GBDTs (~0.9560)
 - **Research features marginal**: 6 new clinical features (+0.00053 local AUC) didn't move LB. Small positive Ridge weights for catboost/research (0.125) and xgboost_dart/research (0.081) but no generalization improvement
+- **13 notebook features (public top notebook) + expanded TE/freq**: Added hypertension, high_chol, rate_pressure_product, cardiac_reserve, st_ratio, metabolic_syndrome, interactions, etc. (53 features total). Neutral for LightGBM (-0.00011). CPU retrain-full (lgbm + logreg on `all` features) showed logreg/all +0.0003 vs ablation-pruned, but combined ensemble with retrain-full-v2: zero improvement. The dominant ensemble contributors are GPU models (XGBoost, CatBoost) — need those retrained with new features on cluster
+- **KNN (subsampled to 50K training rows)**: 6 variants k=5–200, all had zero ensemble weight when added to 104-learner ensemble. Individual AUC peaked at 0.947 — too far below GBDTs to contribute
 
 ## Feature Importance
 
@@ -616,16 +623,14 @@ All 8 validated in drop-one check (none dropped).
 
 ## Ideas To Try
 
-Researched from Playground Series winner writeups and top solutions. Ranked by expected impact.
+Ranked by expected impact. Bronze cutoff: ~0.95388 (+0.00008 from current 0.95380).
 
-| # | Idea | Expected Gain | Effort | Notes |
-|---|------|---------------|--------|-------|
-| 1 | **More feature engineering** | Small-Medium | Medium | Groupby stats (mean/std of numerics per categorical), frequency/count encoding, log transforms on BP/Cholesterol, binned continuous features. Generate hundreds of candidates, let selection prune. |
-| 2 | **Retrain on full data** for final submission | Small | Low | After selecting hyperparameters via CV, retrain on train+holdout for submission. Common in top solutions. |
-| 3 | **Adversarial validation** | Diagnostic | Low | Train classifier to distinguish train vs test. May reveal distribution shift issues. |
-| 4 | **Revisit pseudo-labeling** | Small | Medium | Previous attempt (136k hard labels) failed. Try: soft labels, higher confidence threshold (0.99), per-fold pseudo-labels, ensemble-generated labels. |
-| 5 | **KNN / SVM** for diversity | Small | Low | Different inductive bias from trees/NNs, adds stacking diversity. |
-| 6 | **FT-Transformer HP tuning** | Small | In progress | Optuna tuning with 5 trials (patience=5, max_epochs=50). Currently running. |
+| # | Idea | Expected Gain | Effort | Status |
+|---|------|---------------|--------|--------|
+| 1 | **GPU retrain-full with new `all` feature set** | Medium | Cluster | Next step. XGBoost + CatBoost (top ensemble contributors) trained on 53 features. These dominate Ridge weights — if new features help them, it will show in LB. |
+| 2 | **More seeds + Optuna HP tuning** | Small | Cluster | Increase seed pool to 5-10. Run Optuna (100+ trials) for XGBoost, CatBoost, LightGBM on new feature set. |
+| 3 | **Adversarial validation** | Diagnostic | Low | Train classifier to distinguish train vs test. May reveal distribution shift. |
+| 4 | **Revisit pseudo-labeling** | Small | Medium | Previous attempt (136k hard labels) failed. Try soft labels, higher confidence threshold (0.99), ensemble-generated labels. |
 
 ### Already tried / won't help
 
@@ -637,3 +642,6 @@ Researched from Playground Series winner writeups and top solutions. Ranked by e
 - **2-level stacking (L2 LightGBM)**: Tested 4 variants — preds-only, +raw features, +ablation-pruned, +forward-selected. All tie Ridge at 0.9562 holdout AUC. The 65-model L1 predictions are already well-captured by linear combination; LightGBM meta-model can't find non-linear interactions to exploit on this dataset
 - **SVM (SubsampledSVC, RBF kernel)**: 24 runs across all feature sets and folds. Best individual AUC 0.9368 (research/10f). Near-zero ensemble weight — not useful for this 630K-row dataset
 - **Research features (6 clinical features)**: framingham_partial, heart_score_partial, duke_treadmill_approx, cholesterol_squared, cholesterol_age_risk, age_sex_interaction. +0.00053 local AUC improvement but no LB gain. Neural models degraded on research features (resnet broken at 0.72-0.86 AUC, ft_transformer at 0.91)
+- **KNN (subsampled)**: 6 variants k=5–200, 5-fold CV on 50K training rows. Individual AUC 0.922–0.947. Zero ensemble weight when combined with 104 learners
+- **CPU retrain-full with notebook features**: 5 CPU models (lgbm × 4 + logreg) on `all` (53 features) and `ablation-pruned`, retrain-full mode. Combined with retrain-full-v2 (124 learners): Ridge OOF 0.95568 — zero improvement. CPU models can't shift the ensemble dominated by GPU models
+- **Alternative meta-learners**: Tested LogReg (C=0.001), rank averaging, Ridge on ranks, broader alpha range. Ridge alpha=10 already optimal (0.95568). All alternatives worse
