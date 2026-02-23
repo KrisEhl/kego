@@ -1,4 +1,6 @@
-def make_te_preprocess(te_features, drop_original=False, loo_features=None):
+def make_te_preprocess(
+    te_features, drop_original=False, loo_features=None, freq_features=None
+):
     """Create a fold_preprocess callback that applies target encoding per CV fold.
 
     Args:
@@ -9,6 +11,8 @@ def make_te_preprocess(te_features, drop_original=False, loo_features=None):
         loo_features: Columns to leave-one-out encode. Training set uses
             (group_sum - y_i) / (group_count - 1); val/test/holdout use
             simple group mean.
+        freq_features: Columns to frequency-encode (value_counts normalized).
+            Frequencies are computed from training fold only to avoid leakage.
     """
 
     def preprocess(x_train, y_train, x_valid, x_test, x_holdout):
@@ -34,6 +38,13 @@ def make_te_preprocess(te_features, drop_original=False, loo_features=None):
             means = y_train.groupby(x_train[col]).mean()
             for df in [x_valid, x_test, x_holdout]:
                 df[f"{col}_loo"] = df[col].map(means).fillna(global_mean)
+
+        for col in freq_features or []:
+            if col not in x_train.columns:
+                continue
+            freq_map = x_train[col].value_counts(normalize=True)
+            for df in [x_train, x_valid, x_test, x_holdout]:
+                df[f"{col}_freq"] = df[col].map(freq_map).fillna(0)
 
         if drop_original:
             cols_to_drop = [c for c in te_features if c in x_train.columns]

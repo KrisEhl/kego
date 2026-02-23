@@ -2,81 +2,126 @@
 
 ## Status (2026-02-23)
 
-Steps 1-7 completed. **Retrain-full achieved new best: 0.95380 LB** (+0.00008 over submit-v9).
+Current best: **0.95380 LB** (retrain-full-v2, 104 learners, Ridge stacking).
+Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff ~0.95388 (+0.00008 needed).
 
-### Results Summary
+### Leaderboard Context
+
+| Position | Score | Gap |
+|---|---|---|
+| #1 (Pirhosseinlou) | 0.95414 | +0.00034 |
+| #2-4 (Deotte et al.) | 0.95407 | +0.00027 |
+| #5-75 (71 teams, public notebook cluster) | 0.95406 | +0.00026 |
+| Bronze (~top 10%) | ~0.95388 | +0.00008 |
+| **Us** | **0.95380** | — |
+
+The 71-team cluster at 0.95406 comes from the public "S6E2 Heart Disease Top1 Multi Seed" notebook. Analysis shows **the gap is primarily in features**, not models — they score 0.95406 with just 3 GBDTs + 5 seeds, while we have 104 learners.
+
+### Key Features We're Missing (from public notebook)
+
+| Feature | Formula | Category |
+|---|---|---|
+| `rate_pressure_product` | Max HR × BP / 1000 | Cardiology |
+| `cardiac_reserve` | Max HR / (220 - Age), clipped [0.5, 1.2] | Cardiology |
+| `st_ratio` | ST depression / (Max HR + 1) | Exercise physiology |
+| `metabolic_syndrome` | hypertension + high_chol + FBS | Composite |
+| `hypertension` | BP > 140 (binary) | Binary threshold |
+| `high_chol` | Cholesterol > 200 (binary) | Binary threshold |
+| `very_high_chol` | Cholesterol > 240 (binary) | Binary threshold |
+| `risk_age` | Age > 55 (binary) | Binary threshold |
+| `severe_vessels` | Vessels >= 2 (binary) | Binary threshold |
+| `age_x_vessels` | Age × Vessels | Interaction |
+| `rpp_x_st` | RPP × ST depression | Interaction |
+| `chol_x_bp` | Cholesterol × BP / 10000 | Interaction |
+| Frequency encoding | Value counts for all 8 categoricals | Encoding |
+| Target encoding | OOF TE for all 8 categoricals (we only do 4) | Encoding |
+
+## Plan (local Mac, no cluster)
+
+### Step 1: Add missing features to training script ✅
+
+Added 13 features from the public notebook to `_engineer_features()`:
+- Binary thresholds: hypertension, high_chol, very_high_chol, risk_age, severe_vessels
+- Cardiology: rate_pressure_product, cardiac_reserve (clipped), st_ratio
+- Composites: metabolic_syndrome, score_proxy
+- Interactions: age_x_vessels, rpp_x_st, chol_x_bp
+
+Also: expanded TE_FEATURES from 4 → all 8 categoricals, added frequency encoding to `make_te_preprocess()`.
+
+Total features: 53 (was 40).
+
+### Step 2: Local validation of new features ✅
+
+Local 5-fold CV (LightGBM, single model):
+- Ablation-pruned baseline: 0.95526
+- Ablation-pruned + notebook features: 0.95515 (-0.00011)
+- Ablation-pruned + TE(8) + freq(8): 0.95525 (neutral)
+- All features + TE(8) + freq(8): 0.95509 (-0.00016)
+
+**Result: neutral for single LightGBM** — expected since GBDTs learn binary splits natively. The benefit should show in non-GBDT models (LogReg, neural) and ensemble diversity. Real test is full ensemble on LB.
+
+### Step 3: Investigate CDC BRFSS dataset (400K real rows) ✅ — Not usable
+
+The BRFSS dataset (445K rows, 40 cols) is **self-reported phone survey data** — smoking, sleep, general health, etc. Almost no overlap with our clinical features (ECG, stress test, cholesterol labs, fluoroscopy). Only `Sex` matches directly. 9/13 features have no equivalent. Dead end.
+
+### Step 4: Re-ensemble existing predictions with different meta-learners ✅ — No improvement
+
+Loaded 104 learners from retrain-full-v2, tested meta-learners on OOF predictions:
+- **Ridge (original, alpha=10): 0.95568** — already optimal
+- Ridge (broader alphas): 0.95567 (same, alpha converges to ~10-17)
+- LogReg (C=0.001): 0.95536 (-0.00032)
+- Rank averaging: 0.95517 (-0.00051)
+- Ridge on ranks: 0.95491 (-0.00077)
+
+**Result: Ridge stacking is already the best meta-learner. No gain from switching.**
+
+### Step 5: Add KNN model locally ✅ — No improvement
+
+Trained 6 subsampled KNN variants (k=5, 10, 20, 50, 100, 200) with 5-fold CV, 50K training rows per fold:
+- Individual OOF AUC: 0.922 (k=5) to 0.947 (k=200)
+- Ensemble impact: **zero** — adding any KNN variant to 104 learners gives exactly 0.95568 (±0.000001)
+- KNN weights near zero in Ridge ensemble
+
+**Result: KNN adds no ensemble diversity. Not useful.**
+
+### Step 6: Retrain-full CPU models with new features ✅ — No improvement
+
+Retrained 5 CPU models (lightgbm × 4 variants + logistic_regression) on feature set `all` (53 features incl. 13 new) and `ablation-pruned`, 5+10 folds, 3 seeds. 60 tasks, ~1h 20m on Mac.
+
+Individual OOF AUCs:
+- lightgbm/all: 0.9552 vs lightgbm/ablation-pruned: 0.9553 (neutral for LightGBM)
+- logistic_regression/all: 0.9531 vs logistic_regression/ablation-pruned: 0.9528 (+0.0003 for LogReg)
+- cpu-retrain-v1 alone: Ridge OOF AUC 0.9554
+
+Combined with retrain-full-v2 (124 learners total): **Ridge OOF AUC 0.95568 — zero improvement**.
+New `/all/` learners have small weights that cancel out; highly correlated with existing GPU model predictions.
+
+**Result: CPU-only new features don't move the needle. Need GPU models (XGBoost, CatBoost) with new features on cluster.**
+
+### Step 7 (when cluster available): Retrain-full GPU models with new features
+
+Retrain XGBoost and CatBoost variants on feature set `all` (53 features) with retrain-full mode. These are the dominant ensemble contributors (top weights are all xgboost/catboost). Their improved feature representations should actually shift the ensemble.
+
+### Step 8 (when cluster available): More seeds + Optuna HP tuning
+
+Increase seed pool to 5-10. Run Optuna tuning (100+ trials) for XGBoost, CatBoost, LightGBM on the new feature set.
+
+---
+
+## Previous Results
 
 | Submission | AUC | Public LB | Models | Method |
 |---|---|---|---|---|
-| submit-v9 (previous best) | 0.9558 holdout | 0.95372 | 8 greedy-selected x 3 seeds | Ridge |
-| submit-v10 (93 learners) | 0.9562 holdout | 0.95372 | 93 learners from 4 experiments | Ridge |
-| **retrain-full-v2 (104 learners)** | **0.9557 OOF** | **0.95380** | **104 learners trained on full data** | **Ridge** |
-| submit-v11 (8 curated) | 0.9556 OOF | 0.95378 | 8 curated learners trained on full data | Ridge |
+| submit-v9 | 0.9558 holdout | 0.95372 | 8 greedy-selected x 3 seeds | Ridge |
+| submit-v10 | 0.9562 holdout | 0.95372 | 93 learners from 4 experiments | Ridge |
+| **retrain-full-v2** | **0.9557 OOF** | **0.95380** | **104 learners, full data** | **Ridge** |
+| submit-v11 | 0.9556 OOF | 0.95378 | 8 curated, full data | Ridge |
 
-### Key Findings
+### Key Findings (from previous steps)
 
-- **Retrain-full works**: Training on 100% of labeled data (train+holdout) gives +0.00008 LB improvement. This is the only change that has moved the LB needle since submit-v9.
-- **More models still helps slightly for retrain-full**: 104 learners (0.95380) edges out 8 curated (0.95378).
-- **SVM**: near-zero ensemble weight across all methods. Not useful for this dataset.
-- **Research features**: small positive Ridge weights for `catboost/research/10f` (0.125) and `xgboost_dart/research/10f` (0.081), but didn't move the LB needle.
-- **Neural models on research features**: resnet completely broken (AUC 0.72-0.86), ft_transformer degraded (0.91), only realmlp performed well (0.9547).
-- **Ridge top weights (retrain-full-v2)**: `xgboost/raw/10f` (0.42), `xgboost/forward-selected/10f` (0.26), `catboost_shallow/raw/10f` (0.26), `catboost_shallow/raw/5f` (0.22).
-- More models != better LB for holdout-evaluated ensembles. But retrain-full benefits slightly from more learners.
-
-### Experiments Available
-
-| Experiment | Runs | Models | Feature Sets | Folds |
-|---|---|---|---|---|
-| `playground-s6e2-full` | 146 | 20 models | all, raw, ablation-pruned, forward-selected | 5, 10 |
-| `playground-s6e2-diverse-v1` | 84 | 5 core models | raw, ablation-pruned, forward-selected | 5, 10 |
-| `playground-s6e2-research-v1` | ~60 | 22 models (most done) | research | 10 |
-| `playground-s6e2-svm-v1` | 24 | SVM | raw, ablation-pruned, forward-selected, research | 5, 10 |
-| `retrain-full-v2` | 360 | 19 models | raw, ablation-pruned, forward-selected | 10 |
-
-### Fixes Applied During Execution
-
-- Fixed `submit-neural` Makefile target (was missing `FEATURES` passthrough)
-- Had to `git pull` on worker node (was missing `SubsampledSVC` class)
-- Ran jobs sequentially to avoid OOM on worker (15GB RAM)
-
-## Completed Steps
-
-### 1. Pull latest code on head node — DONE
-### 2. Debug smoke test with SVM — DONE (passed)
-### 3. Train SVM across all feature sets — DONE (24/24 runs)
-
-Best SVM result: `svm/research/10f` at AUC 0.9368. Research features slightly better than other feature sets for SVM, 10 folds > 5 folds.
-
-### 4. Complete research features run — DONE (46/54, remaining 8 neural tasks skipped)
-
-All GBDTs completed on research features. Neural models: realmlp done (0.9547), resnet broken (0.72-0.86), ft_transformer degraded (0.91). Remaining ft_transformer_ple and resnet_ple tasks were skipped.
-
-### 5. Analyze ensemble across ALL experiments — DONE
-
-93 learners loaded. Ridge stacking: 0.9562 holdout AUC.
-
-### 6. Submit to Kaggle — DONE
-
-Public LB: **0.95372** (no improvement over submit-v9).
-
-### 7. Submit retrain-full-v2 — DONE (new best!)
-
-Fixed code to allow `--retrain-full` with `--from-experiment` and `--from-ensemble` (needed to set correct data dimensions: holdout=test, 270K rows, OOF AUC for method selection).
-
-- **retrain-full-v2 (all 104 learners)**: Ridge stacking, OOF AUC 0.9557, **Public LB: 0.95380** (+0.00008)
-- **submit-v11 (8 curated learners)**: xgboost/raw/10f, xgboost/ablation-pruned/10f, catboost/raw/10f, lightgbm/ablation-pruned/10f, ft_transformer/raw/10f, xgboost/raw/5f, catboost/raw/5f, ft_transformer/raw/5f. Ridge OOF AUC 0.9556, **Public LB: 0.95378**
-
-### Fixes Applied
-
-- Fixed `submit-neural` Makefile target (was missing `FEATURES` passthrough)
-- Had to `git pull` on worker node (was missing `SubsampledSVC` class)
-- Ran jobs sequentially to avoid OOM on worker (15GB RAM)
-- Allowed `--retrain-full` with `--from-experiment`/`--from-ensemble` for retrain-full ensembles
-
-## Possible Next Steps
-
-- **Blend submissions**: rank-average retrain-full-v2 (0.95380) with submit-v9 (0.95372) — different training data and weights might complement each other
-- **Train new models on full data**: retrain-full-v2 only has raw/ablation-pruned/forward-selected. Could add research features or new model variants
-- **Hyperparameter tuning**: Optuna tuning for top models (xgboost, catboost), then retrain-full with tuned params
-- **Post-processing**: isotonic calibration, probability clipping
-- **Feature engineering**: generate more candidates beyond the 6 research features
+- Retrain-full (train on 100% data) gives +0.00008 LB
+- SVM: near-zero ensemble weight, not useful
+- Research features (6 clinical): +0.00053 local AUC but no LB gain
+- Neural models on research features: resnet broken, ft_transformer degraded
+- More models != better LB for holdout-evaluated ensembles
+- 104 learners slightly edges 8 curated for retrain-full (0.95380 vs 0.95378)

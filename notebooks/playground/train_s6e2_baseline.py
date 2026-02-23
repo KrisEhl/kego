@@ -5,6 +5,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Disable Ray's auto-uv-venv feature: when running with `uv run`, Ray 2.44+
+# auto-packages the working dir and creates a fresh worker venv from pyproject.toml
+# which lacks `ray` itself, causing workers to fail. Must be set before `import ray`.
+os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
+
 import lightgbm as lgbm
 import numpy as np
 import pandas as pd
@@ -106,7 +111,7 @@ CAT_FEATURES = [
     "Number of vessels fluro",
     "Thallium",
 ]
-TE_FEATURES = ["Thallium", "Chest pain type", "Slope of ST", "EKG results"]
+TE_FEATURES = list(CAT_FEATURES)  # All 8 categoricals (expanded from 4)
 LOO_FEATURES = ["Thallium", "Slope of ST"]
 
 # Feature sets identified by select_features.py (multi-seed ablation + forward selection).
@@ -205,7 +210,10 @@ def get_models(
             "seed_key": "random_state",
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(
-                TE_FEATURES, drop_original=True, loo_features=LOO_FEATURES
+                TE_FEATURES,
+                drop_original=True,
+                loo_features=LOO_FEATURES,
+                freq_features=CAT_FEATURES,
             ),
         },
         "tabpfn": {
@@ -256,7 +264,10 @@ def get_models(
             "seed_key": "random_state",
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(
-                TE_FEATURES, drop_original=True, loo_features=LOO_FEATURES
+                TE_FEATURES,
+                drop_original=True,
+                loo_features=LOO_FEATURES,
+                freq_features=CAT_FEATURES,
             ),
         },
         # === XGBoost variants (GPU) ===
@@ -545,7 +556,9 @@ def get_models(
             "seed_key": "random_state",
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(
-                TE_FEATURES, loo_features=LOO_FEATURES
+                TE_FEATURES,
+                loo_features=LOO_FEATURES,
+                freq_features=CAT_FEATURES,
             ),
         },
         # "realmlp_large" removed — too slow for regular runs, marginal gain
@@ -565,7 +578,10 @@ def get_models(
             "seed_key": "random_state",
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(
-                TE_FEATURES, drop_original=True, loo_features=LOO_FEATURES
+                TE_FEATURES,
+                drop_original=True,
+                loo_features=LOO_FEATURES,
+                freq_features=CAT_FEATURES,
             ),
         },
         "ft_transformer": {
@@ -585,7 +601,9 @@ def get_models(
             "seed_key": "random_state",
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(
-                TE_FEATURES, loo_features=LOO_FEATURES
+                TE_FEATURES,
+                loo_features=LOO_FEATURES,
+                freq_features=CAT_FEATURES,
             ),
         },
         "resnet_ple": {
@@ -606,7 +624,10 @@ def get_models(
             "seed_key": "random_state",
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(
-                TE_FEATURES, drop_original=True, loo_features=LOO_FEATURES
+                TE_FEATURES,
+                drop_original=True,
+                loo_features=LOO_FEATURES,
+                freq_features=CAT_FEATURES,
             ),
         },
         "ft_transformer_ple": {
@@ -628,7 +649,9 @@ def get_models(
             "seed_key": "random_state",
             "use_eval_set": False,
             "fold_preprocess": make_te_preprocess(
-                TE_FEATURES, loo_features=LOO_FEATURES
+                TE_FEATURES,
+                loo_features=LOO_FEATURES,
+                freq_features=CAT_FEATURES,
             ),
         },
     }
@@ -762,6 +785,32 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     pt = PowerTransformer(method="yeo-johnson")
     df["Cholesterol_yj"] = pt.fit_transform(df[["Cholesterol"]]).ravel()
+
+    # --- Features from public top-scoring notebook ---
+    # Binary thresholds (tree-friendly explicit splits)
+    df["hypertension"] = (df["BP"] > 140).astype(int)
+    df["high_chol"] = (df["Cholesterol"] > 200).astype(int)
+    df["very_high_chol"] = (df["Cholesterol"] > 240).astype(int)
+    df["risk_age"] = (df["Age"] > 55).astype(int)
+    df["severe_vessels"] = (df["Number of vessels fluro"] >= 2).astype(int)
+
+    # Cardiology features
+    df["rate_pressure_product"] = df["Max HR"] * df["BP"] / 1000
+    df["cardiac_reserve"] = (df["Max HR"] / (220 - df["Age"])).clip(0.5, 1.2)
+    df["st_ratio"] = df["ST depression"] / (df["Max HR"] + 1)
+
+    # Composite scores
+    df["metabolic_syndrome"] = df["hypertension"] + df["high_chol"] + df["FBS over 120"]
+    df["score_proxy"] = (
+        (df["Age"] / 10).astype(int)
+        + (df["Sex"] == 1).astype(int)
+        + df["very_high_chol"]
+    )
+
+    # Interaction features
+    df["age_x_vessels"] = df["Age"] * df["Number of vessels fluro"]
+    df["rpp_x_st"] = df["rate_pressure_product"] * df["ST depression"]
+    df["chol_x_bp"] = df["Cholesterol"] * df["BP"] / 10000
 
     return df
 
