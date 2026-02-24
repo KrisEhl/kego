@@ -102,9 +102,21 @@ New `/all/` learners have small weights that cancel out; highly correlated with 
 
 Retrain XGBoost and CatBoost variants on feature set `all` (53 features) with retrain-full mode. These are the dominant ensemble contributors (top weights are all xgboost/catboost). Their improved feature representations should actually shift the ensemble.
 
-### Step 8 (when cluster available): More seeds + Optuna HP tuning
+### Step 8: Local Optuna HP tuning for CPU models ✅
 
-Increase seed pool to 5-10. Run Optuna tuning (100+ trials) for XGBoost, CatBoost, LightGBM on the new feature set.
+Ran 100-trial Optuna studies locally (50K sample, 5-fold, `all` features) for LightGBM, LogReg, and XGBoost (CPU mode). Results:
+
+| Model | Best OOF AUC | Notes |
+|---|---|---|
+| lightgbm | 0.9532 | Tuned params: num_leaves=16, max_depth=12, lr=0.0206, subsample=0.563, colsample=0.466, reg_alpha=0.328, path_smooth=73.7 |
+| xgboost (CPU) | 0.9532 | Tuned params: max_depth=3, lr=0.0129, min_child_weight=8, subsample=0.759, colsample=0.449, reg_lambda=0.031 |
+| logistic_regression | 0.9526 | Flat landscape — no improvement over default (C=1.0, lbfgs) |
+
+Added `lightgbm_tuned` and `xgboost_tuned` model variants to `get_models()`. The XGBoost tuned params use `device=cuda` for cluster use. LogReg config unchanged (converged).
+
+### Step 9 (when cluster available): More seeds + CatBoost Optuna HP tuning
+
+Increase seed pool to 5-10. Run Optuna tuning (100+ trials) for CatBoost on the cluster with GPU.
 
 ---
 
