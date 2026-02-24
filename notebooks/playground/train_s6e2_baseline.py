@@ -533,6 +533,28 @@ def get_models(
             "kwargs_fit": {"verbose": 500},
             "convert_cat_dtype": True,
         },
+        "xgboost_tuned_cpu": {
+            "model": GPUXGBClassifier,
+            "kwargs": {
+                "n_estimators": 2000,
+                "max_depth": 3,
+                "learning_rate": 0.0129,
+                "min_child_weight": 8,
+                "subsample": 0.759,
+                "colsample_bytree": 0.449,
+                "reg_alpha": 1.55e-5,
+                "reg_lambda": 0.031,
+                "eval_metric": "auc",
+                "early_stopping_rounds": 100,
+                "tree_method": "hist",
+                "device": "cpu",
+                "enable_categorical": True,
+                "random_state": 42,
+            },
+            "seed_key": "random_state",
+            "kwargs_fit": {"verbose": 500},
+            "convert_cat_dtype": True,
+        },
         # === CatBoost variants (GPU) ===
         "catboost": {
             "model": CatBoostClassifier,

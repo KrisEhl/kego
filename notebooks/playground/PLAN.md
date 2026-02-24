@@ -114,9 +114,31 @@ Ran 100-trial Optuna studies locally (50K sample, 5-fold, `all` features) for Li
 
 Added `lightgbm_tuned` and `xgboost_tuned` model variants to `get_models()`. The XGBoost tuned params use `device=cuda` for cluster use. LogReg config unchanged (converged).
 
-### Step 9 (when cluster available): More seeds + CatBoost Optuna HP tuning
+### Step 9: Local multi-seed validation ✅ — LightGBM only, cluster needed for full test
 
-Increase seed pool to 5-10. Run Optuna tuning (100+ trials) for CatBoost on the cluster with GPU.
+Trained `lightgbm_tuned` + `lightgbm_large` + `logistic_regression` × 5 seeds locally, `all` features, 5-fold CV (standard mode):
+
+| Model | Holdout AUC (avg 5 seeds) |
+|---|---|
+| lightgbm_tuned | **0.9558** |
+| lightgbm_large | 0.9557 |
+| logistic_regression | 0.9538 |
+| Ridge ensemble (all 15 learners) | 0.9558 |
+
+`lightgbm_tuned` is the best LightGBM variant. Ridge gives `lightgbm_tuned` 78% weight, `lightgbm_large` 27%, LogReg −5% (hurts). Multi-seed LightGBM alone ≈ existing 104-learner ensemble quality, but **single-family submission would score ~0.953 LB** (worse than 0.95380). The bottleneck is XGBoost/CatBoost diversity.
+
+### Step 10 (when cluster available): Tuned multi-family multi-seed submission
+
+Run all 3 GBDT families with tuned params + many seeds:
+```bash
+make submit-diverse \
+  TAG=tuned-v1 \
+  DIVERSE_MODELS="lightgbm_tuned xgboost_tuned catboost" \
+  DIVERSE_FEATURES="all" \
+  DIVERSE_FOLDS="5 10" \
+  SEEDS_PER_LEARNER=5
+```
+30 learners (3 families × 2 fold counts × 5 seeds) vs public notebook's ~15. Should beat 0.95380.
 
 ---
 
