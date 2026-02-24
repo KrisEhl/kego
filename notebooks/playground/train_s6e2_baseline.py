@@ -555,6 +555,26 @@ def get_models(
             "kwargs_fit": {"verbose": 500},
             "convert_cat_dtype": True,
         },
+        "catboost_cpu": {
+            "model": CatBoostClassifier,
+            "kwargs": {
+                "iterations": 2000,
+                "depth": 6,
+                "learning_rate": 0.05,
+                "eval_metric": "AUC",
+                "early_stopping_rounds": 100,
+                "task_type": "CPU",
+                "thread_count": -1,
+                "subsample": 0.8,
+                "bootstrap_type": "Bernoulli",
+                "l2_leaf_reg": 3.0,
+                "random_strength": 1.5,
+                "cat_features": CAT_FEATURES,
+                "random_seed": 77,
+                "verbose": 500,
+            },
+            "seed_key": "random_seed",
+        },
         # === CatBoost variants (GPU) ===
         "catboost": {
             "model": CatBoostClassifier,
@@ -1139,7 +1159,10 @@ def _run_optuna_study(
 
     # Determine Ray resource options for tuning.
     # XGBoost tuning uses CPU mode (device: "cpu" in search space).
-    if model_name.startswith("xgboost"):
+    # Models ending in _cpu always use CPU resources regardless of prefix.
+    if model_name.endswith("_cpu"):
+        resource_opts = {"num_cpus": 8}
+    elif model_name.startswith("xgboost"):
         resource_opts = {"num_cpus": 8}
     elif model_name.startswith("catboost"):
         resource_opts = {"num_gpus": 0.5, "num_cpus": 1}
@@ -1488,7 +1511,9 @@ def _train_ensemble(
                 seeds_per_lid[learner_id] = len(learner_seeds)
                 learner_index += 1
 
-                is_gpu = any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
+                is_gpu = not model_name.endswith("_cpu") and any(
+                    model_name.startswith(p) for p in GPU_MODEL_PREFIXES
+                )
                 is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
 
                 for seed in learner_seeds:
@@ -1499,7 +1524,9 @@ def _train_ensemble(
                         skipped += 1
                         continue
 
-                    if model_name.startswith("catboost"):
+                    if model_name.endswith("_cpu"):
+                        opts = {"num_cpus": 8}
+                    elif model_name.startswith("catboost"):
                         opts = {"num_gpus": 0.5, "num_cpus": 1}
                     elif model_name.startswith("tabpfn"):
                         opts = {
