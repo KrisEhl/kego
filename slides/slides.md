@@ -110,7 +110,7 @@ Synthetic test data  (270K rows)  →  Kaggle evaluates here
 
 <v-click>
 
-> **Pro tip we used:** append the original 270 real rows to training data. Every tiny bit of real signal helps.
+> **We also appended the original 270 real rows to training data** — measured impact: +0.00001 AUC (noise level). 270 rows in 630K is just 0.04% of the data.
 
 </v-click>
 
@@ -238,11 +238,11 @@ Built a full GPU cluster to train everything in parallel:
 
 ## The result?
 
-| Ensemble | LB Score |
+| Ensemble | AUC gain |
 |----------|----------|
-| 8 good models | **0.95372** |
-| 65 learners | 0.95372 |
-| 104 learners | **0.95380** ✨ |
+| 8 good models | **+0.00018** |
+| 65 learners | +0.00018 |
+| 104 learners | **+0.00026** ✨ |
 
 </v-click>
 
@@ -291,7 +291,7 @@ We ran a full ablation study — remove one feature at a time, see what happens.
 
 ::right::
 
-<div class="ml-8 mt-6">
+<div class="ml-8 mt-2 text-sm">
 
 <v-click>
 
@@ -299,40 +299,46 @@ We ran a full ablation study — remove one feature at a time, see what happens.
 
 Trees already discover `Max HR / Age` internally. Adding it explicitly creates a **redundant, noisy split candidate** that dilutes feature sampling.
 
-> Permutation importance and ablation importance disagree on this feature — a good sign you have multicollinearity.
+Permutation importance and ablation importance disagree on this feature — a sign of multicollinearity.
 
 </v-click>
 
 <v-click>
 
-**Result: pruned from 35 → 21 features**
-LightGBM AUC: `0.95039 → 0.95122` (+0.00083)
+**Result: pruned 35 → 21 features**
+LightGBM AUC: +0.00083
 
 </v-click>
 
 </div>
 
 ---
+layout: two-cols
+---
 
 ## Adding clinical domain knowledge
 
-We added 13 features from cardiology literature:
+<div class="text-sm">
 
-<v-clicks>
+13 features from cardiology literature:
 
-| Feature | Formula | Rationale |
-|---------|---------|-----------|
-| `rate_pressure_product` | Max HR × BP / 1000 | Cardiac oxygen demand |
-| `cardiac_reserve` | Max HR / (220 − Age) | How hard is heart working? |
-| `framingham_partial` | Log(age/chol/bp) score | 50-year validated clinical risk score |
-| `metabolic_syndrome` | hypertension + high_chol + FBS | Composite risk signal |
-| `cholesterol_squared` | Chol² | U-shaped risk relationship |
+| Feature | Rationale |
+|---------|-----------|
+| `rate_pressure_product` | Cardiac oxygen demand |
+| `cardiac_reserve` | How hard is heart working? |
+| `framingham_partial` | 50-year validated risk score |
+| `metabolic_syndrome` | Composite risk signal |
+| `cholesterol_squared` | U-shaped risk relationship |
 
-</v-clicks>
+</div>
+
+::right::
+
+<div class="ml-8 mt-12">
 
 <v-click>
 
-**Local validation: +0.00053 AUC** with LightGBM 🎉
+**Local validation: +0.00053 AUC** 🎉
 
 **Leaderboard: +0.00000** 😐
 
@@ -340,9 +346,15 @@ We added 13 features from cardiology literature:
 
 <v-click>
 
-*Why?* The CPU models that gained from these features have tiny Ridge weights. The dominant GPU models (XGBoost, CatBoost) weren't retrained with the new features. **The untested experiment is still pending.**
+**Why the gap?**
+
+Only weak CPU models were retrained with these features. The dominant GPU models (XGBoost, CatBoost) haven't seen them yet.
+
+*That experiment is still pending on the cluster.*
 
 </v-click>
+
+</div>
 
 ---
 layout: fact
@@ -566,7 +578,7 @@ layout: two-cols
 
 - **UMAP features**: −0.055 AUC (worst experiment)
 - **More models** (65 vs 8): zero LB gain
-- **Pseudo-labeling**: no improvement on synthetic data
+- **Hard-label pseudo-labeling**: one early attempt, results inconclusive *(testing properly now)*
 - **SVM**: near-zero weight in every ensemble
 - **L2 stacking** (non-linear meta-models): no gain over Ridge
 - **Clinical features (CPU only)**: +0.00053 local, 0.00000 LB
