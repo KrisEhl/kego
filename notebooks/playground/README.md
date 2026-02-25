@@ -198,9 +198,21 @@ uv run python notebooks/playground/train_s6e2_baseline.py --resume playground-s6
 
 ## Current Best
 
-- **Leaderboard (public)**: 0.95380
+- **Leaderboard (public)**: 0.95380 (~rank 490 / 3,593)
 - **OOF AUC (ensemble)**: 0.9557
 - **Method**: Ridge stacking over 104 learners trained on full data (retrain-full-v2)
+- **Bronze cutoff**: ~0.95395 (~+0.00015 away, as of 2026-02-25 — leaderboard has moved up)
+
+### Top of Leaderboard (2026-02-25)
+
+| Rank | Team | Score |
+|------|------|-------|
+| 1 | Pirhosseinlou | 0.95414 |
+| 2 | Tshithihi | 0.95410 |
+| 3 | Chris Deotte | 0.95410 |
+| 4–20 | *(cluster of ~17 teams)* | 0.95408 |
+| ~360 | *(bronze cutoff, est.)* | ~0.95395 |
+| **~490** | **Us** | **0.95380** |
 
 ## Local Validation vs Leaderboard
 

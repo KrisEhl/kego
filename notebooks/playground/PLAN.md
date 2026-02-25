@@ -1,21 +1,24 @@
 # Plan: Next Steps — Maximize LB Score
 
-## Status (2026-02-23)
+## Status (2026-02-25)
 
 Current best: **0.95380 LB** (retrain-full-v2, 104 learners, Ridge stacking).
-Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff ~0.95388 (+0.00008 needed).
+Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff has moved up — estimated ~0.95395 (+0.00015 needed).
 
-### Leaderboard Context
+### Leaderboard Context (as of 2026-02-25)
 
 | Position | Score | Gap |
 |---|---|---|
 | #1 (Pirhosseinlou) | 0.95414 | +0.00034 |
-| #2-4 (Deotte et al.) | 0.95407 | +0.00027 |
-| #5-75 (71 teams, public notebook cluster) | 0.95406 | +0.00026 |
-| Bronze (~top 10%) | ~0.95388 | +0.00008 |
-| **Us** | **0.95380** | — |
+| #2 (Tshithihi) | 0.95410 | +0.00030 |
+| #3 (Chris Deotte) | 0.95410 | +0.00030 |
+| #4–20 (~17 teams) | 0.95408 | +0.00028 |
+| Bronze (~top 10%, ~rank 360) | ~0.95395 | ~+0.00015 |
+| **Us (~rank 490)** | **0.95380** | — |
 
-The 71-team cluster at 0.95406 comes from the public "S6E2 Heart Disease Top1 Multi Seed" notebook. Analysis shows **the gap is primarily in features**, not models — they score 0.95406 with just 3 GBDTs + 5 seeds, while we have 104 learners.
+**Leaderboard has moved since last check:** the cluster that was at 0.95406 has now risen to 0.95408, and new entries at 0.95410 have appeared. The bronze cutoff has shifted up — what was +0.00008 away is now estimated at +0.00015. The gap is wider than previously thought.
+
+The cluster at 0.95408 comes from the public "S6E2 Heart Disease Top1 Multi Seed" notebook. Analysis shows **the gap is primarily in HP quality and GPU model tuning**, not architecture — they score 0.95408 with just 3 GBDTs + 5 seeds, while we have 104 learners.
 
 ### Key Features We're Missing (from public notebook)
 
