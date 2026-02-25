@@ -798,8 +798,8 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
 | CatBoost tuned × 5 seeds × 5+10 folds | Highest Ridge weight, never tuned | ✨ * |
 | All 3 GBDTs on 53 features | XGBoost and CatBoost haven't seen the 53-feature set yet | ✨ * |
 | Neural nets (ResNet, FT-Transformer, RealMLP) | Structural diversity, low weight ≠ zero | ✅ |
-| Ridge meta-learner | Proven best combiner | ✅ |
 | Retrain on full data | Every labeled row counts | ✨ * |
+| Ridge meta-learner | Proven best combiner | ✨ * |
 
 <v-click>
 
