@@ -387,16 +387,48 @@ Only weak CPU models were retrained with these features. The dominant GPU models
 </div>
 
 ---
-layout: fact
+layout: two-cols
 ---
 
-# −0.05513
+## The UMAP debacle
 
-the AUC drop from adding UMAP features
+# −0.05513 AUC
 
-<div class="text-xl text-gray-400 mt-4">
-  Our worst experiment. UMAP embeddings of the training data <br/>
-  leaked fold structure — <em>catastrophically</em> overfit to the validation set.
+Our single worst experiment.
+
+<v-clicks>
+
+**The idea:** UMAP compresses many features into 2D "neighbourhood" coordinates. If similar patients cluster together, those coordinates become a powerful new feature.
+
+**What actually happened:** UMAP was fitted on the *entire* training fold — including the validation rows. The embeddings therefore encoded which cluster each validation row belonged to, effectively leaking the answer.
+
+</v-clicks>
+
+::right::
+
+<div class="ml-8 mt-4">
+
+<v-click>
+
+```
+Normal feature:  model learns a general signal
+                 → generalises to new data ✓
+
+UMAP coordinate: encodes exact position in
+                 *this fold's* training set
+                 → memorises, doesn't generalise ✗
+```
+
+</v-click>
+
+<v-click>
+
+**The fix** is to fit UMAP only on the training rows of each fold, never touching validation rows. A one-line mistake with a −0.055 price tag.
+
+> Validation AUC looked amazing. Leaderboard told the truth.
+
+</v-click>
+
 </div>
 
 ---
