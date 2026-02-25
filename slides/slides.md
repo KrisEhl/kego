@@ -353,7 +353,7 @@ We ran a full ablation study — remove one feature at a time, see what happens.
 
 ::right::
 
-<div class="ml-8 mt-2">
+<div class="ml-8">
 
 <v-click>
 
@@ -378,8 +378,6 @@ layout: two-cols
 
 ## Two ways to measure importance
 
-<div class="text-sm">
-
 **Permutation importance** — shuffle one feature's values, measure how much model performance drops. Fast, model-agnostic.
 
 <v-click>
@@ -401,8 +399,6 @@ retrain without "Max HR / Age" → AUC improves +0.00031
 ```
 
 </v-click>
-
-</div>
 
 ::right::
 
@@ -454,7 +450,7 @@ layout: two-cols
 
 ::right::
 
-<div class="ml-8 mt-12">
+<div class="ml-8">
 
 <v-click>
 
@@ -496,7 +492,7 @@ Our single worst experiment.
 
 ::right::
 
-<div class="ml-8 mt-4">
+<div class="ml-8">
 
 <v-click>
 
