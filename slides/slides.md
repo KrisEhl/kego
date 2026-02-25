@@ -22,6 +22,27 @@ One challenge · 3,593 teams · and a gap of **0.00015** AUC
 </div>
 
 ---
+
+## A note on AI-assisted development
+
+Most of the code and brainstorming in this project was written with **Claude Code**.
+
+<v-clicks>
+
+- **Generally impressive** — feature engineering ideas, ensemble analysis, cluster setup scripts, experiment design
+- **Infrastructure lifesaver** — setting up Ray across two machines, MLflow tracking, Makefile automation: things I would have spent days on took hours
+- **But not infallible** — occasionally ran in the wrong direction, contradicted earlier findings, or simply forgot things we had already established
+- **Needed supervision** — results still had to be interpreted and judged by a human; the AI is a very fast junior collaborator, not an autopilot
+
+</v-clicks>
+
+<v-click>
+
+*A lot of fun to work with. Just don't look away for too long.*
+
+</v-click>
+
+---
 layout: section
 ---
 
