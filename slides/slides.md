@@ -789,6 +789,54 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
 </v-clicks>
 
 ---
+layout: two-cols
+---
+
+## The planned final submission
+
+If everything goes to plan, the next submission combines all remaining levers at once.
+
+<v-clicks>
+
+**Tuned CatBoost** — Optuna-tuned, 5 seeds × 5+10 folds
+
+**Tuned XGBoost** — already tuned, same seed/fold sweep on GPU
+
+**Tuned LightGBM** — already tuned, same sweep
+
+**All three on 53 features** — clinical features tested on GPU models for the first time
+
+</v-clicks>
+
+::right::
+
+<div class="ml-8">
+
+<v-click>
+
+## Expected stack
+
+| Component | Why |
+|-----------|-----|
+| 3 tuned GBDTs × 5 seeds | Core signal |
+| 5+10 fold variants | Diversity from fold count |
+| 53-feature variants | Untested clinical upside |
+| Ridge meta-learner | Proven best combiner |
+| Retrain on full data | Every row counts |
+
+</v-click>
+
+<v-click>
+
+Current best: **0.95380** · Gap to top: **0.00034**
+
+If CatBoost tuning alone delivers half of what LightGBM tuning did (+0.00083 local), this could be our biggest single jump yet.
+
+</v-click>
+
+</div>
+
+---
 layout: fact
 ---
 
