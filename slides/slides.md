@@ -70,7 +70,7 @@ A patient walks into a clinic. From 13 basic measurements, can we predict whethe
 
 ::right::
 
-<div class="ml-8 mt-4">
+<div class="ml-8">
 
 ## The metric: AUC
 
