@@ -231,6 +231,14 @@ Built a Ray cluster to train everything in parallel:
 
 </v-clicks>
 
+<v-click>
+
+<div class="mt-3 p-2 bg-orange-500 bg-opacity-15 border border-orange-400 rounded text-sm">
+  ⚠️ Reality check: CPU tasks occasionally hung silently, jobs needed manual restarts, and results had to be recovered from MLflow. Distributed training is powerful — and fiddly.
+</div>
+
+</v-click>
+
 ::right::
 
 <div class="ml-8 mt-4">
