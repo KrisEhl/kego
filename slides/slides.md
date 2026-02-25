@@ -227,15 +227,11 @@ layout: section
 
 ## What is ensembling?
 
-<v-clicks>
+<v-click>
 
 - Train many different models on the same data
 - Combine their predictions — usually a weighted average
 - Each model makes *different* mistakes → averaging cancels errors out
-
-</v-clicks>
-
-<v-click>
 
 ```python
 # Simple average (naive)
@@ -280,8 +276,7 @@ Built a Ray cluster to train everything in parallel:
 
 <v-clicks>
 
-- 19 different model architectures · 3 feature sets × 2 fold counts × 3 seeds
-- **104 learners** trained in parallel across the cluster
+- 19 architectures × 3 feature sets × 2 fold counts × 3 seeds — **104 learners** completed (not all finished)
 
 </v-clicks>
 
@@ -377,7 +372,7 @@ LightGBM AUC: +0.00083
 layout: two-cols
 ---
 
-## Two ways to measure importance
+## Two ways to measure importance — `Max HR / Age`
 
 <v-click>
 
@@ -668,21 +663,19 @@ layout: section
 
 <v-clicks>
 
-| Step | What changed | AUC gain | Still need |
-|------|-------------|----------|------------|
-| Baseline (3 GBDTs) | Starting point | +0 | −0.00041 |
-| More model types | Added 5 models | +0.00006 | −0.00035 |
-| Neural networks | ResNet, FT-Transformer | +0.00018 | −0.00023 |
-| 104 learners | Cluster training | +0.00018 | −0.00023 |
-| Retrain on full data | No holdout held out | **+0.00026** | **−0.00015** |
+| Step | What changed | AUC gain |
+|------|-------------|----------|
+| Baseline (3 GBDTs) | Starting point | +0 |
+| More model types | LR, RF, Extra Trees, XGB-reg, LGB-DART | +0.00006 |
+| Neural networks | ResNet, FT-Transformer | +0.00018 |
+| 104 learners | Cluster training | +0.00018 |
+| Retrain on full data | No holdout held out | **+0.00026** |
 
 </v-clicks>
 
 <v-click>
 
 The gap between rank 1 and rank 543 is just **0.00034 AUC**.
-
-We need to correctly rank **15 more patients** out of every **100,000**.
 
 </v-click>
 
@@ -715,7 +708,6 @@ layout: two-cols
 - **Pseudo-labeling** (hard and soft): soft labels collapse to 0.929 → 0.70
 - **SVM**: near-zero weight in every ensemble
 - **L2 stacking** (non-linear meta-models): no gain over Ridge
-- **Clinical features (CPU only)**: +0.00053 local, 0.00000 LB
 
 </v-clicks>
 
@@ -758,11 +750,13 @@ Everything we tried — same LB score either way.
 
 <v-click>
 
-65 = 19 model types × 3 feature sets × 2 fold counts.
+65 learners across 19 model types, 3 feature sets, and 2 fold counts.*
 
 Ridge stacking assigned near-zero weight to neural nets, SVM, Random Forest, and TabPFN. The same 8 core GBDT learners dominated every time.
 
 **Diversity matters. Volume doesn't.**
+
+<div class="absolute bottom-6 left-12 text-xs text-gray-400">* 19 × 3 × 2 = 114 theoretical — GPU OOM errors and job timeouts meant not all runs completed.</div>
 
 </v-click>
 
