@@ -140,7 +140,7 @@ Synthetic test data  (270K rows)  →  Kaggle evaluates here
 
 ## The data at a glance
 
-<img src="./feature_scatter.png" class="w-full mt-2" />
+<img src="./feature_scatter.png" class="w-full -mt-2" style="max-height: 88%; object-fit: contain;" />
 
 ---
 
