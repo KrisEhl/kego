@@ -706,7 +706,7 @@ layout: two-cols
 <v-clicks>
 
 - **UMAP features**: −0.055 AUC (worst experiment)
-- **More models** (65 vs 8): zero LB gain
+- **More models** (65 vs 8): zero LB gain — 19 model types including neural nets (ResNet, FT-Transformer, RealMLP), Random Forest, SVM, TabPFN across 3 feature sets × 2 fold counts. Ridge found the same 8 learners were sufficient.
 - **Pseudo-labeling** (hard and soft): both attempted — soft labels collapse the model to ~0.929 in round 1, then 0.70 after iteration. Test distribution too noisy to help.
 - **SVM**: near-zero weight in every ensemble
 - **L2 stacking** (non-linear meta-models): no gain over Ridge
