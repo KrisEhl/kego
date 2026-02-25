@@ -33,6 +33,7 @@ Most of the code and brainstorming in this project was written with **Claude Cod
 - **Infrastructure lifesaver** — setting up Ray across two machines, MLflow tracking, Makefile automation: things I would have spent days on took hours
 - **But not infallible** — occasionally ran in the wrong direction, contradicted earlier findings, or simply forgot things we had already established
 - **Needed supervision** — results still had to be interpreted and judged by a human; the AI is a very fast junior collaborator, not an autopilot
+- **These slides** — built with [sli.dev](https://sli.dev), also written by Claude. Cringe level may vary.
 
 </v-clicks>
 
