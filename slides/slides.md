@@ -412,15 +412,17 @@ retrain without "Max HR / Age" → AUC improves +0.00031
 
 ## Why do they disagree?
 
-**Multicollinearity.** `Max HR / Age` is highly correlated with both `Max HR` and `Age`, which are already in the model.
+**The tree structure is frozen.** When permutation runs, the model is already trained — its split nodes are locked in.
 
 </v-click>
 
 <v-clicks>
 
-- **Permutation importance** shuffles only *one* feature — the others still carry the same signal. The model looks lost without it, but only because it can no longer use the correlated copy.
+- During training the model learned: *"at node 47, split on `Max HR / Age` > 1.8"*
+- Permutation shuffles that column → node 47 now receives random garbage → wrong predictions
+- `Max HR` and `Age` are intact but **the model has no path to reach them at that node** — the topology can't change
 
-- **Ablation importance** removes the feature *before training* — the model simply learns the same signal directly from `Max HR` and `Age` instead. No loss at all.
+- **Ablation** removes the feature before training. The model never commits to it — it learns to extract the same signal from `Max HR` and `Age` directly. No damage.
 
 - The disagreement is the tell: **the feature adds no unique information**, it just duplicates what's already there — noisily.
 
