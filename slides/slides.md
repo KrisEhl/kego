@@ -3,7 +3,7 @@ theme: seriph
 title: "Chasing Bronze: Predicting Heart Disease on Kaggle"
 info: |
   Kaggle Playground Series S6E2 — Heart Disease Classification
-  A story of 3,593 teams, 630,000 patients, and 0.00008 AUC.
+  A story of 3,593 teams, 630,000 patients, and 0.00015 AUC.
 highlighter: shiki
 drawings:
   persist: false
@@ -15,7 +15,7 @@ mdc: true
 
 ### Predicting Heart Disease on Kaggle
 
-One challenge · 3,593 teams · and a gap of **0.00008** AUC
+One challenge · 3,593 teams · and a gap of **0.00015** AUC
 
 <div class="pt-12 text-gray-400">
   Kaggle Playground Series — Season 6, Episode 2
@@ -167,7 +167,7 @@ Already top 20% of 3,593 teams with a simple ensemble. Not bad for day one.
 
 <v-click>
 
-But the bronze cutoff is **0.95388**. We need 4 more decimal places. 🥉
+But the bronze cutoff is **~0.95395**. We need 5 more decimal places. 🥉
 
 </v-click>
 
@@ -445,7 +445,7 @@ Going from 1 to 5 seeds cuts variance by **√5 ≈ 2.2×**
 
 <v-click>
 
-The public **top notebook** on this competition uses exactly **3 GBDTs × 5 seeds** — and scores **0.95406**, beating our 104-model ensemble.
+The public **top notebook** on this competition uses exactly **3 GBDTs × 5 seeds** — and scores **0.95408**, beating our 104-model ensemble.
 
 → The gap is in HP quality, not model count.
 
@@ -491,6 +491,33 @@ layout: section
 
 ---
 
+## Live leaderboard — today
+
+<div class="text-sm font-mono">
+
+| # | Team | Score | |
+|---|------|-------|-|
+| 1 | Pirhosseinlou | 0.95414 | |
+| 2 | Tshithihi | 0.95410 | |
+| 3 | Chris Deotte | 0.95410 | |
+| 4–20 | *(cluster of ~17 teams)* | 0.95408 | |
+| **~21** | **🥇🥈🥉 Bronze cutoff** | **~0.95395** | ← estimated |
+| … | *~450 teams* | … | |
+| **~490** | **KrisEhl (us) 🎯** | **0.95380** | **−0.00015 to bronze** |
+| 3,593 | last place | … | |
+
+</div>
+
+<v-click>
+
+<div class="mt-4 p-3 bg-yellow-500 bg-opacity-20 border border-yellow-400 rounded text-sm">
+  ⚠️ The leaderboard has moved since we last checked — new entries at <strong>0.95410</strong> and a cluster at <strong>0.95408</strong> have appeared today. Bronze cutoff is shifting up.
+</div>
+
+</v-click>
+
+---
+
 ## The leaderboard story
 
 <v-clicks>
@@ -501,15 +528,15 @@ layout: section
 | More model types | Added 5 models | 0.95360 | −0.00028 |
 | Neural networks | ResNet, FT-Transformer | 0.95372 | −0.00016 |
 | 104 learners | Cluster training | 0.95372 | −0.00016 |
-| Retrain on full data | No holdout held out | **0.95380** | **−0.00008** |
+| Retrain on full data | No holdout held out | **0.95380** | **−0.00015** |
 
 </v-clicks>
 
 <v-click>
 
-🥉 **Bronze cutoff: 0.95388**
+🥉 **Bronze cutoff: ~0.95395**
 
-We need to correctly rank **8 more patients** out of every **100,000**.
+We need to correctly rank **15 more patients** out of every **100,000**.
 
 </v-click>
 
@@ -577,13 +604,13 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
 layout: fact
 ---
 
-# 0.00008
+# 0.00015
 
 the AUC gap to the bronze medal
 
 <div class="text-xl text-gray-400 mt-4">
   That's the difference between correctly ranking<br/>
-  8 extra patients per 100,000.
+  15 extra patients per 100,000.
 </div>
 
 <div class="text-lg text-gray-500 mt-4">
@@ -613,7 +640,7 @@ class: text-center
 
 <v-click>
 
----
+<hr class="mt-8 mb-6 opacity-30"/>
 
 *Thanks for listening — questions welcome!*
 
