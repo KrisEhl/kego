@@ -44,6 +44,26 @@ Most of the code and brainstorming in this project was written with **Claude Cod
 </v-click>
 
 ---
+
+## Where we stand right now
+
+<div class="text-sm font-mono">
+
+| # | Team | vs. us |
+|---|------|--------|
+| 1 | Pirhosseinlou | +0.00034 |
+| 2 | Tshithihi | +0.00030 |
+| 3 | Chris Deotte | +0.00030 |
+| 4–20 | *(cluster of ~17 teams)* | +0.00028 |
+| **~21** | **🥇🥈🥉 Bronze cutoff** | **+0.00015** |
+| … | *~480 teams* | … |
+| **543** | **Kristian (us) 🎯** | **0** ← we are here |
+| 1,000 | *(reference)* | −0.00021 |
+| 2,000 | *(reference)* | −0.00051 |
+
+</div>
+
+---
 layout: section
 ---
 
@@ -563,27 +583,6 @@ layout: section
 ---
 
 # Where We Stand
-
----
-
-## Live leaderboard — today
-
-<div class="text-sm font-mono">
-
-| # | Team | vs. us |
-|---|------|--------|
-| 1 | Pirhosseinlou | +0.00034 |
-| 2 | Tshithihi | +0.00030 |
-| 3 | Chris Deotte | +0.00030 |
-| 4–20 | *(cluster of ~17 teams)* | +0.00028 |
-| **~21** | **🥇🥈🥉 Bronze cutoff** | **+0.00015** |
-| … | *~480 teams* | … |
-| **543** | **Kristian (us) 🎯** | **0** ← we are here |
-| 1,000 | *(reference)* | −0.00021 |
-| 2,000 | *(reference)* | −0.00051 |
-| 3,882 | last place | … |
-
-</div>
 
 ---
 
