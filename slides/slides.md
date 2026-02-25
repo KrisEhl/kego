@@ -610,6 +610,8 @@ The public **top notebook** on this competition uses exactly **3 GBDTs × 5 seed
 </div>
 
 ---
+layout: two-cols
+---
 
 ## Why XGBoost needs a GPU
 
@@ -625,19 +627,29 @@ We tried training everything locally (MacBook, CPU only):
 
 </v-click>
 
-<v-clicks>
+::right::
 
-**Why the gap?**
+<div class="ml-8">
 
-- LightGBM: *leaf-wise* tree growth — only grows where it helps most
+<v-click>
+
+## Why the gap?
+
+- LightGBM: *leaf-wise* growth — only expands the most promising leaf
 - XGBoost: *level-wise* growth — processes every node at every depth
 - On 504K rows × 53 features, this compounds hard
+
+</v-click>
+
+<v-click>
 
 GPU fixes XGBoost: **~2 min/seed** (15× speedup). CUDA parallelises tree building across thousands of cores simultaneously.
 
 And no — Apple Silicon (Metal/MPS) doesn't help here. XGBoost is **CUDA only**.
 
-</v-clicks>
+</v-click>
+
+</div>
 
 ---
 layout: section
