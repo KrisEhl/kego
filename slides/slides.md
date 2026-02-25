@@ -800,11 +800,11 @@ If everything goes to plan, the next submission combines all remaining levers at
 
 **Tuned CatBoost** — Optuna-tuned, 5 seeds × 5+10 folds
 
-**Tuned XGBoost** — already tuned, same seed/fold sweep on GPU
+**Tuned XGBoost + LightGBM** — already tuned, same sweep on GPU
 
-**Tuned LightGBM** — already tuned, same sweep
+**All three on 53 features** — clinical features on GPU models for the first time
 
-**All three on 53 features** — clinical features tested on GPU models for the first time
+**Neural nets** (ResNet, FT-Transformer, RealMLP) — lower individual AUC but structurally different predictions. Ridge gives them low weight, not zero. Worth including when the cluster is running anyway.
 
 </v-clicks>
 
@@ -819,8 +819,9 @@ If everything goes to plan, the next submission combines all remaining levers at
 | Component | Why |
 |-----------|-----|
 | 3 tuned GBDTs × 5 seeds | Core signal |
-| 5+10 fold variants | Diversity from fold count |
+| 5+10 fold variants | Fold count diversity |
 | 53-feature variants | Untested clinical upside |
+| Neural nets (3 types) | Structural diversity |
 | Ridge meta-learner | Proven best combiner |
 | Retrain on full data | Every row counts |
 
@@ -830,7 +831,7 @@ If everything goes to plan, the next submission combines all remaining levers at
 
 Current best: **0.95380** · Gap to top: **0.00034**
 
-If CatBoost tuning alone delivers half of what LightGBM tuning did (+0.00083 local), this could be our biggest single jump yet.
+If CatBoost tuning delivers half of what LightGBM tuning did (+0.00083 local), this could be our biggest single jump yet.
 
 </v-click>
 
