@@ -127,18 +127,104 @@ Trained `lightgbm_tuned` + `lightgbm_large` + `logistic_regression` × 5 seeds l
 
 `lightgbm_tuned` is the best LightGBM variant. Ridge gives `lightgbm_tuned` 78% weight, `lightgbm_large` 27%, LogReg −5% (hurts). Multi-seed LightGBM alone ≈ existing 104-learner ensemble quality, but **single-family submission would score ~0.953 LB** (worse than 0.95380). The bottleneck is XGBoost/CatBoost diversity.
 
-### Step 10 (when cluster available): Tuned multi-family multi-seed submission
+### Step 9b: 3-family CPU multi-seed test ✅
 
-Run all 3 GBDT families with tuned params + many seeds:
+Trained `lightgbm_tuned + catboost_cpu + xgboost_tuned_cpu` × 5 seeds locally, `all` features, 5-fold CV:
+
+| Model | Holdout AUC (avg 5 seeds) |
+|---|---|
+| lightgbm_tuned | 0.9558 |
+| catboost_cpu | **0.9558** |
+| xgboost_tuned_cpu (CPU) | 0.9553 |
+| Ridge ensemble | **0.9559** |
+
+Ridge weights: catboost_cpu=0.761, lightgbm_tuned=0.578, xgboost_tuned_cpu=**−0.339** (negative!).
+
+Key findings:
+- 3-family diversity gives +0.0001 over single-family (0.9559 vs 0.9558)
+- XGBoost gets negative Ridge weight — the CPU tuned variant underperforms the GPU version. On cluster, use `xgboost_tuned` (device=cuda) instead.
+- Estimated LB: ~0.9538 (gap of 0.0018-0.0020 from holdout) — potentially just above bronze cutoff (0.95388)
+
+### Step 9c: 2-family CPU multi-seed test ✅
+
+Trained `lightgbm_tuned + catboost_cpu` × 5 seeds, `all` features, 5+10 folds:
+
+| Learner | Holdout AUC (avg 5 seeds) |
+|---|---|
+| lightgbm_tuned/all/5f | 0.9558 |
+| lightgbm_tuned/all/10f | 0.9558 |
+| catboost_cpu/all/5f | 0.9558 |
+| catboost_cpu/all/10f | **0.9559** |
+| Ridge ensemble (20 learners) | **0.9559** |
+
+Ridge weights: lgbm/10f=0.877, cb/10f=0.644, cb/5f=0.033, lgbm/5f=**−0.553** (5f redundant given 10f).
+
+Key findings:
+- Adding more seeds and fold counts doesn't move the needle beyond 0.9559 for 2-family CPU
+- The CPU-only ceiling is 0.9559 holdout → estimated LB ~0.9533 (well below current best 0.95380)
+- XGBoost GPU is required to push past this ceiling — no path around it on local Mac (CUDA-only, no Metal/MPS support)
+- **Conclusion: cluster is required for the next LB improvement**
+
+---
+
+## Next Steps (requires cluster)
+
+### Step 10: Run tuned 3-family multi-seed ensemble on cluster
+
+When cluster is available, run `lightgbm_tuned + xgboost_tuned + catboost` with GPU acceleration:
+
 ```bash
-make submit-diverse \
+# 1. Pull latest code on head node
+ssh kristian@omarchyd.fritz.box "cd /home/kristian/projects/kego && git pull"
+
+# 2. Submit diverse training job
+cd cluster && make submit-diverse \
   TAG=tuned-v1 \
   DIVERSE_MODELS="lightgbm_tuned xgboost_tuned catboost" \
-  DIVERSE_FEATURES="all" \
+  DIVERSE_FEATURES="all ablation-pruned" \
   DIVERSE_FOLDS="5 10" \
-  SEEDS_PER_LEARNER=5
+  DIVERSE_SEEDS_PER=5 \
+  DESCRIPTION="3-family tuned, 5 seeds, 5+10 folds, all+ablation-pruned features"
 ```
-30 learners (3 families × 2 fold counts × 5 seeds) vs public notebook's ~15. Should beat 0.95380.
+
+This produces **60 learners** (3 models × 2 feature sets × 2 fold counts × 5 seeds). Expected holdout AUC: ~0.9562–0.9563 (matching historical best), with estimated LB ~0.9536–0.9537.
+
+Why `ablation-pruned` in addition to `all`:
+- GBDTs individually score higher on ablation-pruned (21 features) than `all` (53 features)
+- Two feature sets adds diversity without extra model families
+- The tuned hyperparams (optimized on `all`) should still generalise to ablation-pruned
+
+### Step 11: Analyse ensemble and submit
+
+```bash
+cd cluster && make submit-ensemble \
+  EXPERIMENTS="playground-s6e2-tuned-v1"
+```
+
+Check Ridge weights:
+- Does XGBoost get a positive weight with `ablation-pruned` features?
+- Does 10f dominate 5f again (as seen locally)?
+- Is the ensemble AUC above 0.9562?
+
+If holdout AUC ≥ 0.9562, submit to Kaggle.
+
+### Step 12: Retrain-full on best config
+
+If LB score improves over 0.95380, retrain on train+holdout combined:
+
+```bash
+cd cluster && make submit-diverse \
+  TAG=tuned-retrain-v1 \
+  DIVERSE_MODELS="lightgbm_tuned xgboost_tuned catboost" \
+  DIVERSE_FEATURES="all ablation-pruned" \
+  DIVERSE_FOLDS="5 10" \
+  DIVERSE_SEEDS_PER=5 \
+  RETRAIN_FULL=1 \
+  RESUME=playground-s6e2-tuned-v1 \
+  DESCRIPTION="retrain-full of best tuned config"
+```
+
+Can `--resume` from Step 10 to skip already-trained configs and only redo the retrain-full pass. Previous retrain-full-v2 (104 learners) gave +0.00008 LB — expect similar gain here.
 
 ---
 
