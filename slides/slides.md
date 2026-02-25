@@ -49,17 +49,22 @@ Most of the code and brainstorming in this project was written with **Claude Cod
 
 <div class="text-sm font-mono">
 
-| # | Team | vs. us |
-|---|------|--------|
-| 1 | Pirhosseinlou | +0.00034 |
-| 2 | Tshithihi | +0.00030 |
-| 3 | Chris Deotte | +0.00030 |
-| 4–20 | *(cluster of ~17 teams)* | +0.00028 |
-| **~21** | **🥇🥈🥉 Bronze cutoff** | **+0.00015** |
-| … | *~480 teams* | … |
-| **543** | **Kristian (us) 🎯** | **0** ← we are here |
-| 1,000 | *(reference)* | −0.00021 |
-| 2,000 | *(reference)* | −0.00051 |
+<table class="w-full">
+  <thead><tr><th class="text-left pr-8">#</th><th class="text-left pr-8">Team</th><th class="text-left">vs. us</th></tr></thead>
+  <tbody>
+    <tr><td class="pr-8">1</td><td class="pr-8">Pirhosseinlou</td><td>+0.00034</td></tr>
+    <tr><td class="pr-8">2</td><td class="pr-8">Tshithihi</td><td>+0.00030</td></tr>
+    <tr><td class="pr-8">3</td><td class="pr-8">Chris Deotte</td><td>+0.00030</td></tr>
+    <tr><td class="pr-8">4–20</td><td class="pr-8 text-gray-400 italic">cluster of ~17 teams</td><td>+0.00028</td></tr>
+    <tr><td class="pr-8 font-bold">~21</td><td class="pr-8 font-bold">🥇🥈🥉 Bronze cutoff</td><td class="font-bold">+0.00015</td></tr>
+    <tr><td class="pr-8 text-gray-400">…</td><td class="pr-8 text-gray-400 italic">~480 teams</td><td class="text-gray-400">…</td></tr>
+    <tr style="outline: 2px solid #ef4444; outline-offset: -1px; background: rgba(239,68,68,0.08);">
+      <td class="pr-8 font-bold">543</td><td class="pr-8 font-bold">Kristian (us) 🎯</td><td class="font-bold">0 ← we are here</td>
+    </tr>
+    <tr><td class="pr-8 text-gray-400">1,000</td><td class="pr-8 text-gray-400 italic">reference</td><td class="text-gray-400">−0.00021</td></tr>
+    <tr><td class="pr-8 text-gray-400">2,000</td><td class="pr-8 text-gray-400 italic">reference</td><td class="text-gray-400">−0.00051</td></tr>
+  </tbody>
+</table>
 
 </div>
 
