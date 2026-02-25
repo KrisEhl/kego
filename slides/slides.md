@@ -276,8 +276,8 @@ Built a Ray cluster to train everything in parallel:
 <v-clicks>
 
 - **Ray** orchestrates jobs across machines — one `ray job submit` fans out to all GPUs
-- **Head node**: RTX 2080 Ti + RTX 3090 (dual-GPU workstation)
-- **Worker node**: RTX 3090 (remote machine, connected over LAN)
+- **Head node**: RTX 2080 Ti + RTX 3090
+- **Worker node**: RTX 3090
 - 3 GPUs total · ~24GB VRAM each on the 3090s
 - 19 different model architectures · 3 feature sets × 2 fold counts × 3 seeds
 - **104 learners** trained in parallel across the cluster
