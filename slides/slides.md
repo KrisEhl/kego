@@ -151,11 +151,11 @@ These three GBDTs (Gradient Boosted Decision Trees) win *most* tabular Kaggle co
 
 <v-click>
 
-| Models | LB Score |
+| Models | AUC gain |
 |--------|----------|
-| XGB + LGB + CatBoost (Ridge) | **0.95354** |
-| + 5 more model types | 0.95359 |
-| + multi-seed (3 seeds each) | 0.95360 |
+| XGB + LGB + CatBoost (Ridge) | baseline (0.95354) |
+| + 5 more model types | +0.00005 |
+| + multi-seed (3 seeds each) | +0.00006 |
 
 </v-click>
 
@@ -167,7 +167,7 @@ Already top 20% of 3,593 teams with a simple ensemble. Not bad for day one.
 
 <v-click>
 
-But the bronze cutoff is **~0.95395**. We need 5 more decimal places. 🥉
+Bronze cutoff is **+0.00041** above our start. We need **+0.00015** more from here. 🥉
 
 </v-click>
 
@@ -495,23 +495,23 @@ layout: section
 
 <div class="text-sm font-mono">
 
-| # | Team | Score | |
-|---|------|-------|-|
-| 1 | Pirhosseinlou | 0.95414 | |
-| 2 | Tshithihi | 0.95410 | |
-| 3 | Chris Deotte | 0.95410 | |
-| 4–20 | *(cluster of ~17 teams)* | 0.95408 | |
-| **~21** | **🥇🥈🥉 Bronze cutoff** | **~0.95395** | ← estimated |
-| … | *~450 teams* | … | |
-| **~490** | **KrisEhl (us) 🎯** | **0.95380** | **−0.00015 to bronze** |
-| 3,593 | last place | … | |
+| # | Team | vs. us |
+|---|------|--------|
+| 1 | Pirhosseinlou | +0.00034 |
+| 2 | Tshithihi | +0.00030 |
+| 3 | Chris Deotte | +0.00030 |
+| 4–20 | *(cluster of ~17 teams)* | +0.00028 |
+| **~21** | **🥇🥈🥉 Bronze cutoff** | **+0.00015** |
+| … | *~450 teams* | … |
+| **~490** | **KrisEhl (us) 🎯** | **0** ← we are here |
+| 3,593 | last place | … |
 
 </div>
 
 <v-click>
 
 <div class="mt-4 p-3 bg-yellow-500 bg-opacity-20 border border-yellow-400 rounded text-sm">
-  ⚠️ The leaderboard has moved since we last checked — new entries at <strong>0.95410</strong> and a cluster at <strong>0.95408</strong> have appeared today. Bronze cutoff is shifting up.
+  ⚠️ Leaderboard moved today — new entries at <strong>+0.00030</strong> and a cluster at <strong>+0.00028</strong> above us have appeared. Bronze cutoff is shifting up.
 </div>
 
 </v-click>
@@ -522,13 +522,13 @@ layout: section
 
 <v-clicks>
 
-| Step | What changed | LB Score | Gap to bronze |
-|------|-------------|----------|---------------|
-| Baseline (3 GBDTs) | Starting point | 0.95354 | −0.00034 |
-| More model types | Added 5 models | 0.95360 | −0.00028 |
-| Neural networks | ResNet, FT-Transformer | 0.95372 | −0.00016 |
-| 104 learners | Cluster training | 0.95372 | −0.00016 |
-| Retrain on full data | No holdout held out | **0.95380** | **−0.00015** |
+| Step | What changed | AUC gain | Still need |
+|------|-------------|----------|------------|
+| Baseline (3 GBDTs) | Starting point | +0 | −0.00041 |
+| More model types | Added 5 models | +0.00006 | −0.00035 |
+| Neural networks | ResNet, FT-Transformer | +0.00018 | −0.00023 |
+| 104 learners | Cluster training | +0.00018 | −0.00023 |
+| Retrain on full data | No holdout held out | **+0.00026** | **−0.00015** |
 
 </v-clicks>
 
