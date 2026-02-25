@@ -226,6 +226,88 @@ cd cluster && make submit-diverse \
 
 Can `--resume` from Step 10 to skip already-trained configs and only redo the retrain-full pass. Previous retrain-full-v2 (104 learners) gave +0.00008 LB — expect similar gain here.
 
+### Step 13: HP config diversity — extract top Optuna trials as additional learners
+
+The #1 gap between us and the 0.95406 public cluster is **HP config diversity**, not model count. Evidence: the public notebook scores higher with 3 GBDTs × 5 seeds than our 104-learner Ridge ensemble. Research confirms: ensembling multiple HP configs per model family produces weakly correlated predictions that Ridge can usefully weight.
+
+Our Optuna studies (100 trials each) produced a single "best" config. The 2nd–5th best trials likely score within 0.0003 but explore very different HP regions (shallow/wide vs deep/narrow trees, different regularization). Add these as new model variants:
+
+- Extract `study.best_trials` (top 5) from existing LightGBM and XGBoost Optuna studies (saved in MLflow)
+- Register each as `lightgbm_tuned_v2/v3`, `xgboost_tuned_v2/v3`
+- Run new Optuna study for **CatBoost** — currently only using default HPs despite it holding the highest Ridge weights. This is the biggest untapped HP tuning opportunity.
+
+```python
+# Extract top N trials from an existing Optuna study
+study = optuna.load_study(study_name="lightgbm_tuned", storage=...)
+top_trials = sorted(study.trials, key=lambda t: t.value, reverse=True)[:5]
+```
+
+### Step 14: LOO encoding for Thallium + Slope of ST
+
+From `research_features.py` greedy selection: `Thallium_loo` (+0.00008, rank 2) and `Slope of ST_loo` (+0.00002, rank 6) survived drop-one validation. These LOO-encoded features are **not yet in the GPU retrain-full pipeline** — they were only tested locally with LightGBM.
+
+Add `category_encoders.LeaveOneOutEncoder` for `Thallium` and `Slope of ST` to the main feature engineering function (`_engineer_features()`). Include in a GPU cluster job alongside Step 10 or as a follow-up.
+
+### Step 15: CatBoost Optuna HP tuning (highest leverage remaining)
+
+CatBoost consistently holds the **largest positive Ridge weight** in every ensemble we've run, yet it is the only GBDT family without Optuna-tuned HPs (still using defaults: `depth=6, lr=0.05, l2_leaf_reg=3.0`). This is the highest-leverage untapped tuning opportunity.
+
+```bash
+cd cluster && make submit-tune \
+  TUNE_MODELS="catboost" \
+  TUNE_TRIALS=100 \
+  TUNE_SAMPLE=50000 \
+  FEATURES=all \
+  TAG=catboost-tune-v1
+```
+
+Key CatBoost HP space to explore: `depth` (4–10), `learning_rate` (0.01–0.3), `l2_leaf_reg` (1–20), `random_strength` (0.5–5), `bagging_temperature` (0–2).
+
+### Step 16: Adversarial validation (quick diagnostic, local)
+
+Train a classifier to distinguish train vs test rows. If AUC > 0.58, there is systematic distribution shift that can be exploited by reweighting training samples.
+
+S6E2 data is synthetic (CTGAN-style from 270 UCI rows). The generative process can produce subtle train/test artifacts. This is a 30-minute local experiment.
+
+```python
+adv = pd.concat([train.assign(is_test=0), test.assign(is_test=1)])
+score = cross_val_score(LGBMClassifier(), adv[features], adv['is_test'], cv=5, scoring='roc_auc').mean()
+# If score > 0.58: features that most distinguish train/test may be hurting LB generalisation
+```
+
+### Step 17: Soft pseudo-labeling (exploratory)
+
+Previous hard-label pseudo-labeling (136K samples, threshold 0.95/0.05) failed — no new signal in a 630K dataset. Soft pseudo-labeling is structurally different:
+
+- Use current 104-learner Ridge ensemble's continuous probability outputs as soft targets for ALL 270K test rows
+- Mix with true labels: `loss = 0.7 * bce(y_true, pred) + 0.3 * bce(soft_label, pred)`
+- Avoids overconfident predictions on the test distribution
+- Supported by: "Revisiting Self-Training with Regularized Pseudo-Labeling for Tabular Data" (arXiv 2302.14013)
+
+Test locally with LightGBM on a subsample first. Only worth full cluster run if local CV shows ≥ 0.0001 improvement.
+
+### Step 18: L2 meta-model with `confidence` meta-feature
+
+From the April 2025 Kaggle Playground winner (cuML stacking): add `std(oof_predictions)` across L1 base models as a meta-feature for the L2 model. This "confidence" signal helps the meta-model distinguish easy vs hard instances.
+
+Current L2 LightGBM uses only OOF predictions as features. Adding prediction variance may unlock non-linear signal that Ridge cannot capture. Low effort change to `analyze_ensemble.py` or the L2 training block.
+
+---
+
+## Already Tried / Won't Help
+
+(Formerly "Ideas To Try" — confirmed dead ends from experiments + research)
+
+- **More meta-learner experiments**: Ridge at alpha=10 is confirmed optimal. LogReg, rank averaging, Ridge on ranks all worse. No more to try.
+- **Polynomial features**: Trees discover interactions natively. Ablation confirmed interaction features are harmful for GBDTs. Only useful for LogReg/neural.
+- **Repeated k-fold beyond 10**: Research shows diminishing returns. 10f is the practical ceiling.
+- **Snapshot ensembling during GBDT training**: Only adds value when not already using multi-seed. With 5 seeds × 2 fold counts, this adds no new diversity.
+- **Calibration (isotonic/Platt)**: AUC is rank-invariant to monotonic transforms. Already applied opportunistically in pipeline.
+- **More seeds (>5)**: From 1→3 seeds: +0.00001 LB. Diminishing returns well before 5.
+- **TabPFN**: Near-zero ensemble weight at 630K rows. Designed for small datasets.
+- **SVM, KNN**: Near-zero or zero ensemble weight. Too slow and/or too weak individually.
+- **Hard pseudo-labeling**: Tried 136K confident samples, no improvement.
+
 ---
 
 ## Previous Results
