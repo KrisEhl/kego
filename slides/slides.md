@@ -265,9 +265,9 @@ Built a Ray cluster to train everything in parallel:
 
 <div class="ml-8 mt-4">
 
-<v-click>
-
 ## The result?
+
+<v-click>
 
 | Ensemble | AUC gain |
 |----------|----------|
