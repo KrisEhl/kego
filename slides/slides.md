@@ -792,14 +792,22 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
 
 ## The planned final submission
 
-| Component | Why | Ready? |
-|-----------|-----|--------|
-| XGBoost + LightGBM tuned × 5 seeds × 5+10 folds | Core signal | ✅ |
-| CatBoost tuned × 5 seeds × 5+10 folds | Highest Ridge weight, never tuned | ✨ |
-| All 3 GBDTs on 53 features | XGBoost and CatBoost haven't seen the 53-feature set yet | ✨ |
-| Neural nets (ResNet, FT-Transformer, RealMLP) | Structural diversity, low weight ≠ zero | ✅ |
-| Retrain on full data | Every labeled row counts | ✨ |
-| Ridge meta-learner | Proven best combiner | ✨ |
+<table class="w-full">
+  <colgroup>
+    <col style="width: 52%">
+    <col style="width: 40%">
+    <col style="width: 8%">
+  </colgroup>
+  <thead><tr><th class="text-left pb-1">Component</th><th class="text-left pb-1">Why</th><th class="text-left pb-1">Ready?</th></tr></thead>
+  <tbody>
+    <tr><td class="py-1">XGBoost + LightGBM tuned × 5 seeds × 5+10 folds</td><td>Core signal</td><td>✅</td></tr>
+    <tr><td class="py-1">CatBoost tuned × 5 seeds × 5+10 folds</td><td>Highest Ridge weight, never tuned</td><td>✨</td></tr>
+    <tr><td class="py-1">All 3 GBDTs on 53 features</td><td>XGBoost and CatBoost haven't seen the 53-feature set yet</td><td>✨</td></tr>
+    <tr><td class="py-1">Neural nets (ResNet, FT-Transformer, RealMLP)</td><td>Structural diversity, low weight ≠ zero</td><td>✅</td></tr>
+    <tr><td class="py-1">Retrain on full data</td><td>Every labeled row counts</td><td>✨</td></tr>
+    <tr><td class="py-1">Ridge meta-learner</td><td>Proven best combiner</td><td>✨</td></tr>
+  </tbody>
+</table>
 
 <v-click>
 
