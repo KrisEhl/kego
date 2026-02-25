@@ -55,18 +55,9 @@ layout: two-cols
 
 ## What are we predicting?
 
-A patient walks into a clinic. From 13 basic measurements, can we predict whether they have heart disease?
+From **13 clinical measurements**, can we tell these two patients apart?
 
-<v-clicks>
-
-- **Age**, Sex, Chest pain type
-- Blood pressure, Cholesterol, Blood sugar
-- ECG results, Max heart rate
-- Exercise angina, ST depression
-- Vessel count from fluoroscopy
-- Thallium stress test result
-
-</v-clicks>
+<img src="./patient_radar.png" style="height: 68vh; object-fit: contain; margin-top: -7rem;" />
 
 ::right::
 
@@ -768,25 +759,6 @@ layout: section
 ---
 
 # What's Next
-
----
-
-## What's still on the table
-
-Three ideas with the highest expected impact:
-
-<v-clicks>
-
-**1. CatBoost HP tuning** (biggest leverage)
-CatBoost holds the highest weight in *every* ensemble we've built — yet it's the only model we haven't Optuna-tuned. Just using defaults. This is the most obvious remaining lever.
-
-**2. HP config diversity**
-Instead of one "best" Optuna config, keep the top 5 different configs. Each explores a different region of hyperparameter space → structurally different predictions → Ridge can combine them better.
-
-**3. GPU retrain with 53 features**
-The clinical features (+0.00053 local) were only tested with weak CPU models. The dominant XGBoost and CatBoost have never seen these features. The real test hasn't happened yet.
-
-</v-clicks>
 
 ---
 
