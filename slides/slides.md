@@ -1,9 +1,9 @@
 ---
 theme: seriph
-title: "Chasing Bronze: Predicting Heart Disease on Kaggle"
+title: "Squeezing the Last Drops: Predicting Heart Disease on Kaggle"
 info: |
   Kaggle Playground Series S6E2 — Heart Disease Classification
-  A story of 3,593 teams, 630,000 patients, and 0.00015 AUC.
+  A story of 3,882 teams, 630,000 patients, and diminishing returns.
 highlighter: shiki
 drawings:
   persist: false
@@ -11,11 +11,11 @@ transition: slide-left
 mdc: true
 ---
 
-# Chasing Bronze
+# Squeezing the Last Drops
 
 ### Predicting Heart Disease on Kaggle
 
-One challenge · 3,593 teams · and a gap of **0.00015** AUC
+One challenge · 3,882 teams · and the brutal law of **diminishing returns**
 
 <div class="pt-12 text-gray-400">
   Kaggle Playground Series — Season 6, Episode 2
@@ -155,7 +155,7 @@ Synthetic test data  (270K rows)  →  Kaggle evaluates here
     <tr><td class="pr-8">2</td><td class="pr-8">Tshithihi</td><td>+0.00030</td></tr>
     <tr><td class="pr-8">3</td><td class="pr-8">Chris Deotte</td><td>+0.00030</td></tr>
     <tr><td class="pr-8">4–20</td><td class="pr-8 text-gray-400 italic">cluster of ~17 teams</td><td>+0.00028</td></tr>
-    <tr><td class="pr-8 font-bold">~21</td><td class="pr-8 font-bold">🥇🥈🥉 Bronze cutoff</td><td class="font-bold">+0.00015</td></tr>
+    <tr><td class="pr-8 font-bold">~21</td><td class="pr-8 font-bold">top of the pack</td><td class="font-bold">+0.00015</td></tr>
     <tr><td class="pr-8 text-gray-400">…</td><td class="pr-8 text-gray-400 italic">~480 teams</td><td class="text-gray-400">…</td></tr>
     <tr style="outline: 2px solid #ef4444; outline-offset: -1px; background: rgba(239,68,68,0.08);">
       <td class="pr-8 font-bold">543</td><td class="pr-8 font-bold">Kristian (us) 🎯</td><td class="font-bold">0 ← we are here</td>
@@ -220,7 +220,7 @@ Already top 20% of 3,593 teams with a simple ensemble. Not bad for day one.
 
 <v-click>
 
-Bronze cutoff is **+0.00041** above our start. We need **+0.00015** more from here. 🥉
+The top of the pack is **+0.00041** above our start. We're now **+0.00026** of the way there — and each step is harder than the last.
 
 </v-click>
 
@@ -613,7 +613,7 @@ layout: section
 
 <v-click>
 
-🥉 **Bronze cutoff: ~0.95395**
+The gap between rank 1 and rank 543 is just **0.00034 AUC**.
 
 We need to correctly rank **15 more patients** out of every **100,000**.
 
@@ -662,7 +662,7 @@ layout: section
 
 ---
 
-## The plan to get that bronze
+## What's still on the table
 
 Three ideas with the highest expected impact:
 
@@ -683,17 +683,17 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
 layout: fact
 ---
 
-# 0.00015
+# 0.00034
 
-the AUC gap to the bronze medal
+the AUC gap between rank 1 and rank 543
 
 <div class="text-xl text-gray-400 mt-4">
-  That's the difference between correctly ranking<br/>
-  15 extra patients per 100,000.
+  The problem is essentially solved at rank 500.<br/>
+  Every remaining gain is harder than the last.
 </div>
 
 <div class="text-lg text-gray-500 mt-4">
-  The cluster comes back online. We try again.
+  That's the game. The cluster comes back online. We squeeze harder.
 </div>
 
 ---
@@ -723,6 +723,6 @@ class: text-center
 
 *Thanks for listening — questions welcome!*
 
-🫀 Kaggle Playground Series S6E2 · Current rank: ~490 / 3,593
+🫀 Kaggle Playground Series S6E2 · Current rank: 543 / 3,882
 
 </v-click>
