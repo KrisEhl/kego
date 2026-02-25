@@ -795,15 +795,15 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
 | Component | Why | Ready? |
 |-----------|-----|--------|
 | XGBoost + LightGBM tuned × 5 seeds × 5+10 folds | Core signal | ✅ |
-| CatBoost tuned × 5 seeds × 5+10 folds | Highest Ridge weight, never tuned | ✨ * |
-| All 3 GBDTs on 53 features | XGBoost and CatBoost haven't seen the 53-feature set yet | ✨ * |
+| CatBoost tuned × 5 seeds × 5+10 folds | Highest Ridge weight, never tuned | ✨ |
+| All 3 GBDTs on 53 features | XGBoost and CatBoost haven't seen the 53-feature set yet | ✨ |
 | Neural nets (ResNet, FT-Transformer, RealMLP) | Structural diversity, low weight ≠ zero | ✅ |
-| Retrain on full data | Every labeled row counts | ✨ * |
-| Ridge meta-learner | Proven best combiner | ✨ * |
+| Retrain on full data | Every labeled row counts | ✨ |
+| Ridge meta-learner | Proven best combiner | ✨ |
 
 <v-click>
 
-*\* not yet trained — these are the remaining experiments*
+*✨ = not yet done*
 
 Current best: **0.95380** · Gap to top: **0.00034** · If CatBoost tuning delivers half of what LightGBM did locally (+0.00083), this could be the biggest jump yet.
 
