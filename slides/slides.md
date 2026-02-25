@@ -789,53 +789,26 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
 </v-clicks>
 
 ---
-layout: two-cols
----
 
 ## The planned final submission
 
-If everything goes to plan, the next submission combines all remaining levers at once.
-
-<v-clicks>
-
-**Tuned CatBoost** — Optuna-tuned, 5 seeds × 5+10 folds
-
-**Tuned XGBoost + LightGBM** — already tuned, same sweep on GPU
-
-**All three on 53 features** — clinical features on GPU models for the first time
-
-**Neural nets** (ResNet, FT-Transformer, RealMLP) — lower individual AUC but structurally different predictions. Ridge gives them low weight, not zero. Worth including when the cluster is running anyway.
-
-</v-clicks>
-
-::right::
-
-<div class="ml-8">
+| Component | Why | Ready? |
+|-----------|-----|--------|
+| XGBoost tuned × 5 seeds × 5+10 folds | Core signal | ✅ |
+| LightGBM tuned × 5 seeds × 5+10 folds | Core signal | ✅ |
+| CatBoost tuned × 5 seeds × 5+10 folds | Highest Ridge weight, never tuned | ✨ * |
+| All 3 GBDTs on 53 features | Clinical features untested on GPU | ✨ * |
+| Neural nets (ResNet, FT-Transformer, RealMLP) | Structural diversity, low weight ≠ zero | ✅ |
+| Ridge meta-learner | Proven best combiner | ✅ |
+| Retrain on full data | Every labeled row counts | ✅ |
 
 <v-click>
 
-## Expected stack
+*\* not yet trained — these are the remaining experiments*
 
-| Component | Why |
-|-----------|-----|
-| 3 tuned GBDTs × 5 seeds | Core signal |
-| 5+10 fold variants | Fold count diversity |
-| 53-feature variants | Untested clinical upside |
-| Neural nets (3 types) | Structural diversity |
-| Ridge meta-learner | Proven best combiner |
-| Retrain on full data | Every row counts |
+Current best: **0.95380** · Gap to top: **0.00034** · If CatBoost tuning delivers half of what LightGBM did locally (+0.00083), this could be the biggest jump yet.
 
 </v-click>
-
-<v-click>
-
-Current best: **0.95380** · Gap to top: **0.00034**
-
-If CatBoost tuning delivers half of what LightGBM tuning did (+0.00083 local), this could be our biggest single jump yet.
-
-</v-click>
-
-</div>
 
 ---
 layout: fact
