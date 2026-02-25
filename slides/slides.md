@@ -267,9 +267,19 @@ Built a Ray cluster to train everything in parallel:
 <v-clicks>
 
 - **Ray** orchestrates jobs across machines — one `ray job submit` fans out to all GPUs
-- **Head node**: RTX 2080 Ti + RTX 3090
-- **Worker node**: RTX 3090
-- 3 GPUs total · ~24GB VRAM each on the 3090s
+
+</v-clicks>
+
+<v-click>
+
+- 3 GPUs total
+  - **Head node**: RTX 3090 + RTX 2080 Ti
+  - **Worker node**: RTX 3090
+
+</v-click>
+
+<v-clicks>
+
 - 19 different model architectures · 3 feature sets × 2 fold counts × 3 seeds
 - **104 learners** trained in parallel across the cluster
 
@@ -369,9 +379,9 @@ layout: two-cols
 
 ## Two ways to measure importance
 
-**Permutation importance** — shuffle one feature's values, measure how much model performance drops. Fast, model-agnostic.
-
 <v-click>
+
+**Permutation importance** — shuffle one feature's values, measure how much model performance drops. Fast, model-agnostic.
 
 ```
 shuffle "Max HR / Age" → AUC drops 0.0008
@@ -442,6 +452,10 @@ layout: two-cols
 <v-click>
 
 **Local validation: +0.00053 AUC** 🎉
+
+</v-click>
+
+<v-click>
 
 **Leaderboard: +0.00000** 😐
 
