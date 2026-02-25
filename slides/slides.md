@@ -300,7 +300,7 @@ We ran a full ablation study — remove one feature at a time, see what happens.
 
 ::right::
 
-<div class="ml-8 mt-2 text-sm">
+<div class="ml-8 mt-2">
 
 <v-click>
 
