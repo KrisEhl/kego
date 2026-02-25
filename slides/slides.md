@@ -797,7 +797,7 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
 | XGBoost tuned × 5 seeds × 5+10 folds | Core signal | ✅ |
 | LightGBM tuned × 5 seeds × 5+10 folds | Core signal | ✅ |
 | CatBoost tuned × 5 seeds × 5+10 folds | Highest Ridge weight, never tuned | ✨ * |
-| All 3 GBDTs on 53 features | Clinical features untested on GPU | ✨ * |
+| All 3 GBDTs on 53 features | 53-feature set only tested with weak CPU models so far | ✨ * |
 | Neural nets (ResNet, FT-Transformer, RealMLP) | Structural diversity, low weight ≠ zero | ✅ |
 | Ridge meta-learner | Proven best combiner | ✅ |
 | Retrain on full data | Every labeled row counts | ✅ |
