@@ -583,14 +583,6 @@ layout: section
 
 </div>
 
-<v-click>
-
-<div class="mt-4 p-3 bg-yellow-500 bg-opacity-20 border border-yellow-400 rounded text-sm">
-  ⚠️ Leaderboard moved today — new entries at <strong>+0.00030</strong> and a cluster at <strong>+0.00028</strong> above us have appeared. Bronze cutoff is shifting up.
-</div>
-
-</v-click>
-
 ---
 
 ## The leaderboard story
