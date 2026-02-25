@@ -706,13 +706,60 @@ layout: two-cols
 <v-clicks>
 
 - **UMAP features**: −0.055 AUC (worst experiment)
-- **More models** (65 vs 8): zero LB gain — 19 model types including neural nets (ResNet, FT-Transformer, RealMLP), Random Forest, SVM, TabPFN across 3 feature sets × 2 fold counts. Ridge found the same 8 learners were sufficient.
-- **Pseudo-labeling** (hard and soft): both attempted — soft labels collapse the model to ~0.929 in round 1, then 0.70 after iteration. Test distribution too noisy to help.
+- **More models**: 65 learners = same LB as 8 *(see next slide)*
+- **Pseudo-labeling** (hard and soft): soft labels collapse to 0.929 → 0.70
 - **SVM**: near-zero weight in every ensemble
 - **L2 stacking** (non-linear meta-models): no gain over Ridge
 - **Clinical features (CPU only)**: +0.00053 local, 0.00000 LB
 
 </v-clicks>
+
+</div>
+
+---
+layout: two-cols
+---
+
+## 65 learners = 8 learners
+
+Everything we tried — same LB score either way.
+
+<v-click>
+
+| Type | Models |
+|------|--------|
+| **GBDT** | XGBoost (std, reg, deep, shallow, DART, tuned) |
+| **GBDT** | LightGBM (std, DART, large, small, tuned) |
+| **GBDT** | CatBoost (std, deep, shallow) |
+| **Neural** | ResNet, ResNet-PLE, FT-Transformer, FT-Transformer-PLE, RealMLP |
+| **Other** | Random Forest, Extra Trees, Logistic Regression, TabPFN, SVM |
+
+</v-click>
+
+::right::
+
+<div class="ml-8">
+
+<v-click>
+
+## The result
+
+| Ensemble | Learners | LB Score |
+|----------|----------|----------|
+| 8 greedy-selected | 8 | **0.95372** |
+| Full sweep | 65 | **0.95372** |
+
+</v-click>
+
+<v-click>
+
+65 = 19 model types × 3 feature sets × 2 fold counts.
+
+Ridge stacking assigned near-zero weight to neural nets, SVM, Random Forest, and TabPFN. The same 8 core GBDT learners dominated every time.
+
+**Diversity matters. Volume doesn't.**
+
+</v-click>
 
 </div>
 
