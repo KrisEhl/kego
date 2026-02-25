@@ -263,11 +263,11 @@ Built a Ray cluster to train everything in parallel:
 
 ::right::
 
-<div class="ml-8 mt-4">
-
-## The result?
+<div class="ml-8">
 
 <v-click>
+
+## The result?
 
 | Ensemble | AUC gain |
 |----------|----------|
