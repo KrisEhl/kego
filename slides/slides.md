@@ -577,9 +577,11 @@ layout: section
 | 3 | Chris Deotte | +0.00030 |
 | 4–20 | *(cluster of ~17 teams)* | +0.00028 |
 | **~21** | **🥇🥈🥉 Bronze cutoff** | **+0.00015** |
-| … | *~450 teams* | … |
-| **~490** | **KrisEhl (us) 🎯** | **0** ← we are here |
-| 3,593 | last place | … |
+| … | *~480 teams* | … |
+| **543** | **Kristian (us) 🎯** | **0** ← we are here |
+| 1,000 | *(reference)* | −0.00021 |
+| 2,000 | *(reference)* | −0.00051 |
+| 3,882 | last place | … |
 
 </div>
 
