@@ -361,8 +361,6 @@ We ran a full ablation study — remove one feature at a time, see what happens.
 
 Trees already discover `Max HR / Age` internally. Adding it explicitly creates a **redundant, noisy split candidate** that dilutes feature sampling.
 
-Permutation importance and ablation importance disagree on this feature — a sign of multicollinearity.
-
 </v-click>
 
 <v-click>
@@ -371,6 +369,62 @@ Permutation importance and ablation importance disagree on this feature — a si
 LightGBM AUC: +0.00083
 
 </v-click>
+
+</div>
+
+---
+layout: two-cols
+---
+
+## Two ways to measure importance
+
+<div class="text-sm">
+
+**Permutation importance** — shuffle one feature's values, measure how much model performance drops. Fast, model-agnostic.
+
+<v-click>
+
+```
+shuffle "Max HR / Age" → AUC drops 0.0008
+→ "this feature matters a lot!"
+```
+
+</v-click>
+
+<v-click>
+
+**Ablation importance** — retrain the model *without* the feature entirely. Slower, but captures the true effect on the learned model.
+
+```
+retrain without "Max HR / Age" → AUC improves +0.00031
+→ "this feature is actively harmful!"
+```
+
+</v-click>
+
+</div>
+
+::right::
+
+<div class="ml-8">
+
+<v-click>
+
+## Why do they disagree?
+
+**Multicollinearity.** `Max HR / Age` is highly correlated with both `Max HR` and `Age`, which are already in the model.
+
+</v-click>
+
+<v-clicks>
+
+- **Permutation importance** shuffles only *one* feature — the others still carry the same signal. The model looks lost without it, but only because it can no longer use the correlated copy.
+
+- **Ablation importance** removes the feature *before training* — the model simply learns the same signal directly from `Max HR` and `Age` instead. No loss at all.
+
+- The disagreement is the tell: **the feature adds no unique information**, it just duplicates what's already there — noisily.
+
+</v-clicks>
 
 </div>
 
