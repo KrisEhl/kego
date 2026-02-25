@@ -278,16 +278,18 @@ score = cross_val_score(LGBMClassifier(), adv[features], adv['is_test'], cv=5, s
 # If score > 0.58: features that most distinguish train/test may be hurting LB generalisation
 ```
 
-### Step 17: Soft pseudo-labeling (exploratory)
+### Step 17: Soft pseudo-labeling — ❌ DONE, doesn't work
 
-Previous hard-label pseudo-labeling (136K samples, threshold 0.95/0.05) failed — no new signal in a 630K dataset. Soft pseudo-labeling is structurally different:
+Tested locally with LightGBM (tuned params, 5-fold CV, 3 seeds, holdout evaluation).
 
-- Use current 104-learner Ridge ensemble's continuous probability outputs as soft targets for ALL 270K test rows
-- Mix with true labels: `loss = 0.7 * bce(y_true, pred) + 0.3 * bce(soft_label, pred)`
-- Avoids overconfident predictions on the test distribution
-- Supported by: "Revisiting Self-Training with Regularized Pseudo-Labeling for Tabular Data" (arXiv 2302.14013)
+| | Baseline | Round 1 | Round 2 |
+|---|---|---|---|
+| weight=1.0 | 0.95606 | 0.92915 (−0.02691) | 0.70162 (−0.25444) |
+| weight=0.3 | 0.95606 | 0.92940 (−0.02666) | 0.70230 (−0.25376) |
 
-Test locally with LightGBM on a subsample first. Only worth full cluster run if local CV shows ≥ 0.0001 improvement.
+**Root cause**: Adding 270K soft-labeled test rows (many near 0.5) swamps the real training signal. Early stopping fires at round 1–11 because the model degrades immediately. Round 2 then fits the garbage labels perfectly (0.977 CV AUC, circular validation) while holdout collapses to 0.70. Downweighting to 0.3 makes no difference.
+
+**Conclusion**: Both hard and soft pseudo-labeling fail on this dataset. Test distribution is too noisy / different. Do not retry.
 
 ### Step 18: L2 meta-model with `confidence` meta-feature
 
@@ -309,7 +311,7 @@ Current L2 LightGBM uses only OOF predictions as features. Adding prediction var
 - **More seeds (>5)**: From 1→3 seeds: +0.00001 LB. Diminishing returns well before 5.
 - **TabPFN**: Near-zero ensemble weight at 630K rows. Designed for small datasets.
 - **SVM, KNN**: Near-zero or zero ensemble weight. Too slow and/or too weak individually.
-- **Hard pseudo-labeling**: Tried 136K confident samples, no improvement.
+- **Pseudo-labeling (hard + soft)**: Both definitively failed. Soft labels collapse model to 0.929 round 1 → 0.70 round 2. See Step 17.
 
 ---
 

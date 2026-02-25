@@ -645,7 +645,7 @@ layout: two-cols
 
 - **UMAP features**: −0.055 AUC (worst experiment)
 - **More models** (65 vs 8): zero LB gain
-- **Hard-label pseudo-labeling**: one early attempt, results inconclusive *(testing properly now)*
+- **Pseudo-labeling** (hard and soft): both attempted — soft labels collapse the model to ~0.929 in round 1, then 0.70 after iteration. Test distribution too noisy to help.
 - **SVM**: near-zero weight in every ensemble
 - **L2 stacking** (non-linear meta-models): no gain over Ridge
 - **Clinical features (CPU only)**: +0.00053 local, 0.00000 LB
