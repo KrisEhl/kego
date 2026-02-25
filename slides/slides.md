@@ -802,7 +802,7 @@ The clinical features (+0.00053 local) were only tested with weak CPU models. Th
   <tbody>
     <tr><td class="py-1">XGBoost + LightGBM tuned × 5 seeds × 5+10 folds</td><td>Core signal</td><td>✅</td></tr>
     <tr><td class="py-1">CatBoost tuned × 5 seeds × 5+10 folds</td><td>Highest Ridge weight, never tuned</td><td>✨</td></tr>
-    <tr><td class="py-1">All 3 GBDTs on 53 features</td><td>XGBoost and CatBoost haven't seen the 53-feature set yet</td><td>✨</td></tr>
+    <tr><td class="py-1">All 3 GBDTs on 53 features</td><td>XGBoost/CatBoost haven't seen them</td><td>✨</td></tr>
     <tr><td class="py-1">Neural nets (ResNet, FT-Transformer, RealMLP)</td><td>Structural diversity, low weight ≠ zero</td><td>✅</td></tr>
     <tr><td class="py-1">Retrain on full data</td><td>Every labeled row counts</td><td>✨</td></tr>
     <tr><td class="py-1">Ridge meta-learner</td><td>Proven best combiner</td><td>✨</td></tr>
