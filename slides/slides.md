@@ -149,7 +149,7 @@ Synthetic test data  (270K rows)  →  Kaggle evaluates here
     <tr><td class="pr-8 font-bold">~21</td><td class="pr-8 font-bold">top of the pack</td><td class="font-bold">+0.00015</td></tr>
     <tr><td class="pr-8 text-gray-400">…</td><td class="pr-8 text-gray-400 italic">~480 teams</td><td class="text-gray-400">…</td></tr>
     <tr style="outline: 2px solid #ef4444; outline-offset: -1px; background: rgba(239,68,68,0.08);">
-      <td class="pr-8 font-bold">543</td><td class="pr-8 font-bold">Kristian (us) 🎯</td><td class="font-bold">0 ← we are here</td>
+      <td class="pr-8 font-bold">543</td><td class="pr-8 font-bold">Kristian (us) 🎯</td><td class="font-bold">0.95380 ← we are here</td>
     </tr>
     <tr><td class="pr-8 text-gray-400">1,000</td><td class="pr-8 text-gray-400 italic">reference</td><td class="text-gray-400">−0.00021</td></tr>
     <tr><td class="pr-8 text-gray-400">2,000</td><td class="pr-8 text-gray-400 italic">reference</td><td class="text-gray-400">−0.00051</td></tr>
@@ -198,7 +198,7 @@ These three GBDTs (Gradient Boosted Decision Trees) win *most* tabular Kaggle co
 | Models | AUC gain |
 |--------|----------|
 | XGB + LGB + CatBoost (Ridge) | baseline (0.95354) |
-| + 5 more model types | +0.00005 |
+| + LR, RF, ET, XGB-reg, LGB-DART | +0.00005 |
 | + multi-seed (3 seeds each) | +0.00006 |
 
 </v-click>
@@ -216,6 +216,8 @@ The top of the pack is **+0.00041** above our start. We're now **+0.00026** of t
 </v-click>
 
 </div>
+
+<div class="absolute bottom-6 left-12 text-xs text-gray-400">LR = Logistic Regression · RF = Random Forest · ET = Extra Trees · XGB-reg = XGBoost regularized · LGB-DART = LightGBM with dropout</div>
 
 ---
 layout: section
@@ -294,31 +296,25 @@ Built a Ray cluster to train everything in parallel:
 
 <v-click>
 
-## The result?
+## What we trained
 
-| Ensemble | AUC gain |
-|----------|----------|
-| 8 good models | **+0.00018** |
-| 65 learners | +0.00018 |
-| 104 learners | **+0.00026** ✨ |
+| | |
+|--|--|
+| Models | 19 architectures |
+| Feature sets | 3 (raw, pruned, engineered) |
+| Fold counts | 5-fold and 10-fold |
+| Seeds | 3 per learner |
+| **Completed** | **104 learners** |
 
 </v-click>
 
 <v-click>
 
-## More models ≠ better score
-
-Ridge stacking is remarkably robust. It extracts the same signal from 8 models as from 104. The tiny gain (+0.00008) came from *retraining on 100% of data*, not from more models.
+Training time: ~2 hours end-to-end across 3 GPUs.
 
 </v-click>
 
 </div>
-
----
-layout: quote
----
-
-"Adding 96 more models improved the leaderboard score by exactly... **0.00000**. Ridge stacking already found the signal."
 
 ---
 layout: section
@@ -665,11 +661,11 @@ layout: section
 
 | Step | What changed | AUC gain |
 |------|-------------|----------|
-| Baseline (3 GBDTs) | Starting point | +0 |
+| Baseline (3 GBDTs) | XGBoost, LightGBM, CatBoost | +0 |
 | More model types | LR, RF, Extra Trees, XGB-reg, LGB-DART | +0.00006 |
 | Neural networks | ResNet, FT-Transformer | +0.00018 |
-| 104 learners | Cluster training | +0.00018 |
-| Retrain on full data | No holdout held out | **+0.00026** |
+| 104 learners | Cluster training — same LB as 8 | +0.00018 |
+| Retrain on full data | Every labeled row counts | **+0.00026** |
 
 </v-clicks>
 
@@ -743,8 +739,9 @@ Everything we tried — same LB score either way.
 
 | Ensemble | Learners | LB Score |
 |----------|----------|----------|
-| 8 greedy-selected | 8 | **0.95372** |
-| Full sweep | 65 | **0.95372** |
+| 8 greedy-selected | 8 | 0.95372 |
+| Full sweep | 65 | 0.95372 |
+| Retrain on 100% data | 104 | **0.95380 ✨** |
 
 </v-click>
 
@@ -752,7 +749,7 @@ Everything we tried — same LB score either way.
 
 65 learners across 19 model types, 3 feature sets, and 2 fold counts.*
 
-Ridge stacking assigned near-zero weight to neural nets, SVM, Random Forest, and TabPFN. The same 8 core GBDT learners dominated every time.
+Ridge found the same signal at 8 or 65 learners. The +0.00008 came from removing the holdout — **more data, not more models**.
 
 **Diversity matters. Volume doesn't.**
 
