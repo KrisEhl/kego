@@ -310,7 +310,7 @@ Built a Ray cluster to train everything in parallel:
 
 <v-click>
 
-### More models ≠ better score
+## More models ≠ better score
 
 Ridge stacking is remarkably robust. It extracts the same signal from 8 models as from 104. The tiny gain (+0.00008) came from *retraining on 100% of data*, not from more models.
 
@@ -434,8 +434,6 @@ layout: two-cols
 
 ## Adding clinical domain knowledge
 
-<div class="text-sm">
-
 13 features from cardiology literature:
 
 | Feature | Rationale |
@@ -445,8 +443,6 @@ layout: two-cols
 | `framingham_partial` | 50-year validated risk score |
 | `metabolic_syndrome` | Composite risk signal |
 | `cholesterol_squared` | U-shaped risk relationship |
-
-</div>
 
 ::right::
 
@@ -478,7 +474,7 @@ layout: two-cols
 
 ## The UMAP debacle
 
-# −0.05513 AUC
+<div class="text-5xl font-bold mt-1 mb-3">−0.05513 AUC</div>
 
 Our single worst experiment.
 
