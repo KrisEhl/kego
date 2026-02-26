@@ -80,11 +80,13 @@ def compute_ensemble(
             warnings.warn(
                 f"OOF predictions ({oof_matrix.shape[0]} rows) span both train "
                 f"({len(train_labels)}) and holdout ({len(_orig_holdout_labels)}) rows. "
-                "Using combined labels for OOF evaluation; disabling holdout evaluation.",
+                "Using combined labels for OOF evaluation; disabling holdout evaluation "
+                "and feature-augmented L2 stacking.",
                 stacklevel=2,
             )
             train_labels = np.concatenate([train_labels, _orig_holdout_labels])
             holdout_labels = None
+            l2_feature_configs = None  # feature arrays only cover train rows
         else:
             raise ValueError(
                 f"OOF predictions ({oof_matrix.shape[0]} rows) don't match "
