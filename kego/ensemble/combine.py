@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -56,11 +57,12 @@ def compute_ensemble(
     holdout_matrix = np.column_stack([holdout_preds[n] for n in model_names])
     test_matrix = np.column_stack([test_preds[n] for n in model_names])
 
+    # Save original holdout labels before any normalization.
+    _orig_holdout_labels = holdout_labels
+
     # If holdout predictions don't match holdout labels (e.g. mixing retrain-full
     # experiments where holdout slots store test predictions), disable holdout eval.
     if holdout_labels is not None and holdout_matrix.shape[0] != len(holdout_labels):
-        import warnings
-
         warnings.warn(
             f"Holdout predictions ({holdout_matrix.shape[0]} rows) don't match "
             f"holdout labels ({len(holdout_labels)} rows). "
@@ -68,6 +70,26 @@ def compute_ensemble(
             stacklevel=2,
         )
         holdout_labels = None
+
+    # If OOF predictions don't match train labels (e.g. retrain-full-direct experiments
+    # where OOF covers train+holdout combined), use combined labels for OOF evaluation.
+    if oof_matrix.shape[0] != len(train_labels):
+        if _orig_holdout_labels is not None and oof_matrix.shape[0] == len(
+            train_labels
+        ) + len(_orig_holdout_labels):
+            warnings.warn(
+                f"OOF predictions ({oof_matrix.shape[0]} rows) span both train "
+                f"({len(train_labels)}) and holdout ({len(_orig_holdout_labels)}) rows. "
+                "Using combined labels for OOF evaluation; disabling holdout evaluation.",
+                stacklevel=2,
+            )
+            train_labels = np.concatenate([train_labels, _orig_holdout_labels])
+            holdout_labels = None
+        else:
+            raise ValueError(
+                f"OOF predictions ({oof_matrix.shape[0]} rows) don't match "
+                f"train labels ({len(train_labels)} rows)."
+            )
 
     methods = []
 
