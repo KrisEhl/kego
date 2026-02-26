@@ -112,7 +112,7 @@ DIVERSE_FOLDS ?= 5 10
 DIVERSE_SEED_POOL ?= 42 123 777 999 2024
 DIVERSE_SEEDS_PER ?= 3
 submit-diverse:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../notebooks/playground/train_s6e2_baseline.py --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(RETRAIN_FULL),--retrain-full) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-ensemble:
 	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble ENSEMBLE=submit-v1"; echo "       make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
