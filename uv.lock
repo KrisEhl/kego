@@ -22,7 +22,6 @@ resolution-markers = [
 [manifest]
 members = [
     "cafa",
-    "cluster",
     "kego",
     "nfl-big-data-bowl-2026-prediction",
     "playground",
@@ -492,49 +491,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/27/fb/576f067976d320f5f0114a8d9fa1215425441bb35627b1993e5afd8111e5/cloudpickle-3.1.2.tar.gz", hash = "sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414", size = 22330, upload-time = "2025-11-03T09:25:26.604Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a", size = 22228, upload-time = "2025-11-03T09:25:25.534Z" },
-]
-
-[[package]]
-name = "cluster"
-version = "0.1.0"
-source = { virtual = "cluster" }
-dependencies = [
-    { name = "catboost" },
-    { name = "kego" },
-    { name = "lightgbm" },
-    { name = "mlflow" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pytabkit" },
-    { name = "ray", extra = ["default"] },
-    { name = "rtdl-num-embeddings" },
-    { name = "rtdl-revisiting-models" },
-    { name = "scikit-learn" },
-    { name = "skorch" },
-    { name = "tabpfn" },
-    { name = "torch", version = "2.9.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (platform_python_implementation != 'PyPy' and sys_platform == 'darwin')" },
-    { name = "torch", version = "2.9.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.13' and platform_python_implementation == 'PyPy' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
-    { name = "torch", version = "2.9.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform == 'linux'" },
-    { name = "xgboost" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "catboost" },
-    { name = "kego", editable = "." },
-    { name = "lightgbm" },
-    { name = "mlflow", specifier = ">=2.10.0" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pytabkit" },
-    { name = "ray", extras = ["default"], specifier = ">=2.53.0" },
-    { name = "rtdl-num-embeddings" },
-    { name = "rtdl-revisiting-models" },
-    { name = "scikit-learn" },
-    { name = "skorch" },
-    { name = "tabpfn" },
-    { name = "torch" },
-    { name = "xgboost" },
 ]
 
 [[package]]
@@ -2678,6 +2634,7 @@ dependencies = [
     { name = "rtdl-num-embeddings" },
     { name = "rtdl-revisiting-models" },
     { name = "skorch" },
+    { name = "tabpfn" },
     { name = "torch", version = "2.9.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.13' and sys_platform == 'darwin') or (platform_python_implementation != 'PyPy' and sys_platform == 'darwin')" },
     { name = "torch", version = "2.9.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.13' and platform_python_implementation == 'PyPy' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
     { name = "torch", version = "2.9.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "sys_platform == 'linux'" },
@@ -2701,6 +2658,7 @@ requires-dist = [
     { name = "rtdl-num-embeddings", specifier = ">=0.0.12" },
     { name = "rtdl-revisiting-models", specifier = ">=0.0.2" },
     { name = "skorch", specifier = ">=0.15.0" },
+    { name = "tabpfn" },
     { name = "torch", specifier = ">=2.0.0" },
     { name = "umap-learn", specifier = ">=0.5.11" },
     { name = "xgboost", specifier = ">=2.0.0" },

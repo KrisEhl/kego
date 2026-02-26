@@ -37,5 +37,4 @@ members = [
     "competitions/cafa",
     ".",
     "competitions/nfl-big-data-bowl-2026-prediction",
-    "cluster",
 ]

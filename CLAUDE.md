@@ -26,14 +26,14 @@ make publish
 uv run pre-commit run --all-files
 
 # Setup a Ray cluster worker (run on the worker machine)
-./cluster/scripts/setup-ray-worker.sh [head-ip]
+./competitions/playground/scripts-cluster/setup-ray-worker.sh [head-ip]
 
 # Run a training script (example: RNA baseline)
 uv run python competitions/stanford/train_rna_baseline.py
 
-# Ray cluster commands (run from cluster/ directory)
+# Ray cluster commands (run from competitions/playground/ directory)
 # See competitions/playground/README.md for full command reference with all variables
-cd cluster
+cd competitions/playground
 make start-head           # Start Ray head node
 make start-worker         # Connect as worker to head
 make restart-worker       # Stop and reconnect worker
@@ -69,9 +69,9 @@ make stop                 # Stop Ray on this node
 
 Each competition lives in `competitions/<competition>/` with its own `pyproject.toml` and dependencies. Workspace members are declared in the root `pyproject.toml` under `[tool.uv.workspace]`. Not all competition directories are workspace members—only those needing extra dependencies.
 
-### Ray Cluster (`cluster/`)
+### Ray Cluster
 
-The `cluster/` workspace member provides a uv-managed venv with `ray[default]` for Ray cluster workers. On each worker node, `cd cluster && uv sync` creates the venv, then ML deps are installed via `uv pip install`. Worker setup is handled by `cluster/scripts/setup-ray-worker.sh`.
+Ray cluster tooling lives in `competitions/playground/` alongside the training script. On each worker node, `cd competitions/playground && uv sync` sets up the venv (includes Ray, all ML deps). Worker setup is handled by `competitions/playground/scripts-cluster/setup-ray-worker.sh`.
 
 ### Current Active Focus: Playground Series S6E2 (Heart Disease)
 

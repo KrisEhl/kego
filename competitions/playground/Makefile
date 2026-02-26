@@ -4,7 +4,9 @@ RAY_DASHBOARD ?= http://$(RAY_HEAD_IP):8265
 MLFLOW_PORT ?= 5000
 MLFLOW_DIR ?= $(HOME)/mlflow
 MLFLOW_TRACKING_URI ?= http://$(RAY_HEAD_IP):$(MLFLOW_PORT)
-HF_TOKEN ?= $(shell cat ../.env 2>/dev/null | grep HF_TOKEN | sed 's/^[^=]*=//' | tr -d '"' | tr -d "'")
+HF_TOKEN ?= $(shell cat ../../.env 2>/dev/null | grep HF_TOKEN | sed 's/^[^=]*=//' | tr -d '"' | tr -d "'")
+
+TRAIN_SCRIPT := /home/kristian/projects/kego/competitions/playground/train_s6e2_baseline.py
 
 start-head:
 	RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 RAY_JOB_START_TIMEOUT_SECONDS=1800 uv run ray start --head --port=$(RAY_HEAD_PORT) --node-ip-address $(RAY_HEAD_IP) --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=$$(expr $$(nproc --all) - 2) --resources '{"heavy_gpu": 1}'
@@ -38,7 +40,7 @@ logs:
 		print(running[-1] if running else '')")); \
 	if [ -z "$$JOB_ID" ]; then echo "No running jobs"; \
 	else uv run ray job logs "$$JOB_ID" --address $(RAY_DASHBOARD) 2>/dev/null | \
-		python3 scripts/train_logs.py "$$JOB_ID"; \
+		python3 scripts-cluster/train_logs.py "$$JOB_ID"; \
 	fi
 
 N ?= 20
@@ -85,26 +87,26 @@ log-score:
 	print(f'Logged public_lb_score=$(SCORE) to run \"{name}\" in experiment \"{exp}\"')"
 
 submit-fast:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py --fast $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) --fast $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-fast-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py --fast-full $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) --fast-full $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-full:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-neural:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py --neural $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) --neural $(if $(TAG),--tag $(TAG)) $(if $(FEATURES),--features $(FEATURES)) $(if $(RESUME),--resume $(RESUME)) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-debug:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py --debug --fast $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) --debug --fast $(if $(TAG),--tag $(TAG))'
 
 TUNE_MODELS ?= catboost lightgbm
 TUNE_TRIALS ?= 50
 TUNE_SAMPLE ?=
 
 submit-tune:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py --tune $(TUNE_MODELS) --tune-trials $(TUNE_TRIALS) $(if $(TUNE_SAMPLE),--tune-sample $(TUNE_SAMPLE)) $(if $(FEATURES),--features $(FEATURES),--features ablation-pruned) $(if $(FOLDS),--folds $(FOLDS),--folds 5) $(if $(TAG),--tag $(TAG))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) --tune $(TUNE_MODELS) --tune-trials $(TUNE_TRIALS) $(if $(TUNE_SAMPLE),--tune-sample $(TUNE_SAMPLE)) $(if $(FEATURES),--features $(FEATURES),--features ablation-pruned) $(if $(FOLDS),--folds $(FOLDS),--folds 5) $(if $(TAG),--tag $(TAG))'
 
 DIVERSE_MODELS ?= catboost lightgbm logistic_regression ft_transformer
 DIVERSE_FEATURES ?= ablation-pruned raw forward-selected
@@ -112,33 +114,33 @@ DIVERSE_FOLDS ?= 5 10
 DIVERSE_SEED_POOL ?= 42 123 777 999 2024
 DIVERSE_SEEDS_PER ?= 3
 submit-diverse:
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(RETRAIN_FULL),--retrain-full) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) --models $(DIVERSE_MODELS) --features $(DIVERSE_FEATURES) --folds $(DIVERSE_FOLDS) --seed-pool $(DIVERSE_SEED_POOL) --seeds-per-learner $(DIVERSE_SEEDS_PER) $(if $(TAG),--tag $(TAG)) $(if $(RESUME),--resume $(RESUME)) $(if $(RETRAIN_FULL),--retrain-full) $(if $(DESCRIPTION),--description "$(DESCRIPTION)")'
 
 submit-ensemble:
 	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-ensemble ENSEMBLE=submit-v1"; echo "       make submit-ensemble EXPERIMENTS='exp1 exp2'"; exit 1)
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
 
 submit-kaggle:
 	@test -n "$(ENSEMBLE)$(EXPERIMENTS)" || (echo "Usage: make submit-kaggle ENSEMBLE=submit-v1"; echo "       make submit-kaggle EXPERIMENTS='exp1 exp2'"; exit 1)
-	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python ../competitions/playground/train_s6e2_baseline.py --submit $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
+	uv run ray job submit --address $(RAY_DASHBOARD) --no-wait -- bash -c 'export KEGO_PATH_DATA=/home/kristian/projects/kego/data && export PYTHONUNBUFFERED=1 && export MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) && export HF_TOKEN=$(HF_TOKEN) && python $(TRAIN_SCRIPT) --submit $(if $(ENSEMBLE),--from-ensemble $(ENSEMBLE),--from-experiment $(EXPERIMENTS))'
 
 promote:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make promote ENSEMBLE=submit-v1 RUN_ID='id1 id2'"; exit 1)
 	@test -n "$(RUN_ID)" || (echo "Usage: make promote ENSEMBLE=submit-v1 RUN_ID='id1 id2'"; exit 1)
-	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py add $(ENSEMBLE) --run-id $(RUN_ID)
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts-cluster/promote.py add $(ENSEMBLE) --run-id $(RUN_ID)
 
 auto-promote:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make auto-promote ENSEMBLE=submit-v1 EXPERIMENT='full-v1 gbdt-v1' [FOLDS=10]"; echo "       make auto-promote ENSEMBLE=submit-v1 ALL=1 [FOLDS=10]"; exit 1)
 	@test -n "$(EXPERIMENT)$(ALL)" || (echo "Error: set EXPERIMENT='...' or ALL=1"; exit 1)
-	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py auto $(ENSEMBLE) $(if $(ALL),--all,--experiment $(EXPERIMENT)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(FEATURES),--features $(FEATURES))
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts-cluster/promote.py auto $(ENSEMBLE) $(if $(ALL),--all,--experiment $(EXPERIMENT)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(FEATURES),--features $(FEATURES))
 
 list-ensemble:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make list-ensemble ENSEMBLE=submit-v1"; exit 1)
-	@MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py list $(ENSEMBLE)
+	@MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts-cluster/promote.py list $(ENSEMBLE)
 
 clear-ensemble:
 	@test -n "$(ENSEMBLE)" || (echo "Usage: make clear-ensemble ENSEMBLE=submit-v1"; exit 1)
-	@MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py clear $(ENSEMBLE)
+	@MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts-cluster/promote.py clear $(ENSEMBLE)
 
 search-runs:
-	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts/promote.py search $(if $(ALL),--all,$(if $(EXPERIMENT),--experiment $(EXPERIMENT),--all)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(SEEDS),--seeds $(SEEDS)) $(if $(FEATURES),--features $(FEATURES))
+	MLFLOW_TRACKING_URI=$(MLFLOW_TRACKING_URI) uv run python3 scripts-cluster/promote.py search $(if $(ALL),--all,$(if $(EXPERIMENT),--experiment $(EXPERIMENT),--all)) $(if $(FOLDS),--folds $(FOLDS)) $(if $(MODELS),--model $(MODELS)) $(if $(SEEDS),--seeds $(SEEDS)) $(if $(FEATURES),--features $(FEATURES))

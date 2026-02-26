@@ -21,6 +21,7 @@ dependencies = [
     "mlflow>=2.0.0",
     "category-encoders>=2.9.0",
     "umap-learn>=0.5.11",
+    "tabpfn",
 ]
 
 [tool.uv.sources]

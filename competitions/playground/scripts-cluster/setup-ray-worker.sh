@@ -3,7 +3,7 @@
 # This script runs DIRECTLY on the worker machine (no SSH).
 #
 # Usage:
-#   ./scripts/setup-ray-worker.sh [head-ip]
+#   ./scripts-cluster/setup-ray-worker.sh [head-ip]
 #
 # Example:
 #   ./scripts/setup-ray-worker.sh 192.168.178.32
@@ -28,7 +28,7 @@ echo "[0/8] Checking Ray cluster on head ${HEAD_IP}..."
 if ! curl -sf --connect-timeout 5 "http://${HEAD_IP}:8265/api/version" >/dev/null 2>&1; then
     echo "ERROR: Ray cluster is not running on ${HEAD_IP}:8265"
     echo "Start the head node first:"
-    echo "  cd ${PROJECT_DIR}/cluster && RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --head --port=${HEAD_PORT} --node-ip-address ${HEAD_IP} --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=\$(expr \$(nproc --all) - 2)"
+    echo "  cd ${PROJECT_DIR}/competitions/playground && RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1 uv run ray start --head --port=${HEAD_PORT} --node-ip-address ${HEAD_IP} --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --num-cpus=\$(expr \$(nproc --all) - 2)"
     exit 1
 fi
 echo "Ray cluster is running."
@@ -62,9 +62,9 @@ else
     git -C "${PROJECT_DIR}" pull
 fi
 
-# --- 4. Sync cluster workspace member (includes all ML deps) ---
-echo "[4/7] Setting up cluster venv..."
-cd "${PROJECT_DIR}/cluster"
+# --- 4. Sync playground workspace member (includes all ML deps) ---
+echo "[4/7] Setting up playground venv..."
+cd "${PROJECT_DIR}/competitions/playground"
 uv sync
 
 # --- 5. Verify GPU access and imports ---
@@ -122,7 +122,7 @@ ls -lh "${DATA_PATH}/"
 
 # --- 7. Start Ray worker ---
 echo "[7/7] Starting Ray worker..."
-cd "${PROJECT_DIR}/cluster"
+cd "${PROJECT_DIR}/competitions/playground"
 
 # Stop any existing Ray processes
 ray stop --force 2>/dev/null || true
