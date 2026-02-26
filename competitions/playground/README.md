@@ -92,7 +92,7 @@ cd cluster && make submit-ensemble EXPERIMENTS="full-v1 diverse-v1"
 cd cluster && make submit-kaggle ENSEMBLE=submit-v9
 
 # Local usage (without Ray cluster)
-uv run python notebooks/playground/train_s6e2_baseline.py --fast --tag local-test
+uv run python competitions/playground/train_s6e2_baseline.py --fast --tag local-test
 ```
 
 ## CLI Reference — `research_features.py`
@@ -107,10 +107,10 @@ Domain-driven feature research script. Generates ~140 feature candidates from cl
 
 ```bash
 # Quick smoke test
-uv run python notebooks/playground/research_features.py --train-sample 3000 --holdout-sample 1000 --seeds 42
+uv run python competitions/playground/research_features.py --train-sample 3000 --holdout-sample 1000 --seeds 42
 
 # Default run
-uv run python notebooks/playground/research_features.py
+uv run python competitions/playground/research_features.py
 ```
 
 See `FEATURES.md` for the full feature catalog with formulas and academic references.
@@ -181,7 +181,7 @@ cd cluster && make submit-full RESUME=playground-s6e2-full TAG=full
 cd cluster && make submit-full RESUME=playground-s6e2-full TAG=full DESCRIPTION="retry after OOM fix"
 
 # Local (non-cluster) usage
-uv run python notebooks/playground/train_s6e2_baseline.py --resume playground-s6e2-full --tag full
+uv run python competitions/playground/train_s6e2_baseline.py --resume playground-s6e2-full --tag full
 ```
 
 **How it works:**

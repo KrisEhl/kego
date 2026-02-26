@@ -33,8 +33,8 @@ No feature is guaranteed a spot. The script generates ~125 candidates (13 raw + 
 
 ## Deliverables
 
-1. **`notebooks/playground/research_features.py`** — standalone evaluation script
-2. **`notebooks/playground/FEATURES.md`** — feature catalog with formulas, rationale, and references
+1. **`competitions/playground/research_features.py`** — standalone evaluation script
+2. **`competitions/playground/FEATURES.md`** — feature catalog with formulas, rationale, and references
 
 ## Script Architecture
 

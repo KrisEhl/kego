@@ -5,7 +5,7 @@ Focus: outliers, categorical traps, synthetic data artifacts, train/test shift.
 Prints detailed analysis and saves plots to an output directory.
 
 Usage:
-    uv run python notebooks/playground/explore_s6e2.py
+    uv run python competitions/playground/explore_s6e2.py
 """
 
 import os
@@ -31,7 +31,7 @@ DATA_DIR = (
     / "playground"
     / "playground-series-s6e2"
 )
-OUTPUT_DIR = project_root / "notebooks" / "playground" / "plots_s6e2"
+OUTPUT_DIR = project_root / "competitions" / "playground" / "plots_s6e2"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 TARGET = "Heart Disease"

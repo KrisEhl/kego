@@ -304,7 +304,7 @@ wheels = [
 [[package]]
 name = "cafa"
 version = "0.1.0"
-source = { virtual = "notebooks/cafa" }
+source = { virtual = "competitions/cafa" }
 dependencies = [
     { name = "biopython" },
     { name = "ipykernel" },
@@ -2150,7 +2150,7 @@ wheels = [
 [[package]]
 name = "nfl-big-data-bowl-2026-prediction"
 version = "0.1.0"
-source = { virtual = "notebooks/nfl-big-data-bowl-2026-prediction" }
+source = { virtual = "competitions/nfl-big-data-bowl-2026-prediction" }
 dependencies = [
     { name = "ipykernel" },
     { name = "kego" },
@@ -2662,7 +2662,7 @@ wheels = [
 [[package]]
 name = "playground"
 version = "0.1.0"
-source = { virtual = "notebooks/playground" }
+source = { virtual = "competitions/playground" }
 dependencies = [
     { name = "catboost" },
     { name = "category-encoders" },
@@ -2709,7 +2709,7 @@ requires-dist = [
 [[package]]
 name = "playground-series-s5e9"
 version = "0.1.0"
-source = { virtual = "notebooks/playground-series-s5e9" }
+source = { virtual = "competitions/playground-series-s5e9" }
 dependencies = [
     { name = "ipykernel" },
     { name = "kego" },

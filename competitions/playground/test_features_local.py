@@ -1,6 +1,6 @@
 """Local CPU test: compare old vs new feature engineering on LightGBM + LogReg.
 
-Run: uv run python notebooks/playground/test_features_local.py
+Run: uv run python competitions/playground/test_features_local.py
 """
 
 import os

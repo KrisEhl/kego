@@ -10,8 +10,8 @@ forward selection from winners, with drop-one validation. Uses full LightGBM
 params throughout (no screening shortcuts). CPU only, no Ray.
 
 Usage:
-    uv run python notebooks/playground/research_features.py
-    uv run python notebooks/playground/research_features.py --train-sample 5000 --holdout-sample 2000
+    uv run python competitions/playground/research_features.py
+    uv run python competitions/playground/research_features.py --train-sample 5000 --holdout-sample 2000
 """
 
 import argparse

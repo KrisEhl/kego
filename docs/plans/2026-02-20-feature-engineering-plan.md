@@ -9,7 +9,7 @@
 **Tech Stack:** Python 3.10+, LightGBM, scikit-learn, category_encoders, optbinning, umap-learn, pandas, numpy
 
 **Design doc:** `docs/plans/2026-02-20-feature-engineering-design.md`
-**Feature reference:** `notebooks/playground/FEATURES.md`
+**Feature reference:** `competitions/playground/FEATURES.md`
 
 ---
 
@@ -17,7 +17,7 @@
 
 - This project is a Kaggle competition (Playground S6E2, Heart Disease binary classification, AUC metric)
 - The script runs locally on Mac (no Ray cluster, no GPU) — CPU only
-- Follow the patterns in `notebooks/playground/select_features.py` exactly — same data loading, same split, same LightGBM params, same multi-seed evaluation
+- Follow the patterns in `competitions/playground/select_features.py` exactly — same data loading, same split, same LightGBM params, same multi-seed evaluation
 - The key data files are in `data/playground/playground-series-s6e2/` (train.csv, Heart_Disease_Prediction.csv)
 - Pre-commit hooks enforce: black, isort, flake8, mypy, autoflake — code must pass all of these
 - Use `uv run python ...` to execute (never bare `python`)
@@ -25,17 +25,17 @@
 
 ## Existing Files to Reference
 
-- `notebooks/playground/select_features.py` — PRIMARY TEMPLATE: data loading, split, LightGBM eval, ablation, forward selection patterns
-- `notebooks/playground/test_features_local.py` — target encoding per fold pattern, feature engineering functions
-- `notebooks/playground/FEATURES.md` — formulas for all ~125 features
-- `notebooks/playground/train_s6e2_baseline.py` — full model configs (lines 639-698 for `_engineer_features()`)
+- `competitions/playground/select_features.py` — PRIMARY TEMPLATE: data loading, split, LightGBM eval, ablation, forward selection patterns
+- `competitions/playground/test_features_local.py` — target encoding per fold pattern, feature engineering functions
+- `competitions/playground/FEATURES.md` — formulas for all ~125 features
+- `competitions/playground/train_s6e2_baseline.py` — full model configs (lines 639-698 for `_engineer_features()`)
 
 ---
 
 ### Task 1: Script scaffold with data loading and static features
 
 **Files:**
-- Create: `notebooks/playground/research_features.py`
+- Create: `competitions/playground/research_features.py`
 
 **Step 1: Create the script with imports, constants, data loading, and all static feature generation**
 
@@ -189,13 +189,13 @@ df["risk_logodds"] = np.log(risk_prob / (1 - risk_prob))
 
 **Step 2: Verify the script loads data and generates features without errors**
 
-Run: `uv run python notebooks/playground/research_features.py --train-sample 5000 --holdout-sample 2000`
+Run: `uv run python competitions/playground/research_features.py --train-sample 5000 --holdout-sample 2000`
 Expected: Prints feature counts and exits (no evaluation yet). Should show ~80+ total features (13 raw + 22 existing + ~55 research).
 
 **Step 3: Commit**
 
 ```bash
-git add notebooks/playground/research_features.py
+git add competitions/playground/research_features.py
 git commit -m "feat: add research_features.py scaffold with static feature generation"
 ```
 
@@ -204,7 +204,7 @@ git commit -m "feat: add research_features.py scaffold with static feature gener
 ### Task 2: Per-fold feature generation
 
 **Files:**
-- Modify: `notebooks/playground/research_features.py`
+- Modify: `competitions/playground/research_features.py`
 
 **Step 1: Add `_engineer_fold_features(X_train, y_train, X_val)` function**
 
@@ -482,13 +482,13 @@ def _eval_lgbm_with_fold_features(
 
 **Step 3: Verify fold features generate without errors**
 
-Run: `uv run python notebooks/playground/research_features.py --train-sample 5000 --holdout-sample 2000`
+Run: `uv run python competitions/playground/research_features.py --train-sample 5000 --holdout-sample 2000`
 Expected: Prints total feature count (should be ~125+), no errors.
 
 **Step 4: Commit**
 
 ```bash
-git add notebooks/playground/research_features.py
+git add competitions/playground/research_features.py
 git commit -m "feat: add per-fold feature generation (encodings, KNN, meta-models, splines)"
 ```
 
@@ -497,7 +497,7 @@ git commit -m "feat: add per-fold feature generation (encodings, KNN, meta-model
 ### Task 3: Evaluation pipeline — ablation and forward selection
 
 **Files:**
-- Modify: `notebooks/playground/research_features.py`
+- Modify: `competitions/playground/research_features.py`
 
 **Step 1: Add the evaluation pipeline to `main()`**
 
@@ -589,13 +589,13 @@ Copy the 21-feature list from `train_s6e2_baseline.py` for the reference baselin
 
 **Step 3: Verify the full pipeline runs on a small sample**
 
-Run: `uv run python notebooks/playground/research_features.py --train-sample 5000 --holdout-sample 2000`
+Run: `uv run python competitions/playground/research_features.py --train-sample 5000 --holdout-sample 2000`
 Expected: All 5 steps complete, prints ablation table, forward selection curve, comparison table. May take 2-3 minutes on small sample.
 
 **Step 4: Commit**
 
 ```bash
-git add notebooks/playground/research_features.py
+git add competitions/playground/research_features.py
 git commit -m "feat: add evaluation pipeline (ablation, forward selection, comparison)"
 ```
 
@@ -604,7 +604,7 @@ git commit -m "feat: add evaluation pipeline (ablation, forward selection, compa
 ### Task 4: Full run and report formatting
 
 **Files:**
-- Modify: `notebooks/playground/research_features.py`
+- Modify: `competitions/playground/research_features.py`
 
 **Step 1: Add final report formatting**
 
@@ -635,13 +635,13 @@ for f in new_ablation:
 
 **Step 2: Run the full evaluation with default sample sizes**
 
-Run: `uv run python notebooks/playground/research_features.py`
+Run: `uv run python competitions/playground/research_features.py`
 Expected: Full run with 50K train / 20K holdout, 3 seeds. Should take ~10-15 minutes.
 
 **Step 3: Commit**
 
 ```bash
-git add notebooks/playground/research_features.py
+git add competitions/playground/research_features.py
 git commit -m "feat: add final report formatting and complete research_features.py"
 ```
 
@@ -650,7 +650,7 @@ git commit -m "feat: add final report formatting and complete research_features.
 ### Task 5: Install dependencies and verify end-to-end
 
 **Files:**
-- Possibly modify: `notebooks/playground/pyproject.toml` or root `pyproject.toml`
+- Possibly modify: `competitions/playground/pyproject.toml` or root `pyproject.toml`
 
 **Step 1: Check which dependencies are already available**
 
@@ -660,12 +660,12 @@ If any fail, install them. Since the script runs locally (not on Ray), add to th
 
 **Step 2: Run the full script with default settings**
 
-Run: `uv run python notebooks/playground/research_features.py`
+Run: `uv run python competitions/playground/research_features.py`
 Expected: Complete run, all features generated, evaluation pipeline runs, report printed.
 
 **Step 3: Verify pre-commit hooks pass**
 
-Run: `uv run pre-commit run --files notebooks/playground/research_features.py`
+Run: `uv run pre-commit run --files competitions/playground/research_features.py`
 Expected: All hooks pass.
 
 **Step 4: Final commit**
@@ -680,7 +680,7 @@ git commit -m "chore: install deps and finalize research_features.py"
 ### Task 6: Update documentation
 
 **Files:**
-- Modify: `notebooks/playground/README.md`
+- Modify: `competitions/playground/README.md`
 
 **Step 1: Add `research_features.py` to the Scripts section**
 
@@ -705,6 +705,6 @@ Add a brief CLI section:
 **Step 3: Commit**
 
 ```bash
-git add notebooks/playground/README.md
+git add competitions/playground/README.md
 git commit -m "docs: add research_features.py to README"
 ```

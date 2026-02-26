@@ -115,7 +115,7 @@ TE_FEATURES = list(CAT_FEATURES)  # All 8 categoricals (expanded from 4)
 LOO_FEATURES = ["Thallium", "Slope of ST"]
 
 # Feature sets identified by select_features.py (multi-seed ablation + forward selection).
-# See notebooks/playground/README.md "Feature Selection (Fine-Grained)" for details.
+# See competitions/playground/README.md "Feature Selection (Fine-Grained)" for details.
 FEATURES_ABLATION_PRUNED = [
     # Raw features that help (10)
     "Age",

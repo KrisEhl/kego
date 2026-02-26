@@ -18,7 +18,7 @@ download-competition-data:
 setup-new-competition:
 	if [ -z ${KAGGLE_COMPETITION} ]; then echo "KAGGLE_COMPETITION is unset" && exit 1; else echo "KAGGLE_COMPETITION is set to '${KAGGLE_COMPETITION}'"; fi
 	$(eval path_current := ${PWD})
-	$(eval path_competition := "notebooks/${KAGGLE_COMPETITION}")
+	$(eval path_competition := "competitions/${KAGGLE_COMPETITION}")
 	mkdir ${path_competition}
 	uv init --name ${KAGGLE_COMPETITION} --no-package --directory ${path_competition}
 

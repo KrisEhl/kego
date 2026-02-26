@@ -29,10 +29,10 @@ uv run pre-commit run --all-files
 ./cluster/scripts/setup-ray-worker.sh [head-ip]
 
 # Run a training script (example: RNA baseline)
-uv run python notebooks/stanford/train_rna_baseline.py
+uv run python competitions/stanford/train_rna_baseline.py
 
 # Ray cluster commands (run from cluster/ directory)
-# See notebooks/playground/README.md for full command reference with all variables
+# See competitions/playground/README.md for full command reference with all variables
 cd cluster
 make start-head           # Start Ray head node
 make start-worker         # Connect as worker to head
@@ -67,7 +67,7 @@ make stop                 # Stop Ray on this node
 
 ### Workspace Structure
 
-Each competition lives in `notebooks/<competition>/` with its own `pyproject.toml` and dependencies. Workspace members are declared in the root `pyproject.toml` under `[tool.uv.workspace]`. Not all notebook directories are workspace members—only those needing extra dependencies.
+Each competition lives in `competitions/<competition>/` with its own `pyproject.toml` and dependencies. Workspace members are declared in the root `pyproject.toml` under `[tool.uv.workspace]`. Not all notebook directories are workspace members—only those needing extra dependencies.
 
 ### Ray Cluster (`cluster/`)
 
@@ -77,8 +77,8 @@ The `cluster/` workspace member provides a uv-managed venv with `ray[default]` f
 
 - Binary classification (AUC), 630K train / 270K test rows
 - 19-model ensemble with Ridge stacking, trained on Ray GPU cluster
-- Main script: `notebooks/playground/train_s6e2_baseline.py`
-- **See `notebooks/playground/README.md`** for full CLI reference, cluster Makefile commands, model details, and experiment log
+- Main script: `competitions/playground/train_s6e2_baseline.py`
+- **See `competitions/playground/README.md`** for full CLI reference, cluster Makefile commands, model details, and experiment log
 
 ## Code Conventions
 
