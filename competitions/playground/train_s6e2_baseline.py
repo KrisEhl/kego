@@ -953,6 +953,7 @@ def _suggest_lightgbm(trial):
         "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 10.0, log=True),
         "path_smooth": trial.suggest_float("path_smooth", 0.0, 100.0),
         "min_split_gain": trial.suggest_float("min_split_gain", 0.0, 1.0),
+        "max_bin": trial.suggest_int("max_bin", 63, 511),
         "metric": "auc",
         "verbosity": -1,
     }
