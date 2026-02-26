@@ -67,7 +67,7 @@ make stop                 # Stop Ray on this node
 
 ### Workspace Structure
 
-Each competition lives in `competitions/<competition>/` with its own `pyproject.toml` and dependencies. Workspace members are declared in the root `pyproject.toml` under `[tool.uv.workspace]`. Not all notebook directories are workspace members—only those needing extra dependencies.
+Each competition lives in `competitions/<competition>/` with its own `pyproject.toml` and dependencies. Workspace members are declared in the root `pyproject.toml` under `[tool.uv.workspace]`. Not all competition directories are workspace members—only those needing extra dependencies.
 
 ### Ray Cluster (`cluster/`)
 
