@@ -1,4 +1,7 @@
-.PHONY: dev export plots
+.PHONY: install dev export plots
+
+install:
+	npm install
 
 dev:
 	npm run dev
