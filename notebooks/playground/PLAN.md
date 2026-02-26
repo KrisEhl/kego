@@ -254,20 +254,7 @@ score = cross_val_score(LGBMClassifier(), adv[features], adv['is_test'], cv=5, s
 # If score > 0.58: features that most distinguish train/test may be hurting LB generalisation
 ```
 
-### Step 17: Soft pseudo-labeling — ❌ DONE, doesn't work
-
-Tested locally with LightGBM (tuned params, 5-fold CV, 3 seeds, holdout evaluation).
-
-| | Baseline | Round 1 | Round 2 |
-|---|---|---|---|
-| weight=1.0 | 0.95606 | 0.92915 (−0.02691) | 0.70162 (−0.25444) |
-| weight=0.3 | 0.95606 | 0.92940 (−0.02666) | 0.70230 (−0.25376) |
-
-**Root cause**: Adding 270K soft-labeled test rows (many near 0.5) swamps the real training signal. Early stopping fires at round 1–11 because the model degrades immediately. Round 2 then fits the garbage labels perfectly (0.977 CV AUC, circular validation) while holdout collapses to 0.70. Downweighting to 0.3 makes no difference.
-
-**Conclusion**: Both hard and soft pseudo-labeling fail on this dataset. Test distribution is too noisy / different. Do not retry.
-
-### Step 18: L2 meta-model with `confidence` meta-feature
+### Step 17: L2 meta-model with `confidence` meta-feature
 
 From the April 2025 Kaggle Playground winner (cuML stacking): add `std(oof_predictions)` across L1 base models as a meta-feature for the L2 model. This "confidence" signal helps the meta-model distinguish easy vs hard instances.
 
