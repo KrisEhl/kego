@@ -56,6 +56,19 @@ def compute_ensemble(
     holdout_matrix = np.column_stack([holdout_preds[n] for n in model_names])
     test_matrix = np.column_stack([test_preds[n] for n in model_names])
 
+    # If holdout predictions don't match holdout labels (e.g. mixing retrain-full
+    # experiments where holdout slots store test predictions), disable holdout eval.
+    if holdout_labels is not None and holdout_matrix.shape[0] != len(holdout_labels):
+        import warnings
+
+        warnings.warn(
+            f"Holdout predictions ({holdout_matrix.shape[0]} rows) don't match "
+            f"holdout labels ({len(holdout_labels)} rows). "
+            "Falling back to OOF-only evaluation.",
+            stacklevel=2,
+        )
+        holdout_labels = None
+
     methods = []
 
     # --- Simple average ---
@@ -190,6 +203,6 @@ def compute_ensemble(
 
 def _eval_auc(oof, holdout, train_labels, holdout_labels):
     """Evaluate AUC using holdout labels if available, else OOF."""
-    if holdout_labels is not None:
+    if holdout_labels is not None and len(holdout) == len(holdout_labels):
         return roc_auc_score(holdout_labels, holdout)
     return roc_auc_score(train_labels, oof)
