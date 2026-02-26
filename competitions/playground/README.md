@@ -77,19 +77,19 @@ The original data is combined with the synthetic training data during training t
 
 ```bash
 # Full training on Ray cluster
-cd cluster && make submit-full TAG=full-v2
+cd competitions/playground && make submit-full TAG=full-v2
 
 # Fast iteration with specific models and features
-cd cluster && make submit-fast TAG=test DESCRIPTION="testing catboost tuned params"
+cd competitions/playground && make submit-fast TAG=test DESCRIPTION="testing catboost tuned params"
 
 # Tune CatBoost and LightGBM (50 trials each)
-cd cluster && make submit-tune TUNE_MODELS="catboost lightgbm" TUNE_TRIALS=50
+cd competitions/playground && make submit-tune TUNE_MODELS="catboost lightgbm" TUNE_TRIALS=50
 
 # Re-ensemble from previous experiments (no training)
-cd cluster && make submit-ensemble EXPERIMENTS="full-v1 diverse-v1"
+cd competitions/playground && make submit-ensemble EXPERIMENTS="full-v1 diverse-v1"
 
 # Submit best ensemble to Kaggle
-cd cluster && make submit-kaggle ENSEMBLE=submit-v9
+cd competitions/playground && make submit-kaggle ENSEMBLE=submit-v9
 
 # Local usage (without Ray cluster)
 uv run python competitions/playground/train_s6e2_baseline.py --fast --tag local-test
@@ -115,9 +115,9 @@ uv run python competitions/playground/research_features.py
 
 See `FEATURES.md` for the full feature catalog with formulas and academic references.
 
-## Cluster Commands (`cluster/Makefile`)
+## Cluster Commands (`competitions/playground/Makefile`)
 
-All commands run from the `cluster/` directory.
+All commands run from the `competitions/playground/` directory.
 
 ### Training Jobs
 
@@ -276,6 +276,7 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | retrain-full-v2 | Ridge stacking, 104 learners trained on full data (train+holdout) | 0.9557† | **0.95380** | **+0.00008** | **Current best.** 19 models x 3 feature sets x 10f. OOF AUC for method selection |
 | submit-v11 | Ridge stacking, 8 curated learners trained on full data | 0.9556† | 0.95378 | +0.00006 | Curated subset of retrain-full-v2: xgboost, catboost, lightgbm, ft_transformer on raw/ablation-pruned |
 | cpu-retrain-v1 | Ridge, 20 CPU learners (lgbm variants + logreg) on `all` + `ablation-pruned`, retrain-full | 0.9554† | — | — | Local Mac run. lgbm/all ≈ lgbm/ablation-pruned (0.9552 vs 0.9553). logreg/all +0.0003 vs ablation-pruned. Combined with retrain-full-v2 (124 learners total): 0.95568 — zero improvement. CPU learners don't displace GPU model dominance |
+| tuned-retrain-v1 combined | Ridge, 114 learners (104 retrain-full-v2 + 60 tuned GBDTs on `all`+`ablation-pruned`) | 0.9557† | 0.95380 | +0.00000 | Tuned lgbm_tuned + xgboost_tuned + catboost × 5 seeds, 5+10 folds, retrain-full-direct. Holdout eval disabled for tuned models (OOF covers train+holdout combined). Hill climbing collapsed to uniform weights. Ridge dominated by existing retrain-full-v2 models. No improvement. |
 
 ### Local Feature Validation (5-fold CV on full train, CPU, single LightGBM/LogReg)
 
@@ -639,8 +640,8 @@ Ranked by expected impact. Bronze cutoff: ~0.95388 (+0.00008 from current 0.9538
 
 | # | Idea | Expected Gain | Effort | Status |
 |---|------|---------------|--------|--------|
-| 1 | **GPU retrain-full with new `all` feature set** | Medium | Cluster | Next step. XGBoost + CatBoost (top ensemble contributors) trained on 53 features. These dominate Ridge weights — if new features help them, it will show in LB. |
-| 2 | **More seeds + Optuna HP tuning** | Small | Cluster | Increase seed pool to 5-10. Run Optuna (100+ trials) for XGBoost, CatBoost, LightGBM on new feature set. |
+| 1 | **GPU retrain-full with new `all` feature set** | Medium | Cluster | ~~Next step.~~ **Tried (tuned-retrain-v1 combined): no improvement.** Tuned GBDTs on `all`+`ablation-pruned` don't displace retrain-full-v2 dominance. Consistent with CPU validation findings. |
+| 2 | **CatBoost Optuna HP tuning** | Small–Medium | Cluster | Tuning job running (catboost-tune-v1, 100 trials). CatBoost is the highest-weight model family with no Optuna tuning yet. If `catboost_tuned` scores meaningfully above defaults, retrain-full on ablation-pruned features only. |
 | 3 | **Adversarial validation** | Diagnostic | Low | Train classifier to distinguish train vs test. May reveal distribution shift. |
 | 4 | **Revisit pseudo-labeling** | Small | Medium | Previous attempt (136k hard labels) failed. Try soft labels, higher confidence threshold (0.99), ensemble-generated labels. |
 
@@ -656,4 +657,5 @@ Ranked by expected impact. Bronze cutoff: ~0.95388 (+0.00008 from current 0.9538
 - **Research features (6 clinical features)**: framingham_partial, heart_score_partial, duke_treadmill_approx, cholesterol_squared, cholesterol_age_risk, age_sex_interaction. +0.00053 local AUC improvement but no LB gain. Neural models degraded on research features (resnet broken at 0.72-0.86 AUC, ft_transformer at 0.91)
 - **KNN (subsampled)**: 6 variants k=5–200, 5-fold CV on 50K training rows. Individual AUC 0.922–0.947. Zero ensemble weight when combined with 104 learners
 - **CPU retrain-full with notebook features**: 5 CPU models (lgbm × 4 + logreg) on `all` (53 features) and `ablation-pruned`, retrain-full mode. Combined with retrain-full-v2 (124 learners): Ridge OOF 0.95568 — zero improvement. CPU models can't shift the ensemble dominated by GPU models
+- **GPU retrain-full with tuned GBDTs + `all` feature set**: lightgbm_tuned + xgboost_tuned + catboost × 5 seeds, 5+10 folds on `all`+`ablation-pruned`, retrain-full-direct (60 learners in tuned-retrain-v1). Combined with retrain-full-v2 (114 learners total): holdout AUC 0.9557, LB 0.9538 = **no improvement**. Hill climbing collapsed to uniform weights; Ridge dominated by existing retrain-full-v2 models. Tuned params and `all` features don't add diversity beyond the existing 104-learner ensemble.
 - **Alternative meta-learners**: Tested LogReg (C=0.001), rank averaging, Ridge on ranks, broader alpha range. Ridge alpha=10 already optimal (0.95568). All alternatives worse

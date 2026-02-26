@@ -1,9 +1,11 @@
 # Plan: Next Steps — Maximize LB Score
 
-## Status (2026-02-25)
+## Status (2026-02-26)
 
 Current best: **0.95380 LB** (retrain-full-v2, 104 learners, Ridge stacking).
-Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff has moved up — estimated ~0.95395 (+0.00015 needed).
+Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff: ~0.95395 (~+0.00015 needed).
+
+**Latest attempt (tuned-retrain-v1 combined)**: No improvement. Added 60 tuned GBDTs (lgbm_tuned + xgboost_tuned + catboost × 5 seeds on `all`+`ablation-pruned`) to retrain-full-v2. Holdout AUC 0.9557, LB 0.9538 — identical to retrain-full-v2 alone. Hill climbing collapsed to uniform weights. Ridge dominated by existing models. Consistent with CPU validation: tuned GBDTs and the `all` feature set don't displace the existing 104-learner ensemble.
 
 ### Leaderboard Context (as of 2026-02-25)
 
@@ -172,7 +174,7 @@ Key findings:
 
 ## Next Steps (requires cluster)
 
-### Step 10: Retrain-full tuned 3-family ensemble ✅ RUNNING (raysubmit_wJc2TuKaxbZJgGqz)
+### Step 10: Retrain-full tuned 3-family ensemble ✅ SUCCEEDED (raysubmit_wJc2TuKaxbZJgGqz)
 
 Submitted directly to retrain-full (skipping holdout eval to save time). Training `lightgbm_tuned + xgboost_tuned + catboost` on 100% of data:
 
@@ -189,25 +191,28 @@ cd cluster && make submit-diverse \
 
 60 learners (3 models × 2 feature sets × 2 fold counts × 5 seeds). No holdout eval — OOF AUC only.
 
-### Step 11: Combine with retrain-full-v2 and submit
+### Step 11: Combine with retrain-full-v2 and submit ✅ COMPLETED — no improvement
 
-When tuned-retrain-v1 finishes, ensemble with retrain-full-v2 to include neural nets (ResNet, FT-Transformer, RealMLP) from the existing 104-learner run:
+Combined 114 learners (retrain-full-v2 + tuned-retrain-v1). Best: Ridge, holdout AUC **0.9557**, LB **0.9538** = 0.95380.
 
-```bash
-cd cluster && make submit-ensemble \
-  EXPERIMENTS="playground-s6e2-retrain-full-v2 playground-s6e2-tuned-retrain-v1"
-```
+Results:
+| Method | Holdout AUC |
+|---|---|
+| average | 0.9552 |
+| **ridge (α=10)** | **0.9557** |
+| hill_climbing | 0.9552 (uniform weights — couldn't improve on average) |
+| rank_blending | 0.9552 |
+| l2_preds_only | 0.9555 |
 
-Ridge will pick the best combination — tuned GBDTs should dominate, neural nets add structural diversity. Then submit to Kaggle:
+Key finding: Hill climbing assigned equal weights (1/114) to all learners — strong signal the tuned models add no useful diversity. Ridge dominant contributors remain the same retrain-full-v2 models (catboost_shallow/raw, xgboost/raw, xgboost/forward-selected). Tuned model weights: small positive or negative, net zero effect.
 
-```bash
-cd cluster && make submit-kaggle \
-  EXPERIMENTS="playground-s6e2-retrain-full-v2 playground-s6e2-tuned-retrain-v1"
-```
+Note: tuned-retrain-v1 used retrain-full-direct (OOF=630K spans train+holdout), so the combine.py size mismatch fix was needed and applied.
 
 ### Step 13: HP config diversity — extract top Optuna trials as additional learners
 
 The #1 gap between us and the 0.95406 public cluster is **HP config diversity**, not model count. Evidence: the public notebook scores higher with 3 GBDTs × 5 seeds than our 104-learner Ridge ensemble. Research confirms: ensembling multiple HP configs per model family produces weakly correlated predictions that Ridge can usefully weight.
+
+**Updated priority after Step 11 result**: Tuned GBDTs on `all` features didn't help. The key question is whether a well-tuned CatBoost can produce predictions sufficiently different from our current catboost/ablation-pruned/10f to matter. Focus: catboost_tuned retrain-full on ablation-pruned only (not `all`), then test standalone before combining.
 
 Our Optuna studies (100 trials each) produced a single "best" config. The 2nd–5th best trials likely score within 0.0003 but explore very different HP regions (shallow/wide vs deep/narrow trees, different regularization). Add these as new model variants:
 
@@ -274,6 +279,7 @@ Current L2 LightGBM uses only OOF predictions as features. Adding prediction var
 - **More seeds (>5)**: From 1→3 seeds: +0.00001 LB. Diminishing returns well before 5.
 - **TabPFN**: Near-zero ensemble weight at 630K rows. Designed for small datasets.
 - **SVM, KNN**: Near-zero or zero ensemble weight. Too slow and/or too weak individually.
+- **Tuned GBDTs (lgbm_tuned + xgboost_tuned + catboost) on `all`+`ablation-pruned` features, retrain-full**: 60 learners, 5 seeds, 5+10 folds. Combined with retrain-full-v2 (114 total): LB 0.9538, no improvement. Hill climbing went uniform. The `all` feature set and tuned HPs don't add diversity beyond the existing ensemble.
 - **Pseudo-labeling (hard + soft)**: Both definitively failed. Soft labels collapse model to 0.929 round 1 → 0.70 round 2. See Step 17.
 
 ---
