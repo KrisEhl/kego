@@ -217,7 +217,7 @@ The top of the pack is **+0.00041** above our start. We're now **+0.00026** of t
 
 </div>
 
-<div class="absolute bottom-6 left-12 text-xs text-gray-400">LR = Logistic Regression · RF = Random Forest · ET = Extra Trees · XGB-reg = XGBoost regularized · LGB-DART = LightGBM with dropout</div>
+<div v-click="6" class="absolute bottom-6 left-12 text-xs text-gray-400">LR = Logistic Regression · RF = Random Forest · ET = Extra Trees · XGB-reg = XGBoost regularized · LGB-DART = LightGBM with dropout</div>
 
 ---
 layout: section
