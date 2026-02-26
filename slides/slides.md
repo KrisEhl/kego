@@ -310,7 +310,7 @@ Built a Ray cluster to train everything in parallel:
 
 <v-click>
 
-Training time: ~2 hours end-to-end across 3 GPUs.
+Training time: ~2 days end-to-end across 3 GPUs.
 
 </v-click>
 
