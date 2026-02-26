@@ -172,48 +172,9 @@ Key findings:
 
 ## Next Steps (requires cluster)
 
-### Step 10: Run tuned 3-family multi-seed ensemble on cluster
+### Step 10: Retrain-full tuned 3-family ensemble ✅ RUNNING (raysubmit_wJc2TuKaxbZJgGqz)
 
-When cluster is available, run `lightgbm_tuned + xgboost_tuned + catboost` with GPU acceleration:
-
-```bash
-# 1. Pull latest code on head node
-ssh kristian@omarchyd.fritz.box "cd /home/kristian/projects/kego && git pull"
-
-# 2. Submit diverse training job
-cd cluster && make submit-diverse \
-  TAG=tuned-v1 \
-  DIVERSE_MODELS="lightgbm_tuned xgboost_tuned catboost" \
-  DIVERSE_FEATURES="all ablation-pruned" \
-  DIVERSE_FOLDS="5 10" \
-  DIVERSE_SEEDS_PER=5 \
-  DESCRIPTION="3-family tuned, 5 seeds, 5+10 folds, all+ablation-pruned features"
-```
-
-This produces **60 learners** (3 models × 2 feature sets × 2 fold counts × 5 seeds). Expected holdout AUC: ~0.9562–0.9563 (matching historical best), with estimated LB ~0.9536–0.9537.
-
-Why `ablation-pruned` in addition to `all`:
-- GBDTs individually score higher on ablation-pruned (21 features) than `all` (53 features)
-- Two feature sets adds diversity without extra model families
-- The tuned hyperparams (optimized on `all`) should still generalise to ablation-pruned
-
-### Step 11: Analyse ensemble and submit
-
-```bash
-cd cluster && make submit-ensemble \
-  EXPERIMENTS="playground-s6e2-tuned-v1"
-```
-
-Check Ridge weights:
-- Does XGBoost get a positive weight with `ablation-pruned` features?
-- Does 10f dominate 5f again (as seen locally)?
-- Is the ensemble AUC above 0.9562?
-
-If holdout AUC ≥ 0.9562, submit to Kaggle.
-
-### Step 12: Retrain-full on best config
-
-If LB score improves over 0.95380, retrain on train+holdout combined:
+Submitted directly to retrain-full (skipping holdout eval to save time). Training `lightgbm_tuned + xgboost_tuned + catboost` on 100% of data:
 
 ```bash
 cd cluster && make submit-diverse \
@@ -223,11 +184,26 @@ cd cluster && make submit-diverse \
   DIVERSE_FOLDS="5 10" \
   DIVERSE_SEEDS_PER=5 \
   RETRAIN_FULL=1 \
-  RESUME=playground-s6e2-tuned-v1 \
-  DESCRIPTION="retrain-full of best tuned config"
+  DESCRIPTION="3-family tuned retrain-full, 5 seeds, 5+10 folds"
 ```
 
-Can `--resume` from Step 10 to skip already-trained configs and only redo the retrain-full pass. Previous retrain-full-v2 (104 learners) gave +0.00008 LB — expect similar gain here.
+60 learners (3 models × 2 feature sets × 2 fold counts × 5 seeds). No holdout eval — OOF AUC only.
+
+### Step 11: Combine with retrain-full-v2 and submit
+
+When tuned-retrain-v1 finishes, ensemble with retrain-full-v2 to include neural nets (ResNet, FT-Transformer, RealMLP) from the existing 104-learner run:
+
+```bash
+cd cluster && make submit-ensemble \
+  EXPERIMENTS="playground-s6e2-retrain-full-v2 playground-s6e2-tuned-retrain-v1"
+```
+
+Ridge will pick the best combination — tuned GBDTs should dominate, neural nets add structural diversity. Then submit to Kaggle:
+
+```bash
+cd cluster && make submit-kaggle \
+  EXPERIMENTS="playground-s6e2-retrain-full-v2 playground-s6e2-tuned-retrain-v1"
+```
 
 ### Step 13: HP config diversity — extract top Optuna trials as additional learners
 
