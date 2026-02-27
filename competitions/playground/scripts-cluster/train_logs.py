@@ -38,6 +38,7 @@ NODE_GPUS = {
 PAT_MODE = re.compile(r"Mode: (.+)")
 PAT_FOLDS = re.compile(r"(\d+) folds")
 PAT_FOLD_FROM_LID = re.compile(r"/(\d+)f$")
+PAT_LAUNCHED = re.compile(r"Launched \d+ Ray tasks")
 
 # Planned task lines: "- catboost/raw/5f seed=42 (GPU 0.25)" or "(CPU)"
 PAT_PLANNED = re.compile(rf"- ({LID}) seed=(\d+) \((?:CPU|GPU(?: ([\d.]+))?)\)")
@@ -154,6 +155,7 @@ class ParsedLog:
     task_ips: dict[tuple[str, str], str | None]
     ts_index: list[tuple[int, datetime]]
     start_time: datetime | None
+    launched: bool  # True once "Launched N Ray tasks" seen — all tasks are in flight
     text: str
     lines: list[str]
     ensemble_lines: list[str]
@@ -334,6 +336,7 @@ def parse_log(text):
     # Timestamp index and start time
     ts_index = _build_ts_index(text)
     start_time = _parse_start_time(text)
+    launched = bool(PAT_LAUNCHED.search(text))
 
     # Ensemble lines
     ensemble_lines = []
@@ -357,6 +360,7 @@ def parse_log(text):
         task_ips=task_ips,
         ts_index=ts_index,
         start_time=start_time,
+        launched=launched,
         text=text,
         lines=lines,
         ensemble_lines=ensemble_lines,
@@ -388,9 +392,16 @@ def compute_state(parsed, now, job_id):
         if m:
             failed_keys.add((m.group(1), m.group(2)))
 
-    # Task lifecycle
-    running_keys = started - finished - failed_keys
-    unscheduled_keys = all_planned - started
+    # Task lifecycle.
+    # Once "Launched N Ray tasks" appears, ALL planned tasks are in-flight as Ray
+    # futures — Ray deduplication may suppress some "Starting" messages, so we
+    # can't rely on started-set membership to distinguish running from unscheduled.
+    if parsed.launched:
+        running_keys = all_planned - finished - failed_keys
+        unscheduled_keys = set()
+    else:
+        running_keys = started - finished - failed_keys
+        unscheduled_keys = all_planned - started
 
     # Per-model average durations
     model_durations = {}
