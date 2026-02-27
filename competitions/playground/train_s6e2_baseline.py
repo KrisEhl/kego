@@ -1619,6 +1619,9 @@ def _train_ensemble(
                     elif model_name.startswith(("extra_trees", "random_forest")):
                         # n_jobs=4 in model config — match Ray's CPU allocation
                         opts = {"num_cpus": 4}
+                    elif model_name in ("lightgbm_dart", "lightgbm_large"):
+                        # Large memory footprint — hint 4GB so Ray limits concurrency
+                        opts = {"num_cpus": 2, "memory": 4 * 1024**3}
                     else:
                         opts = {"num_cpus": 2}
                     future = _train_single_model.options(**opts).remote(
