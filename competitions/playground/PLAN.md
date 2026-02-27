@@ -258,11 +258,18 @@ These are LOO-encoded features that provide signal orthogonal to the orig-stats 
 
 LightGBM 5-fold CV on train-vs-test labels: **AUC = 0.501 ± 0.002**. Classifier cannot distinguish train from test. CTGAN generation was perfectly consistent. No reweighting opportunity.
 
-### Option D: L2 meta-model with `std(OOF)` confidence meta-feature
+### Option D: L2 meta-model with `std(OOF)` confidence meta-feature ✅ DONE — no improvement
 
-Add `std(oof_predictions)` across L1 base models as an additional meta-feature for the L2 stacker. This "confidence" signal captures instance-level prediction difficulty. Currently L2 Ridge uses only 134 raw OOF prediction columns. Adding variance could unlock non-linear signal that Ridge can't capture.
+Implemented `l2_confidence` in `kego/ensemble/combine.py` — appends `std(oof_matrix, axis=1)` as an extra column for the L2 LightGBM meta-model. Tested on `playground-s6e2-full` + `playground-s6e2-diverse-v1` (65 holdout-evaluated learners):
 
-Change would be in `analyze_ensemble.py` or the ensemble combination block — low effort. Needs a local test on the existing 134-learner OOF predictions before committing a cluster job.
+| Method | Holdout AUC |
+|--------|-------------|
+| ridge | 0.9562 |
+| l2_preds_only | 0.9562 |
+| **l2_confidence** | **0.9562** |
+| l2_raw/ablation-pruned/forward-selected | 0.9562 |
+
+All L2 variants tie Ridge at 0.9562. Confidence feature adds nothing — the std signal is fully captured by the linear combination already. Dead end.
 
 ### Option E: GPU models on `all` feature set (cluster)
 

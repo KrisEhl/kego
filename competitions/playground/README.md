@@ -712,7 +712,7 @@ Current best: 0.95388 (submit-v12). Bronze cutoff: ~0.95395 (~+0.00007 needed).
 | A | **LOO encoding for Thallium + Slope of ST → `orig-stats-loo` feature set** | Cluster job | Thallium_loo (+0.00008 local, rank 2) and Slope_of_ST_loo (+0.00002, rank 6) survived greedy selection. Not yet in retrain-full. Combine with orig-stats stats for a richer third feature set. |
 | B | **Research features retrain-full** | Cluster job | research-v1 job was stopped early. Add retrain-full for research features (XGB, CB, LGB). Local AUC showed +0.00053 but no clean LB test yet. |
 | C | ~~Adversarial validation~~ | ~~Local~~ | **Done: AUC = 0.501. No distribution shift. Not exploitable.** |
-| D | **L2 meta-model with std(OOF) confidence feature** | Code change | Add prediction variance across 134 learners as meta-feature for L2 stacker. May unlock non-linear signal Ridge misses. |
+| ~~D~~ | ~~L2 meta-model with std(OOF) confidence feature~~ | ~~Code change~~ | **Done: l2_confidence = 0.9562, identical to l2_preds_only. Ridge still wins. Dead end.** |
 
 ### Already tried / won't help
 
