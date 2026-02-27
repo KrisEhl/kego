@@ -1,11 +1,19 @@
 # Plan: Next Steps — Maximize LB Score
 
-## Status (2026-02-26)
+## Status (2026-02-27)
 
 Current best: **0.95380 LB** (retrain-full-v2, 104 learners, Ridge stacking).
 Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff: ~0.95395 (~+0.00015 needed).
 
-**Latest attempt (tuned-retrain-v1 combined)**: No improvement. Added 60 tuned GBDTs (lgbm_tuned + xgboost_tuned + catboost × 5 seeds on `all`+`ablation-pruned`) to retrain-full-v2. Holdout AUC 0.9557, LB 0.9538 — identical to retrain-full-v2 alone. Hill climbing collapsed to uniform weights. Ridge dominated by existing models. Consistent with CPU validation: tuned GBDTs and the `all` feature set don't displace the existing 104-learner ensemble.
+**Latest attempts (2026-02-27)**:
+- **catboost-tune-v1** (100 Optuna trials): Completely flat landscape after trial ~31. Best OOF 0.9533. Tuned params (depth=5, lr=0.02385, Bernoulli, subsample=0.778, l2_leaf_reg=20.26): identical to defaults in practice.
+- **lgbm-tune-v2 with max_bin** (100 trials, ablation-pruned, 5-fold): Best OOF 0.9537 (trial #98, lr=0.0382, num_leaves=37, max_bin=386). Retrain-full too slow (~12h/task on CPU, no GPU support in pip LightGBM). Abandoned.
+- **catboost_tuned retrain-full** (10 seeds, ablation-pruned, 5+10f): OOF 0.9552 = identical to default catboost. Not selected by ensemble.
+- **submit-v11** (retrain-full-v2 + catboost_tuned): Ridge 0.9556, LB **0.95378** — slightly below retrain-full-v2 alone (0.95380). catboost_tuned adds zero diversity.
+
+**Key pattern**: Tuned GBDTs consistently fail to add ensemble diversity. The same 8 models keep winning (xgboost/raw, catboost/raw, ft_transformer/raw, lightgbm/ablation-pruned). HP optimization within a model family produces correlated predictions that Ridge already handles optimally. The gap to bronze requires either better features or completely different model architectures.
+
+**Previous attempt (tuned-retrain-v1 combined)**: No improvement. Added 60 tuned GBDTs (lgbm_tuned + xgboost_tuned + catboost × 5 seeds on `all`+`ablation-pruned`) to retrain-full-v2. Holdout AUC 0.9557, LB 0.9538 — identical to retrain-full-v2 alone. Hill climbing collapsed to uniform weights.
 
 ### Leaderboard Context (as of 2026-02-25)
 
@@ -280,6 +288,8 @@ Current L2 LightGBM uses only OOF predictions as features. Adding prediction var
 - **TabPFN**: Near-zero ensemble weight at 630K rows. Designed for small datasets.
 - **SVM, KNN**: Near-zero or zero ensemble weight. Too slow and/or too weak individually.
 - **Tuned GBDTs (lgbm_tuned + xgboost_tuned + catboost) on `all`+`ablation-pruned` features, retrain-full**: 60 learners, 5 seeds, 5+10 folds. Combined with retrain-full-v2 (114 total): LB 0.9538, no improvement. Hill climbing went uniform. The `all` feature set and tuned HPs don't add diversity beyond the existing ensemble.
+- **catboost_tuned Optuna (catboost-tune-v1, 100 trials)**: Flat landscape, best OOF 0.9533. Tuned params (depth=5, lr=0.02385, Bernoulli bootstrap, high regularization) give OOF 0.9552 in retrain-full — identical to default catboost. submit-v11 (retrain-full-v2 + catboost_tuned): LB 0.95378 < 0.95380. Confirmed dead end.
+- **lgbm_tuned retrain-full**: Too slow (~12h/task on CPU). LightGBM pip wheel lacks CUDA support (requires `-DUSE_CUDA=1` recompile). Not practical without GPU-compiled LightGBM.
 - **Pseudo-labeling (hard + soft)**: Both definitively failed. Soft labels collapse model to 0.929 round 1 → 0.70 round 2. See Step 17.
 
 ---
