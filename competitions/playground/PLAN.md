@@ -254,17 +254,9 @@ These are LOO-encoded features that provide signal orthogonal to the orig-stats 
 
 **Caveat**: Research features didn't produce LB gain in the one partial test we did. But we never had a clean complete retrain-full run on research features to actually combine.
 
-### Option C: Adversarial validation (local, 30 min)
+### Option C: Adversarial validation ✅ DONE — no shift
 
-Train a classifier to distinguish train vs test rows. If AUC > 0.58 there is systematic distribution shift — S6E2 data is synthetic (CTGAN-style from 270 UCI rows) and may have subtle generative artifacts.
-
-```python
-adv = pd.concat([train.assign(is_test=0), test.assign(is_test=1)])
-score = cross_val_score(LGBMClassifier(), adv[features], adv['is_test'], cv=5, scoring='roc_auc').mean()
-# If > 0.58: reweight training samples to match test distribution
-```
-
-Low effort diagnostic. If AUC is near 0.5, skip; if > 0.58, reweighting could improve LB generalization.
+LightGBM 5-fold CV on train-vs-test labels: **AUC = 0.501 ± 0.002**. Classifier cannot distinguish train from test. CTGAN generation was perfectly consistent. No reweighting opportunity.
 
 ### Option D: L2 meta-model with `std(OOF)` confidence meta-feature
 
