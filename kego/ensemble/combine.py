@@ -167,7 +167,13 @@ def compute_ensemble(
     )
 
     # --- L2 Stacking ---
-    l2_configs = [("preds_only", None, None, None)]
+    oof_std = np.std(oof_matrix, axis=1, keepdims=True)
+    holdout_std = np.std(holdout_matrix, axis=1, keepdims=True)
+    test_std = np.std(test_matrix, axis=1, keepdims=True)
+    l2_configs = [
+        ("preds_only", None, None, None),
+        ("confidence", oof_std, holdout_std, test_std),
+    ]
     if l2_feature_configs:
         l2_configs += l2_feature_configs
 
