@@ -281,7 +281,7 @@ XGBoost and CatBoost on `all` (53 features: ablation-pruned + notebook clinical 
 
 (Formerly "Ideas To Try" — confirmed dead ends from experiments + research)
 
-- **More meta-learner experiments**: Ridge at alpha=10 is confirmed optimal. LogReg, rank averaging, Ridge on ranks all worse. No more to try.
+- **More meta-learner experiments**: Ridge at alpha=10 is confirmed optimal. LogReg, rank averaging, Ridge on ranks all worse. L2 LightGBM (5 variants: preds_only, +raw, +ablation-pruned, +forward-selected, +std(OOF) confidence) all tie Ridge at 0.9562. No non-linear signal to exploit. No more to try.
 - **Polynomial features**: Trees discover interactions natively. Ablation confirmed interaction features are harmful for GBDTs. Only useful for LogReg/neural.
 - **Repeated k-fold beyond 10**: Research shows diminishing returns. 10f is the practical ceiling.
 - **Snapshot ensembling during GBDT training**: Only adds value when not already using multi-seed. With 5 seeds × 2 fold counts, this adds no new diversity.

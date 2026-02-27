@@ -722,7 +722,7 @@ Current best: 0.95388 (submit-v12). Bronze cutoff: ~0.95395 (~+0.00007 needed).
 - **StandardScaler for LogReg**: No effect, Ridge already compensates
 - **TabPFN**: Ridge assigns near-zero/negative weights. Not helpful for this 630K-row dataset
 - **Massive ensemble (65+ learners)**: submit-v2 (65 learners) scores identically to submit-v9 (8 learners). More models ≠ better LB when Ridge is already optimal
-- **2-level stacking (L2 LightGBM)**: 4 variants — all tie Ridge at 0.9562 holdout AUC. No non-linear signal to exploit
+- **2-level stacking (L2 LightGBM)**: 5 variants tested — preds_only, +raw, +ablation-pruned, +forward-selected, +std(OOF) confidence feature. All tie Ridge at 0.9562 holdout AUC. No non-linear signal to exploit
 - **SVM (SubsampledSVC, RBF kernel)**: Best individual AUC 0.9368. Near-zero ensemble weight
 - **Research features (partial)**: +0.00053 local AUC but no clean LB improvement confirmed. Neural models degraded on research features
 - **KNN (subsampled)**: All variants zero ensemble weight when combined with 104 learners
