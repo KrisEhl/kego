@@ -273,6 +273,30 @@ From the April 2025 Kaggle Playground winner (cuML stacking): add `std(oof_predi
 
 Current L2 LightGBM uses only OOF predictions as features. Adding prediction variance may unlock non-linear signal that Ridge cannot capture. Low effort change to `analyze_ensemble.py` or the L2 training block.
 
+### Step 18: orig-stats feature set (target statistics from UCI original dataset) 🔄 IN PROGRESS
+
+Identified from the public RealMLP notebook (LB 0.95397 solo): compute per-value target statistics from the 270-row UCI original dataset (mean/median/std/skew/count per feature × value), appended to ablation-pruned features. 86 features total vs 21.
+
+**Holdout validation results so far** (10f, 3 seeds, `playground-s6e2-orig-stats-v1`):
+
+| Model | ablation-pruned | orig-stats | Δ |
+|---|---|---|---|
+| logistic_regression | 0.9535 | **0.9543** | +0.0008 |
+| xgboost | 0.9561 | **0.9562** | +0.0001 |
+| catboost | 0.9560 | **0.9561** | +0.0001 |
+| lightgbm | running | running | — |
+| tabpfn | OOM (fixed) | OOM (fixed) | — |
+
+LogReg gains most (+0.0008): it can't learn interactions itself, so pre-aggregated stats help directly. Tree models get consistent marginal gains since they can learn these patterns from raw data anyway.
+
+**Jobs submitted** (2026-02-27):
+- `raysubmit_vVWVgSkE5bdJ421d` — retrain-full on orig-stats, 16 models × 5+10f × 3 seeds (MLflow: `playground-s6e2-retrain-full-orig-stats-v1`)
+- `raysubmit_CfuUdy2kzpsVTJYg` — full validation (holdout eval) on orig-stats, same 16 models × resume from orig-stats-v1 (MLflow: `playground-s6e2-orig-stats-full-v1`)
+
+**OOM fix**: Added `@ray.remote(max_calls=1)` to force worker process exit after each task, releasing CUDA contexts between shared-GPU tasks. Prevents TabPFN from OOMing due to residual CatBoost/XGBoost CUDA allocations.
+
+**Next**: After both jobs complete, run `submit-ensemble` combining `playground-s6e2-full`, `playground-s6e2-diverse-v1`, `playground-s6e2-orig-stats-full-v1` for stacking analysis, then promote to `submit-v12` using `playground-s6e2-retrain-full-v2` + `playground-s6e2-retrain-full-orig-stats-v1`.
+
 ---
 
 ## Already Tried / Won't Help
