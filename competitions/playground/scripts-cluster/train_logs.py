@@ -178,7 +178,8 @@ class JobState:
     completed: list[CompletedTask]
     failed: list[FailedTask]
     running: list[RunningTask]
-    unscheduled: list[tuple[str, str]]  # (learner_id, seed)
+    queued: list[tuple[str, str]]  # launched Ray futures not yet seen starting
+    unscheduled: list[tuple[str, str]]  # not yet submitted to Ray
 
     gpu_amounts: dict[tuple[str, str], float]
     model_avg_dur: dict[str, float]
@@ -401,14 +402,16 @@ def compute_state(parsed, now, job_id):
             failed_keys.add((m.group(1), m.group(2)))
 
     # Task lifecycle.
-    # Once "Launched N Ray tasks" appears, ALL planned tasks are in-flight as Ray
-    # futures — Ray deduplication may suppress some "Starting" messages, so we
-    # can't rely on started-set membership to distinguish running from unscheduled.
+    # running: has a "Starting" log line — actively executing on a worker.
+    # queued: launched as a Ray future but no Starting seen yet — either waiting
+    #   for resources or running but deduplicated out of the log.
+    # unscheduled: not yet submitted (before "Launched N Ray tasks" line).
+    running_keys = started - finished - failed_keys
     if parsed.launched:
-        running_keys = all_planned - finished - failed_keys
+        queued_keys = all_planned - started - finished - failed_keys
         unscheduled_keys = set()
     else:
-        running_keys = started - finished - failed_keys
+        queued_keys = set()
         unscheduled_keys = all_planned - started
 
     # Per-model average durations
@@ -552,9 +555,9 @@ def compute_state(parsed, now, job_id):
             )
         )
 
-    # Unscheduled estimates
+    # Unscheduled / queued estimates
     unsched_est = {}
-    for mname, seed in unscheduled_keys:
+    for mname, seed in list(unscheduled_keys) + list(queued_keys):
         avg = model_avg_dur.get(_base_model(mname))
         unsched_est[(mname, seed)] = avg
 
@@ -573,6 +576,7 @@ def compute_state(parsed, now, job_id):
         completed=completed,
         failed=failed,
         running=running,
+        queued=sorted(queued_keys),
         unscheduled=sorted(unscheduled_keys),
         gpu_amounts=parsed.gpu_amounts,
         model_avg_dur=model_avg_dur,
@@ -649,10 +653,12 @@ def display(state, now):
             idx = f"[{f.index}/{f.total}]"
             print(f"    \033[31m{idx} {f.raw_line}\033[0m")
 
-    # --- Running tasks ---
-    all_names = [r.learner_id for r in state.running] + [
-        m for m, s in state.unscheduled
-    ]
+    # --- Running / Queued / Unscheduled tasks ---
+    all_names = (
+        [r.learner_id for r in state.running]
+        + [m for m, s in state.queued]
+        + [m for m, s in state.unscheduled]
+    )
     max_name_len = max(len(n) for n in all_names) if all_names else 10
 
     if state.running:
@@ -681,6 +687,17 @@ def display(state, now):
                 f"{dev}{gpu_str}{eta_str}"
             )
 
+    # --- Queued tasks (launched Ray futures not yet seen starting) ---
+    if state.queued:
+        print(f"  Queued ({len(state.queued)}):")
+        for mname, seed in state.queued:
+            dev = _device_label(mname, gpu_amount=state.gpu_amounts.get((mname, seed)))
+            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(
+                _base_model(mname)
+            )
+            est_str = f"  (~{_fmt_secs(est)} est)" if est else ""
+            print(f"    {mname:<{max_name_len}}  seed={seed:<4} {dev}{est_str}")
+
     # --- Unscheduled tasks ---
     if state.unscheduled:
         print(f"  Unscheduled ({len(state.unscheduled)}):")
@@ -706,7 +723,7 @@ def display(state, now):
             else:
                 cpu_remaining.append(rem)
 
-        for mname, seed in state.unscheduled:
+        for mname, seed in list(state.queued) + list(state.unscheduled):
             est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(
                 _base_model(mname), 300
             )
