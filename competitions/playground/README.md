@@ -198,10 +198,10 @@ uv run python competitions/playground/train_s6e2_baseline.py --resume playground
 
 ## Current Best
 
-- **Leaderboard (public)**: 0.95380 (~rank 490 / 3,593)
+- **Leaderboard (public)**: 0.95388 (~rank ~460 / 3,593)
 - **OOF AUC (ensemble)**: 0.9557
-- **Method**: Ridge stacking over 104 learners trained on full data (retrain-full-v2)
-- **Bronze cutoff**: ~0.95395 (~+0.00015 away, as of 2026-02-25 — leaderboard has moved up)
+- **Method**: Ridge stacking over 134 learners trained on full data (retrain-full-v2 + retrain-full-orig-stats-v1)
+- **Bronze cutoff**: ~0.95395 (~+0.00007 away, as of 2026-02-27)
 
 ### Top of Leaderboard (2026-02-25)
 
@@ -212,7 +212,7 @@ uv run python competitions/playground/train_s6e2_baseline.py --resume playground
 | 3 | Chris Deotte | 0.95410 |
 | 4–20 | *(cluster of ~17 teams)* | 0.95408 |
 | ~360 | *(bronze cutoff, est.)* | ~0.95395 |
-| **~490** | **Us** | **0.95380** |
+| **~460** | **Us** | **0.95388** |
 
 ## Local Validation vs Leaderboard
 
@@ -225,8 +225,9 @@ uv run python competitions/playground/train_s6e2_baseline.py --resume playground
 | submit-v9 | Ridge stacking, 8 greedy-selected models x 3 seeds | 0.9563 | 0.95372 | -0.0026 |
 | submit-v2* | Ridge stacking, 65 learners (19 models + TabPFN), 223 runs | 0.9562 | 0.95372 | -0.0026 |
 | submit-v10 | Ridge stacking, 93 learners from 4 experiments | 0.9562 | 0.95372 | -0.0026 |
-| retrain-full-v2 | Ridge stacking, 104 learners trained on full data | 0.9557† | **0.95380** | — |
+| retrain-full-v2 | Ridge stacking, 104 learners trained on full data | 0.9557† | 0.95380 | — |
 | submit-v11 | Ridge stacking, 114 learners (retrain-full-v2 + catboost_tuned) | 0.9556† | 0.95378 | — |
+| **submit-v12** | **Ridge stacking, 134 learners (retrain-full-v2 + retrain-full-orig-stats-v1)** | **0.9557†** | **0.95388** | — |
 
 *\*New submit-v2 = rebuilt ensemble from `full` + `diverse-v1` experiments (223 runs, 19 model types including TabPFN, 3 feature sets, 5/10 folds). Same LB as submit-v9 despite 8x more learners.*
 
@@ -339,10 +340,11 @@ Positive-weight learners ranked by contribution. 51 positive / 53 negative weigh
 | submit-v9 | Greedy-selected 8 of 28 learners, Ridge stacking, 3 seeds | 0.9563 | 0.95372 | +0.00012 | Best 8 from multi-strategy greedy forward selection. XGB, FT-Transformer, LGB, CatBoost, LogReg across raw/ablation-pruned/forward-selected features |
 | submit-v2* | Ridge stacking, 65 learners from 223 runs (19 models + TabPFN) | 0.9562 | 0.95372 | +0.00000 | Massive ensemble from `full` + `diverse-v1`. TabPFN adds negligible value. Same LB as lean submit-v9 |
 | submit-v10 | Ridge stacking, 93 learners from 4 experiments (+ SVM + research features) | 0.9562 | 0.95372 | +0.00000 | Added SVM (near-zero weight) and research features (marginal). Same LB |
-| retrain-full-v2 | Ridge stacking, 104 learners trained on full data (train+holdout) | 0.9557† | **0.95380** | **+0.00008** | **Current best.** 19 models x 3 feature sets x 10f. OOF AUC for method selection |
-| submit-v11 | Ridge stacking, 114 learners (retrain-full-v2 + catboost_tuned) | 0.9556† | 0.95378 | −0.00002 | retrain-full-v2 (104 learners) + catboost_tuned retrain-full (10 seeds, ablation-pruned). catboost_tuned not selected by Ridge (OOF 0.9552 = identical to default). No improvement over retrain-full-v2 alone. |
-| cpu-retrain-v1 | Ridge, 20 CPU learners (lgbm variants + logreg) on `all` + `ablation-pruned`, retrain-full | 0.9554† | — | — | Local Mac run. lgbm/all ≈ lgbm/ablation-pruned (0.9552 vs 0.9553). logreg/all +0.0003 vs ablation-pruned. Combined with retrain-full-v2 (124 learners total): 0.95568 — zero improvement. CPU learners don't displace GPU model dominance |
-| tuned-retrain-v1 combined | Ridge, 114 learners (104 retrain-full-v2 + 60 tuned GBDTs on `all`+`ablation-pruned`) | 0.9557† | 0.95380 | +0.00000 | Tuned lgbm_tuned + xgboost_tuned + catboost × 5 seeds, 5+10 folds, retrain-full-direct. Holdout eval disabled for tuned models (OOF covers train+holdout combined). Hill climbing collapsed to uniform weights. Ridge dominated by existing retrain-full-v2 models. No improvement. |
+| retrain-full-v2 | Ridge stacking, 104 learners trained on full data (train+holdout) | 0.9557† | 0.95380 | +0.00008 | 19 models x 3 feature sets x 10f. OOF AUC for method selection |
+| submit-v11 | Ridge stacking, 114 learners (retrain-full-v2 + catboost_tuned) | 0.9556† | 0.95378 | −0.00002 | catboost_tuned not selected by Ridge (OOF 0.9552 = identical to default). No improvement. |
+| cpu-retrain-v1 | Ridge, 20 CPU learners (lgbm variants + logreg) on `all` + `ablation-pruned`, retrain-full | 0.9554† | — | — | lgbm/all ≈ lgbm/ablation-pruned. Combined with retrain-full-v2 (124 learners): 0.95568 — zero improvement. CPU learners don't displace GPU model dominance. |
+| tuned-retrain-v1 combined | Ridge, 114 learners (104 retrain-full-v2 + 60 tuned GBDTs on `all`+`ablation-pruned`) | 0.9557† | 0.95380 | +0.00000 | Tuned lgbm_tuned + xgboost_tuned + catboost × 5 seeds, 5+10 folds. Hill climbing collapsed to uniform weights. No improvement. |
+| **submit-v12** | **Ridge stacking, 134 learners (retrain-full-v2 + retrain-full-orig-stats-v1)** | **0.9557†** | **0.95388** | **+0.00008** | **Current best.** orig-stats = ablation-pruned + per-value UCI target statistics (86 features). Key orig-stats weights: xgboost (+0.173), catboost (+0.134), catboost_shallow (+0.134), lightgbm_large (+0.113). |
 
 ### Local Feature Validation (5-fold CV on full train, CPU, single LightGBM/LogReg)
 
@@ -499,7 +501,8 @@ All 28 models are neutral under Ridge stacking — no model is harmful, none is 
 - TabPFN (prior-fitted network) underperforms GBDTs despite being a strong baseline on small datasets — likely because the 630K training set is well beyond TabPFN's sweet spot
 - Improvements are in the 5th decimal place — this competition has a very tight leaderboard
 - **Ensemble size doesn't matter**: 8 learners (submit-v9) ties 65 learners (submit-v2) at 0.95372 LB. Ridge stacking extracts the same signal from a lean or massive ensemble
-- **Retrain-full helps slightly**: Training on 100% of labeled data (train+holdout combined) gives +0.00008 LB improvement (0.95372 → 0.95380). The full 104-learner ensemble edges out the 8-learner curated version (0.95380 vs 0.95378)
+- **Retrain-full helps**: Training on 100% of labeled data (train+holdout combined) gives +0.00008 LB improvement (0.95372 → 0.95380). The full 104-learner ensemble edges the 8-learner curated version (0.95380 vs 0.95378)
+- **orig-stats feature set helps**: Per-value target statistics from the 270-row UCI dataset (mean/median/std/skew/count per feature×value) appended to ablation-pruned features (86 total). Adding 30 retrain-full learners on orig-stats to retrain-full-v2 gives +0.00008 LB (0.95380 → 0.95388). Key contributors: xgboost/orig-stats (+0.173), catboost/orig-stats (+0.134), catboost_shallow/orig-stats (+0.134)
 - **SVM not useful**: SubsampledSVC (RBF kernel) gets near-zero weight in all ensemble methods. Best individual AUC was 0.9368 — far below GBDTs (~0.9560)
 - **Research features marginal**: 6 new clinical features (+0.00053 local AUC) didn't move LB. Small positive Ridge weights for catboost/research (0.125) and xgboost_dart/research (0.081) but no generalization improvement
 - **13 notebook features (public top notebook) + expanded TE/freq**: Added hypertension, high_chol, rate_pressure_product, cardiac_reserve, st_ratio, metabolic_syndrome, interactions, etc. (53 features total). Neutral for LightGBM (-0.00011). CPU retrain-full (lgbm + logreg on `all` features) showed logreg/all +0.0003 vs ablation-pruned, but combined ensemble with retrain-full-v2: zero improvement. The dominant ensemble contributors are GPU models (XGBoost, CatBoost) — need those retrained with new features on cluster
@@ -700,29 +703,30 @@ All 8 validated in drop-one check (none dropped).
 
 **Key insight:** The +0.00053 improvement is real but small. The ablation-pruned baseline is already well-optimized. Clinical scores (framingham, heart_score, duke_treadmill) are the most valuable new features — they encode domain knowledge that trees can't easily reconstruct. LOO encodings provide marginal value as regularized alternatives to target encoding. UMAP and KNN features, which dominated the previous (flawed) analysis, are actually catastrophically harmful.
 
-## Ideas To Try
+## Remaining Options (as of 2026-02-27)
 
-Ranked by expected impact. Bronze cutoff: ~0.95388 (+0.00008 from current 0.95380).
+Current best: 0.95388 (submit-v12). Bronze cutoff: ~0.95395 (~+0.00007 needed).
 
-| # | Idea | Expected Gain | Effort | Status |
-|---|------|---------------|--------|--------|
-| 1 | **GPU retrain-full with new `all` feature set** | Medium | Cluster | ~~Next step.~~ **Tried (tuned-retrain-v1 combined): no improvement.** Tuned GBDTs on `all`+`ablation-pruned` don't displace retrain-full-v2 dominance. Consistent with CPU validation findings. |
-| 2 | **CatBoost Optuna HP tuning** | Small–Medium | Cluster | ~~Tuning job running.~~ **Tried: no improvement.** catboost-tune-v1 (100 trials, flat landscape after trial ~31, best OOF 0.9533). catboost_tuned retrain-full (10 seeds, ablation-pruned, 5+10f): OOF 0.9552 = identical to default catboost. Not selected by ensemble (submit-v11 0.95378 < retrain-full-v2 0.95380). |
-| 3 | **Adversarial validation** | Diagnostic | Low | Train classifier to distinguish train vs test. May reveal distribution shift. |
-| 4 | **Revisit pseudo-labeling** | Small | Medium | Previous attempt (136k hard labels) failed. Try soft labels, higher confidence threshold (0.99), ensemble-generated labels. |
+| Option | Idea | Effort | Notes |
+|--------|------|--------|-------|
+| A | **LOO encoding for Thallium + Slope of ST → `orig-stats-loo` feature set** | Cluster job | Thallium_loo (+0.00008 local, rank 2) and Slope_of_ST_loo (+0.00002, rank 6) survived greedy selection. Not yet in retrain-full. Combine with orig-stats stats for a richer third feature set. |
+| B | **Research features retrain-full** | Cluster job | research-v1 job was stopped early. Add retrain-full for research features (XGB, CB, LGB). Local AUC showed +0.00053 but no clean LB test yet. |
+| C | ~~Adversarial validation~~ | ~~Local~~ | **Done: AUC = 0.501. No distribution shift. Not exploitable.** |
+| D | **L2 meta-model with std(OOF) confidence feature** | Code change | Add prediction variance across 134 learners as meta-feature for L2 stacker. May unlock non-linear signal Ridge misses. |
 
 ### Already tried / won't help
 
+- **Adversarial validation**: AUC 0.501 — train and test are indistinguishable. No reweighting opportunity.
 - **More seeds (>3)**: Tested — only +0.00001 LB going from 1→3 seeds, diminishing returns
 - **Pseudo-labeling (hard labels)**: Tried 136k confident predictions, no improvement
 - **StandardScaler for LogReg**: No effect, Ridge already compensates
-- **TabPFN**: Added to ensemble (6 learners across 3 feature sets x 2 fold counts, 18 runs). Ridge assigns near-zero/negative weights. Greedy forward selection picks it at step 11 of 65 with <0.0001 AUC gain. LB unchanged at 0.95372. Not helpful for this dataset (630K rows — TabPFN is designed for smaller datasets)
-- **Massive ensemble (65 learners, 19 model types)**: submit-v2 with 223 runs from `full` + `diverse-v1` scores identically to submit-v9 (8 learners). More models ≠ better LB when Ridge stacking is already optimal
-- **2-level stacking (L2 LightGBM)**: Tested 4 variants — preds-only, +raw features, +ablation-pruned, +forward-selected. All tie Ridge at 0.9562 holdout AUC. The 65-model L1 predictions are already well-captured by linear combination; LightGBM meta-model can't find non-linear interactions to exploit on this dataset
-- **SVM (SubsampledSVC, RBF kernel)**: 24 runs across all feature sets and folds. Best individual AUC 0.9368 (research/10f). Near-zero ensemble weight — not useful for this 630K-row dataset
-- **Research features (6 clinical features)**: framingham_partial, heart_score_partial, duke_treadmill_approx, cholesterol_squared, cholesterol_age_risk, age_sex_interaction. +0.00053 local AUC improvement but no LB gain. Neural models degraded on research features (resnet broken at 0.72-0.86 AUC, ft_transformer at 0.91)
-- **KNN (subsampled)**: 6 variants k=5–200, 5-fold CV on 50K training rows. Individual AUC 0.922–0.947. Zero ensemble weight when combined with 104 learners
-- **CPU retrain-full with notebook features**: 5 CPU models (lgbm × 4 + logreg) on `all` (53 features) and `ablation-pruned`, retrain-full mode. Combined with retrain-full-v2 (124 learners): Ridge OOF 0.95568 — zero improvement. CPU models can't shift the ensemble dominated by GPU models
-- **GPU retrain-full with tuned GBDTs + `all` feature set**: lightgbm_tuned + xgboost_tuned + catboost × 5 seeds, 5+10 folds on `all`+`ablation-pruned`, retrain-full-direct (60 learners in tuned-retrain-v1). Combined with retrain-full-v2 (114 learners total): holdout AUC 0.9557, LB 0.9538 = **no improvement**. Hill climbing collapsed to uniform weights; Ridge dominated by existing retrain-full-v2 models. Tuned params and `all` features don't add diversity beyond the existing 104-learner ensemble.
-- **Optuna HP tuning for GBDTs (catboost_tuned, lgbm_tuned, xgboost_tuned)**: catboost-tune-v1 landscape flat after ~31 trials (best 0.9533). lgbm-tune-v2 with max_bin: best OOF 0.9537 (trial #98, lr=0.0382, num_leaves=37, max_bin=386). catboost_tuned retrain-full: OOF 0.9552 = identical to default. Not selected by any ensemble. Tuned params add no diversity or AUC improvement over defaults.
-- **Alternative meta-learners**: Tested LogReg (C=0.001), rank averaging, Ridge on ranks, broader alpha range. Ridge alpha=10 already optimal (0.95568). All alternatives worse
+- **TabPFN**: Ridge assigns near-zero/negative weights. Not helpful for this 630K-row dataset
+- **Massive ensemble (65+ learners)**: submit-v2 (65 learners) scores identically to submit-v9 (8 learners). More models ≠ better LB when Ridge is already optimal
+- **2-level stacking (L2 LightGBM)**: 4 variants — all tie Ridge at 0.9562 holdout AUC. No non-linear signal to exploit
+- **SVM (SubsampledSVC, RBF kernel)**: Best individual AUC 0.9368. Near-zero ensemble weight
+- **Research features (partial)**: +0.00053 local AUC but no clean LB improvement confirmed. Neural models degraded on research features
+- **KNN (subsampled)**: All variants zero ensemble weight when combined with 104 learners
+- **CPU retrain-full with `all` features (53 features)**: lgbm × 4 + logreg on `all`+`ablation-pruned`, retrain-full. Combined with retrain-full-v2 (124 learners): zero improvement. CPU models can't shift GPU-dominated ensemble
+- **Tuned GBDTs on `all`+`ablation-pruned` features, retrain-full** (tuned-retrain-v1): 60 learners (lgbm_tuned + xgboost_tuned + catboost × 5 seeds, 5+10f). Combined with retrain-full-v2 (114 total): LB 0.9538, no improvement. Hill climbing uniform weights
+- **Optuna HP tuning for GBDTs**: catboost-tune-v1 flat after ~31 trials (best OOF 0.9533). lgbm_tuned, xgboost_tuned: tuned params give no diversity beyond defaults. catboost_tuned retrain-full OOF 0.9552 = identical to default
+- **Alternative meta-learners**: Ridge alpha=10 optimal. LogReg (C=0.001), rank averaging, Ridge on ranks all worse
