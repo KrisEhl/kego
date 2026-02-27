@@ -1225,7 +1225,7 @@ def _run_optuna_study(
     elif model_name.startswith("xgboost"):
         resource_opts = {"num_cpus": 8}
     elif model_name.startswith("catboost"):
-        resource_opts = {"num_gpus": 0.5, "num_cpus": 1}
+        resource_opts = {"num_gpus": 0.5, "num_cpus": 1, "max_calls": 1}
     elif model_name.startswith("tabpfn"):
         resource_opts = {
             "num_gpus": 1,
@@ -1245,7 +1245,7 @@ def _run_optuna_study(
             "resources": {"heavy_gpu": 1},
         }
     elif any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES):
-        resource_opts = {"num_gpus": 0.5, "num_cpus": 1}
+        resource_opts = {"num_gpus": 0.5, "num_cpus": 1, "max_calls": 1}
     else:
         resource_opts = {"num_cpus": 8}
 
@@ -1587,7 +1587,9 @@ def _train_ensemble(
                     if model_name.endswith("_cpu"):
                         opts = {"num_cpus": 8}
                     elif model_name.startswith("catboost"):
-                        opts = {"num_gpus": 0.5, "num_cpus": 1}
+                        # max_calls=1: force worker exit after each task to release GPU
+                        # memory (CUDA contexts linger and block heavy_gpu tasks otherwise)
+                        opts = {"num_gpus": 0.5, "num_cpus": 1, "max_calls": 1}
                     elif model_name.startswith("tabpfn"):
                         opts = {
                             "num_gpus": 1,
@@ -1613,7 +1615,8 @@ def _train_ensemble(
                             "resources": {"heavy_gpu": 1},
                         }
                     elif is_gpu:
-                        opts = {"num_gpus": 0.5, "num_cpus": 1}
+                        # max_calls=1: same GPU-memory leak fix as catboost
+                        opts = {"num_gpus": 0.5, "num_cpus": 1, "max_calls": 1}
                     else:
                         opts = {"num_cpus": 2}
                     future = _train_single_model.options(**opts).remote(
