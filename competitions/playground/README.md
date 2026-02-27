@@ -258,6 +258,72 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | random_forest | 0.9528 | CPU tree |
 | extra_trees | 0.9513 | CPU tree |
 
+### Ridge Stacking Weights (retrain-full-v2, 104 learners, alpha=10, OOF AUC=0.9557)
+
+Positive-weight learners ranked by contribution. 51 positive / 53 negative weights — Ridge uses opposing pairs to cancel correlated noise. Negative weights are not "bad" models; they correct for over-represented prediction directions.
+
+| # | Learner | Weight |
+|---|---------|--------|
+| 1 | xgboost/raw/10f | +0.4195 |
+| 2 | xgboost/forward-selected/10f | +0.2620 |
+| 3 | catboost_shallow/raw/10f | +0.2593 |
+| 4 | catboost_shallow/raw/5f | +0.2194 |
+| 5 | lightgbm/forward-selected/5f | +0.2145 |
+| 6 | xgboost/raw/5f | +0.1932 |
+| 7 | catboost_shallow/forward-selected/10f | +0.1581 |
+| 8 | catboost/raw/10f | +0.1374 |
+| 9 | catboost_deep/ablation-pruned/10f | +0.1363 |
+| 10 | xgboost/ablation-pruned/10f | +0.1234 |
+| 11 | catboost/forward-selected/10f | +0.1058 |
+| 12 | lightgbm/ablation-pruned/5f | +0.1043 |
+| 13 | lightgbm_dart/ablation-pruned/5f | +0.0948 |
+| 14 | lightgbm_large/forward-selected/5f | +0.0938 |
+| 15 | xgboost/ablation-pruned/5f | +0.0838 |
+| 16 | lightgbm_large/raw/10f | +0.0782 |
+| 17 | random_forest/forward-selected/5f | +0.0737 |
+| 18 | xgboost_dart/raw/10f | +0.0653 |
+| 19 | lightgbm_small/ablation-pruned/5f | +0.0631 |
+| 20 | xgboost_dart/forward-selected/5f | +0.0591 |
+| 21 | lightgbm/raw/10f | +0.0545 |
+| 22 | xgboost_reg/raw/10f | +0.0531 |
+| 23 | random_forest/ablation-pruned/5f | +0.0530 |
+| 24 | xgboost_shallow/ablation-pruned/10f | +0.0471 |
+| 25 | xgboost_reg/ablation-pruned/5f | +0.0452 |
+| 26 | lightgbm_large/ablation-pruned/5f | +0.0407 |
+| 27 | xgboost_deep/forward-selected/10f | +0.0394 |
+| 28 | random_forest/raw/5f | +0.0374 |
+| 29 | extra_trees/ablation-pruned/5f | +0.0340 |
+| 30 | lightgbm_small/forward-selected/10f | +0.0338 |
+| 31 | ft_transformer/raw/5f | +0.0312 |
+| 32 | lightgbm_dart/forward-selected/5f | +0.0288 |
+| 33 | catboost/ablation-pruned/10f | +0.0255 |
+| 34 | logistic_regression/ablation-pruned/5f | +0.0247 |
+| 35 | lightgbm_small/raw/5f | +0.0239 |
+| 36 | resnet/raw/10f | +0.0221 |
+| 37 | catboost_shallow/ablation-pruned/10f | +0.0215 |
+| 38 | extra_trees/raw/10f | +0.0199 |
+| 39 | logistic_regression/forward-selected/5f | +0.0177 |
+| 40 | ft_transformer/raw/10f | +0.0144 |
+| 41 | resnet_ple/raw/5f | +0.0124 |
+| 42 | extra_trees/forward-selected/10f | +0.0106 |
+| 43 | tabpfn/raw/10f | +0.0097 |
+| 44 | lightgbm_dart/raw/10f | +0.0093 |
+| 45 | xgboost_deep/raw/5f | +0.0070 |
+| 46 | xgboost_reg/forward-selected/10f | +0.0050 |
+| 47 | lightgbm_dart/raw/5f | +0.0046 |
+| 48 | lightgbm/ablation-pruned/10f | +0.0033 |
+| 49 | lightgbm/raw/5f | +0.0013 |
+| 50 | tabpfn/ablation-pruned/5f | +0.0011 |
+| 51 | realmlp/raw/10f | +0.0005 |
+
+**Key observations:**
+- `xgboost/raw/10f` dominates at +0.42, nearly 2× the second-largest weight
+- Top 6 are all XGBoost or CatBoost on **raw features** — raw features carry the most signal for GBDTs
+- **10-fold models** dominate for XGBoost; CatBoost and LightGBM contribute across both fold counts
+- First deep learning entry: `ft_transformer/raw/5f` at rank 31 (+0.031). All 7 DL entries with positive weight have |w| < 0.032 — they contribute marginal diversity, not primary signal
+- `catboost_shallow` consistently outperforms `catboost_deep` in positive contributions (+0.26/+0.22/+0.16 vs mainly negative)
+- `lightgbm/forward-selected/5f` (+0.21) is the strongest LightGBM entry — forward-selected features add unique signal for LightGBM on 5 folds
+
 ## Experiment Log
 
 | # | Experiment | Holdout AUC | LB Score | LB Delta | Notes |
