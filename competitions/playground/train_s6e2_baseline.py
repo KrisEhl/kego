@@ -236,7 +236,7 @@ def get_models(
                 "max_depth": 20,
                 "min_samples_leaf": 5,
                 "random_state": 42,
-                "n_jobs": -1,
+                "n_jobs": 4,
             },
             "seed_key": "random_state",
             "use_eval_set": False,
@@ -248,7 +248,7 @@ def get_models(
                 "max_depth": 20,
                 "min_samples_leaf": 5,
                 "random_state": 42,
-                "n_jobs": -1,
+                "n_jobs": 4,
             },
             "seed_key": "random_state",
             "use_eval_set": False,
@@ -1246,6 +1246,8 @@ def _run_optuna_study(
         }
     elif any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES):
         resource_opts = {"num_gpus": 0.5, "num_cpus": 1}
+    elif model_name.startswith(("extra_trees", "random_forest")):
+        resource_opts = {"num_cpus": 4}
     else:
         resource_opts = {"num_cpus": 8}
 
@@ -1614,6 +1616,9 @@ def _train_ensemble(
                         }
                     elif is_gpu:
                         opts = {"num_gpus": 0.5, "num_cpus": 1}
+                    elif model_name.startswith(("extra_trees", "random_forest")):
+                        # n_jobs=4 in model config — match Ray's CPU allocation
+                        opts = {"num_cpus": 4}
                     else:
                         opts = {"num_cpus": 2}
                     future = _train_single_model.options(**opts).remote(
