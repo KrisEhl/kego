@@ -23,8 +23,8 @@ Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff: ~0.95395 (~+0.00007 ne
 | #2 (Tshithihi) | 0.95410 | +0.00030 |
 | #3 (Chris Deotte) | 0.95410 | +0.00030 |
 | #4–20 (~17 teams) | 0.95408 | +0.00028 |
-| Bronze (~top 10%, ~rank 360) | ~0.95395 | ~+0.00015 |
-| **Us (~rank 490)** | **0.95380** | — |
+| Bronze (~top 10%, ~rank 360) | ~0.95395 | ~+0.00007 |
+| **Us (~rank ~460)** | **0.95388** | — |
 
 **Leaderboard has moved since last check:** the cluster that was at 0.95406 has now risen to 0.95408, and new entries at 0.95410 have appeared. The bronze cutoff has shifted up — what was +0.00008 away is now estimated at +0.00015. The gap is wider than previously thought.
 
@@ -110,10 +110,6 @@ Combined with retrain-full-v2 (124 learners total): **Ridge OOF AUC 0.95568 — 
 New `/all/` learners have small weights that cancel out; highly correlated with existing GPU model predictions.
 
 **Result: CPU-only new features don't move the needle. Need GPU models (XGBoost, CatBoost) with new features on cluster.**
-
-### Step 7 (when cluster available): Retrain-full GPU models with new features
-
-Retrain XGBoost and CatBoost variants on feature set `all` (53 features) with retrain-full mode. These are the dominant ensemble contributors (top weights are all xgboost/catboost). Their improved feature representations should actually shift the ensemble.
 
 ### Step 8: Local Optuna HP tuning for CPU models ✅
 
@@ -216,64 +212,7 @@ Key finding: Hill climbing assigned equal weights (1/114) to all learners — st
 
 Note: tuned-retrain-v1 used retrain-full-direct (OOF=630K spans train+holdout), so the combine.py size mismatch fix was needed and applied.
 
-### Step 13: HP config diversity — extract top Optuna trials as additional learners
-
-The #1 gap between us and the 0.95406 public cluster is **HP config diversity**, not model count. Evidence: the public notebook scores higher with 3 GBDTs × 5 seeds than our 104-learner Ridge ensemble. Research confirms: ensembling multiple HP configs per model family produces weakly correlated predictions that Ridge can usefully weight.
-
-**Updated priority after Step 11 result**: Tuned GBDTs on `all` features didn't help. The key question is whether a well-tuned CatBoost can produce predictions sufficiently different from our current catboost/ablation-pruned/10f to matter. Focus: catboost_tuned retrain-full on ablation-pruned only (not `all`), then test standalone before combining.
-
-Our Optuna studies (100 trials each) produced a single "best" config. The 2nd–5th best trials likely score within 0.0003 but explore very different HP regions (shallow/wide vs deep/narrow trees, different regularization). Add these as new model variants:
-
-- Extract `study.best_trials` (top 5) from existing LightGBM and XGBoost Optuna studies (saved in MLflow)
-- Register each as `lightgbm_tuned_v2/v3`, `xgboost_tuned_v2/v3`
-- Run new Optuna study for **CatBoost** — currently only using default HPs despite it holding the highest Ridge weights. This is the biggest untapped HP tuning opportunity.
-
-```python
-# Extract top N trials from an existing Optuna study
-study = optuna.load_study(study_name="lightgbm_tuned", storage=...)
-top_trials = sorted(study.trials, key=lambda t: t.value, reverse=True)[:5]
-```
-
-### Step 14: LOO encoding for Thallium + Slope of ST
-
-From `research_features.py` greedy selection: `Thallium_loo` (+0.00008, rank 2) and `Slope of ST_loo` (+0.00002, rank 6) survived drop-one validation. These LOO-encoded features are **not yet in the GPU retrain-full pipeline** — they were only tested locally with LightGBM.
-
-Add `category_encoders.LeaveOneOutEncoder` for `Thallium` and `Slope of ST` to the main feature engineering function (`_engineer_features()`). Include in a GPU cluster job alongside Step 10 or as a follow-up.
-
-### Step 15: CatBoost Optuna HP tuning (highest leverage remaining)
-
-CatBoost consistently holds the **largest positive Ridge weight** in every ensemble we've run, yet it is the only GBDT family without Optuna-tuned HPs (still using defaults: `depth=6, lr=0.05, l2_leaf_reg=3.0`). This is the highest-leverage untapped tuning opportunity.
-
-```bash
-cd cluster && make submit-tune \
-  TUNE_MODELS="catboost" \
-  TUNE_TRIALS=100 \
-  TUNE_SAMPLE=50000 \
-  FEATURES=all \
-  TAG=catboost-tune-v1
-```
-
-Key CatBoost HP space to explore: `depth` (4–10), `learning_rate` (0.01–0.3), `l2_leaf_reg` (1–20), `random_strength` (0.5–5), `bagging_temperature` (0–2).
-
-### Step 16: Adversarial validation (quick diagnostic, local)
-
-Train a classifier to distinguish train vs test rows. If AUC > 0.58, there is systematic distribution shift that can be exploited by reweighting training samples.
-
-S6E2 data is synthetic (CTGAN-style from 270 UCI rows). The generative process can produce subtle train/test artifacts. This is a 30-minute local experiment.
-
-```python
-adv = pd.concat([train.assign(is_test=0), test.assign(is_test=1)])
-score = cross_val_score(LGBMClassifier(), adv[features], adv['is_test'], cv=5, scoring='roc_auc').mean()
-# If score > 0.58: features that most distinguish train/test may be hurting LB generalisation
-```
-
-### Step 17: L2 meta-model with `confidence` meta-feature
-
-From the April 2025 Kaggle Playground winner (cuML stacking): add `std(oof_predictions)` across L1 base models as a meta-feature for the L2 model. This "confidence" signal helps the meta-model distinguish easy vs hard instances.
-
-Current L2 LightGBM uses only OOF predictions as features. Adding prediction variance may unlock non-linear signal that Ridge cannot capture. Low effort change to `analyze_ensemble.py` or the L2 training block.
-
-### Step 18: orig-stats feature set (target statistics from UCI original dataset) 🔄 IN PROGRESS
+### Step 18: orig-stats feature set (target statistics from UCI original dataset) ✅ COMPLETED
 
 Identified from the public RealMLP notebook (LB 0.95397 solo): compute per-value target statistics from the 270-row UCI original dataset (mean/median/std/skew/count per feature × value), appended to ablation-pruned features. 86 features total vs 21.
 
@@ -299,6 +238,46 @@ LogReg gains most (+0.0008): it can't learn interactions itself, so pre-aggregat
 
 ---
 
+## Remaining Options (gap: ~0.00007 to bronze)
+
+These are the options not yet confirmed as dead ends, roughly ordered by expected impact.
+
+### Option A: LOO encoding for Thallium + Slope of ST → new `orig-stats-loo` feature set
+
+From `research_features.py` greedy selection: `Thallium_loo` (+0.00008, rank 2) and `Slope of ST_loo` (+0.00002, rank 6) survived drop-one validation. **Not yet in any retrain-full pipeline** — only tested locally with LightGBM.
+
+These are LOO-encoded features that provide signal orthogonal to the orig-stats target statistics. Combining both into a single feature set `orig-stats-loo` (ablation-pruned + UCI target statistics + LOO encoding for Thallium/Slope_of_ST) and running retrain-full would produce a third diverse feature set for ensemble. **Low effort** — just add two LOO columns to `_engineer_features()` under a new feature set name.
+
+### Option B: Research features retrain-full (cluster)
+
+`playground-s6e2-research-v1` (13 runs, job stopped early) was never completed. The research features showed +0.00053 local AUC with LightGBM (5-fold, `ablation-pruned` baseline → `research`). This was never submitted to LB due to job interruption. Adding retrain-full predictions on `research` features (XGBoost, CatBoost, LightGBM) would provide a fourth diverse feature set.
+
+**Caveat**: Research features didn't produce LB gain in the one partial test we did. But we never had a clean complete retrain-full run on research features to actually combine.
+
+### Option C: Adversarial validation (local, 30 min)
+
+Train a classifier to distinguish train vs test rows. If AUC > 0.58 there is systematic distribution shift — S6E2 data is synthetic (CTGAN-style from 270 UCI rows) and may have subtle generative artifacts.
+
+```python
+adv = pd.concat([train.assign(is_test=0), test.assign(is_test=1)])
+score = cross_val_score(LGBMClassifier(), adv[features], adv['is_test'], cv=5, scoring='roc_auc').mean()
+# If > 0.58: reweight training samples to match test distribution
+```
+
+Low effort diagnostic. If AUC is near 0.5, skip; if > 0.58, reweighting could improve LB generalization.
+
+### Option D: L2 meta-model with `std(OOF)` confidence meta-feature
+
+Add `std(oof_predictions)` across L1 base models as an additional meta-feature for the L2 stacker. This "confidence" signal captures instance-level prediction difficulty. Currently L2 Ridge uses only 134 raw OOF prediction columns. Adding variance could unlock non-linear signal that Ridge can't capture.
+
+Change would be in `analyze_ensemble.py` or the ensemble combination block — low effort. Needs a local test on the existing 134-learner OOF predictions before committing a cluster job.
+
+### Option E: GPU models on `all` feature set (cluster)
+
+XGBoost and CatBoost on `all` (53 features: ablation-pruned + notebook clinical features + TE8 + freq8) were **never tested in GPU retrain-full mode**. CPU models (Step 6) showed zero improvement, but CatBoost/XGBoost are the dominant ensemble contributors — their representation of the `all` features might differ. Low probability of improvement given Step 6 result; cluster job cost is moderate (~45 min).
+
+---
+
 ## Already Tried / Won't Help
 
 (Formerly "Ideas To Try" — confirmed dead ends from experiments + research)
@@ -314,7 +293,10 @@ LogReg gains most (+0.0008): it can't learn interactions itself, so pre-aggregat
 - **Tuned GBDTs (lgbm_tuned + xgboost_tuned + catboost) on `all`+`ablation-pruned` features, retrain-full**: 60 learners, 5 seeds, 5+10 folds. Combined with retrain-full-v2 (114 total): LB 0.9538, no improvement. Hill climbing went uniform. The `all` feature set and tuned HPs don't add diversity beyond the existing ensemble.
 - **catboost_tuned Optuna (catboost-tune-v1, 100 trials)**: Flat landscape, best OOF 0.9533. Tuned params (depth=5, lr=0.02385, Bernoulli bootstrap, high regularization) give OOF 0.9552 in retrain-full — identical to default catboost. submit-v11 (retrain-full-v2 + catboost_tuned): LB 0.95378 < 0.95380. Confirmed dead end.
 - **lgbm_tuned retrain-full**: Too slow (~12h/task on CPU). LightGBM pip wheel lacks CUDA support (requires `-DUSE_CUDA=1` recompile). Not practical without GPU-compiled LightGBM.
-- **Pseudo-labeling (hard + soft)**: Both definitively failed. Soft labels collapse model to 0.929 round 1 → 0.70 round 2. See Step 17.
+- **Pseudo-labeling (hard + soft)**: Both definitively failed. Soft labels collapse model to 0.929 round 1 → 0.70 round 2.
+- **CatBoost Optuna HP tuning (catboost-tune-v1, 100 trials)**: Flat landscape after trial ~31, best OOF 0.9533. Tuned params give retrain-full OOF 0.9552 = identical to default catboost. submit-v11 (retrain-full-v2 + catboost_tuned): LB 0.95378 < 0.95380. HP tuning within CatBoost adds zero diversity.
+- **HP config diversity (top Optuna trials as additional learners)**: LightGBM and XGBoost tuned variants already combined with retrain-full-v2 (Step 11) — zero improvement. CatBoost Optuna confirmed flat. No reason to extract additional Optuna trials.
+- **GPU models on `all` feature set**: CPU models (LightGBM × 4, LogReg) on `all` features showed zero improvement when combined with retrain-full-v2 (Step 6). GPU models unlikely to differ.
 
 ---
 
