@@ -39,6 +39,9 @@ PAT_MODE = re.compile(r"Mode: (.+)")
 PAT_FOLDS = re.compile(r"(\d+) folds")
 PAT_FOLD_FROM_LID = re.compile(r"/(\d+)f$")
 PAT_LAUNCHED = re.compile(r"Launched \d+ Ray tasks")
+PAT_RESUMED = re.compile(
+    r"Resuming: skipped (\d+) completed tasks.*launching (\d+) new"
+)
 
 # Planned task lines: "- catboost/raw/5f seed=42 (GPU 0.25)" or "(CPU)"
 PAT_PLANNED = re.compile(rf"- ({LID}) seed=(\d+) \((?:CPU|GPU(?: ([\d.]+))?)\)")
@@ -156,6 +159,7 @@ class ParsedLog:
     ts_index: list[tuple[int, datetime]]
     start_time: datetime | None
     launched: bool  # True once "Launched N Ray tasks" seen — all tasks are in flight
+    resumed_count: int  # Tasks skipped via --resume from a prior run
     text: str
     lines: list[str]
     ensemble_lines: list[str]
@@ -183,6 +187,7 @@ class JobState:
     # ETA data
     n_done: int
     n_total: int
+    resumed_count: int  # tasks skipped from prior runs
 
     ensemble_lines: list[str]
 
@@ -337,6 +342,8 @@ def parse_log(text):
     ts_index = _build_ts_index(text)
     start_time = _parse_start_time(text)
     launched = bool(PAT_LAUNCHED.search(text))
+    resumed_m = PAT_RESUMED.search(text)
+    resumed_count = int(resumed_m.group(1)) if resumed_m else 0
 
     # Ensemble lines
     ensemble_lines = []
@@ -361,6 +368,7 @@ def parse_log(text):
         ts_index=ts_index,
         start_time=start_time,
         launched=launched,
+        resumed_count=resumed_count,
         text=text,
         lines=lines,
         ensemble_lines=ensemble_lines,
@@ -550,9 +558,11 @@ def compute_state(parsed, now, job_id):
         avg = model_avg_dur.get(_base_model(mname))
         unsched_est[(mname, seed)] = avg
 
-    # n_done / n_total
-    n_done = completed[-1].index if completed else 0
-    n_total = completed[-1].total if completed else len(parsed.planned)
+    # n_done / n_total — include resumed tasks from prior runs
+    n_done = (completed[-1].index if completed else 0) + parsed.resumed_count
+    n_total = (
+        completed[-1].total if completed else len(parsed.planned)
+    ) + parsed.resumed_count
 
     return JobState(
         job_id=job_id,
@@ -569,6 +579,7 @@ def compute_state(parsed, now, job_id):
         unsched_est=unsched_est,
         n_done=n_done,
         n_total=n_total,
+        resumed_count=parsed.resumed_count,
         ensemble_lines=parsed.ensemble_lines,
     )
 
@@ -585,16 +596,27 @@ def display(state, now):
         print(f"  {state.mode}")
 
     # --- Completed tasks ---
+    if state.resumed_count and not state.completed:
+        print(
+            f"  Progress: {state.resumed_count}/{state.n_total} tasks done ({state.resumed_count} from prior run)"
+        )
     if state.completed:
         idx_width = len(str(state.n_total))
         max_model_len = max(len(c.learner_id) for c in state.completed)
-        print(f"  Progress: {state.n_done}/{state.n_total} tasks completed")
+        resumed_str = (
+            f" ({state.resumed_count} from prior run + {len(state.completed)} new)"
+            if state.resumed_count
+            else ""
+        )
+        print(
+            f"  Progress: {state.n_done}/{state.n_total} tasks completed{resumed_str}"
+        )
         top_threshold = max(c.auc for c in state.completed) - 0.0001
         for c in state.completed:
             dur_str = ""
             if c.duration_secs is not None:
                 dur_str = f"  ({c.duration_secs // 60}m{c.duration_secs % 60:02d}s)"
-            idx = f"[{c.index:>{idx_width}}/{state.n_total}]"
+            idx = f"[{c.index + state.resumed_count:>{idx_width}}/{state.n_total}]"
             is_top = c.auc >= top_threshold
             dev = _device_label(
                 c.learner_id,
@@ -617,10 +639,8 @@ def display(state, now):
             )
         if state.elapsed_min and state.n_done == state.n_total:
             print(f"  Completed in {_fmt_duration(state.elapsed_min)}")
-    elif state.elapsed_min:
-        print(
-            f"  Elapsed: {_fmt_duration(state.elapsed_min)}, " f"no tasks completed yet"
-        )
+    elif state.elapsed_min and not state.resumed_count:
+        print(f"  Elapsed: {_fmt_duration(state.elapsed_min)}, no tasks completed yet")
 
     # --- Failed tasks ---
     if state.failed:
