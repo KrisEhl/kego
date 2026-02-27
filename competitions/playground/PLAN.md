@@ -2,8 +2,8 @@
 
 ## Status (2026-02-27)
 
-Current best: **0.95380 LB** (retrain-full-v2, 104 learners, Ridge stacking).
-Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff: ~0.95395 (~+0.00015 needed).
+Current best: **0.95388 LB** (submit-v12, 134 learners, Ridge stacking, retrain-full-v2 + orig-stats).
+Leaderboard rank ~490 / 3,593 (top 13.6%). Bronze cutoff: ~0.95395 (~+0.00007 needed).
 
 **Latest attempts (2026-02-27)**:
 - **catboost-tune-v1** (100 Optuna trials): Completely flat landscape after trial ~31. Best OOF 0.9533. Tuned params (depth=5, lr=0.02385, Bernoulli, subsample=0.778, l2_leaf_reg=20.26): identical to defaults in practice.
@@ -293,9 +293,9 @@ LogReg gains most (+0.0008): it can't learn interactions itself, so pre-aggregat
 - `raysubmit_vVWVgSkE5bdJ421d` — retrain-full on orig-stats, 16 models × 5+10f × 3 seeds (MLflow: `playground-s6e2-retrain-full-orig-stats-v1`)
 - `raysubmit_CfuUdy2kzpsVTJYg` — full validation (holdout eval) on orig-stats, same 16 models × resume from orig-stats-v1 (MLflow: `playground-s6e2-orig-stats-full-v1`)
 
-**OOM fix**: Added `@ray.remote(max_calls=1)` to force worker process exit after each task, releasing CUDA contexts between shared-GPU tasks. Prevents TabPFN from OOMing due to residual CatBoost/XGBoost CUDA allocations.
+**OOM fix**: Added `memory=4*1024**3` Ray scheduling hint for `lightgbm_dart` and `lightgbm_large` to limit concurrent tasks on the 15.2GB worker node.
 
-**Next**: After both jobs complete, run `submit-ensemble` combining `playground-s6e2-full`, `playground-s6e2-diverse-v1`, `playground-s6e2-orig-stats-full-v1` for stacking analysis, then promote to `submit-v12` using `playground-s6e2-retrain-full-v2` + `playground-s6e2-retrain-full-orig-stats-v1`.
+**Result (submit-v12)**: Combined `retrain-full-v2` (104 learners) + `retrain-full-orig-stats-v1` (30 learners) = 134 learners total. Best: Ridge, holdout AUC 0.9557, **LB 0.95388** (+0.00008 vs 0.95380). Several orig-stats learners got large positive Ridge weights: `catboost/orig-stats/10f` (+0.134), `catboost_shallow/orig-stats/10f` (+0.134), `xgboost/orig-stats/10f` (+0.173), `lightgbm_large/orig-stats/10f` (+0.113). Still 0.00007 below bronze cutoff (~0.95395).
 
 ---
 
@@ -326,6 +326,7 @@ LogReg gains most (+0.0008): it can't learn interactions itself, so pre-aggregat
 | submit-v10 | 0.9562 holdout | 0.95372 | 93 learners from 4 experiments | Ridge |
 | **retrain-full-v2** | **0.9557 OOF** | **0.95380** | **104 learners, full data** | **Ridge** |
 | submit-v11 | 0.9556 OOF | 0.95378 | 114 learners (retrain-full-v2 + catboost_tuned) | Ridge |
+| **submit-v12** | **0.9557 OOF** | **0.95388** | **134 learners (retrain-full-v2 + retrain-full-orig-stats-v1)** | **Ridge** |
 
 ### Key Findings (from previous steps)
 
