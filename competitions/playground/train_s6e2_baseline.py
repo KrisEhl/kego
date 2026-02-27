@@ -192,6 +192,7 @@ FEATURE_SETS = {
     "ablation-pruned": FEATURES_ABLATION_PRUNED,
     "forward-selected": FEATURES_FORWARD_SELECTED,
     "research": FEATURES_RESEARCH,
+    "orig-stats": None,  # ablation-pruned + orig_{col}_* stats; resolved at runtime
 }
 
 
@@ -928,6 +929,41 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["rpp_x_st"] = df["rate_pressure_product"] * df["ST depression"]
     df["chol_x_bp"] = df["Cholesterol"] * df["BP"] / 10000
 
+    return df
+
+
+def _add_orig_stats_features(
+    df: pd.DataFrame, original: pd.DataFrame, target: str = TARGET
+) -> pd.DataFrame:
+    """Add per-feature target statistics computed from the 270-row UCI original dataset.
+
+    For each raw feature column, computes mean/median/std/skew/count of the target
+    grouped by that feature's values in the original data. These are joined as fixed
+    lookup features — no fold-level computation, no leakage risk.
+
+    Strategy from the public RealMLP notebook (LB 0.95397 solo model).
+    """
+    df = df.copy()
+    for col in RAW_FEATURES:
+        if col not in original.columns:
+            continue
+        grp = original.groupby(col)[target]
+        stats = grp.agg(mean="mean", median="median", std="std", count="count")
+        stats[f"orig_{col}_skew"] = grp.skew()
+        stats = stats.rename(
+            columns={
+                "mean": f"orig_{col}_mean",
+                "median": f"orig_{col}_median",
+                "std": f"orig_{col}_std",
+                "count": f"orig_{col}_count",
+            }
+        ).reset_index()
+        df = df.merge(stats, on=col, how="left")
+        global_mean = original[target].mean()
+        for stat in ["mean", "median", "std", "skew", "count"]:
+            c = f"orig_{col}_{stat}"
+            fill = global_mean if stat in ("mean", "median") else 0.0
+            df[c] = df[c].fillna(fill)
     return df
 
 
@@ -1910,6 +1946,9 @@ def main():
     train_full[TARGET] = train_full[TARGET].map({"Presence": 1, "Absence": 0})
     original[TARGET] = original[TARGET].map({"Presence": 1, "Absence": 0})
 
+    # Save original before combining — used as lookup table for orig-stats features
+    original_stats_src = original.copy()
+
     # Combine synthetic + original data
     original["id"] = -1  # placeholder, excluded from features
     train_full = pd.concat([train_full, original], ignore_index=True)
@@ -1944,6 +1983,12 @@ def main():
     holdout = _engineer_features(holdout)
     test = _engineer_features(test)
 
+    # Add orig-stats features (lookup from UCI 270-row original dataset)
+    if any(fs in args.features for fs in ("orig-stats", "all")):
+        train = _add_orig_stats_features(train, original_stats_src)
+        holdout = _add_orig_stats_features(holdout, original_stats_src)
+        test = _add_orig_stats_features(test, original_stats_src)
+
     if args.retrain_full:
         logger.info(
             f"Retrain-full: combining train ({len(train)}) + holdout ({len(holdout)}) "
@@ -1954,11 +1999,14 @@ def main():
 
     # Build feature sets map from args
     feature_sets_map = {}
+    orig_stat_cols = sorted([c for c in train.columns if c.startswith("orig_")])
     for fs_name in args.features:
         if fs_name == "all":
             feature_sets_map["all"] = [
                 c for c in train.columns if c not in ["id", TARGET]
             ]
+        elif fs_name == "orig-stats":
+            feature_sets_map["orig-stats"] = FEATURES_ABLATION_PRUNED + orig_stat_cols
         else:
             feature_sets_map[fs_name] = FEATURE_SETS[fs_name]
     first_fs = next(iter(feature_sets_map.values()))
