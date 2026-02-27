@@ -1,0 +1,14 @@
+[project]
+name = "quantum-features"
+version = "0.1.0"
+description = "Quantum feature extraction experiment using Kipu Quantum Rimay"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "lightgbm>=4.0.0",
+    "pandas>=2.0.0",
+    "numpy>=1.26.0",
+    "scikit-learn>=1.4.0",
+    "planqk-quantum>=2.6.0",
+    "planqk-service-sdk>=1.4.0",
+    "planqk-api-sdk>=1.9.3",
+]
