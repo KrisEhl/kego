@@ -226,7 +226,7 @@ uv run python competitions/playground/train_s6e2_baseline.py --resume playground
 | submit-v2* | Ridge stacking, 65 learners (19 models + TabPFN), 223 runs | 0.9562 | 0.95372 | -0.0026 |
 | submit-v10 | Ridge stacking, 93 learners from 4 experiments | 0.9562 | 0.95372 | -0.0026 |
 | retrain-full-v2 | Ridge stacking, 104 learners trained on full data | 0.9557† | **0.95380** | — |
-| submit-v11 | Ridge stacking, 8 curated learners trained on full data | 0.9556† | 0.95378 | — |
+| submit-v11 | Ridge stacking, 114 learners (retrain-full-v2 + catboost_tuned) | 0.9556† | 0.95378 | — |
 
 *\*New submit-v2 = rebuilt ensemble from `full` + `diverse-v1` experiments (223 runs, 19 model types including TabPFN, 3 feature sets, 5/10 folds). Same LB as submit-v9 despite 8x more learners.*
 
@@ -274,7 +274,7 @@ The holdout AUC consistently overestimates the leaderboard score by ~0.0026. Thi
 | submit-v2* | Ridge stacking, 65 learners from 223 runs (19 models + TabPFN) | 0.9562 | 0.95372 | +0.00000 | Massive ensemble from `full` + `diverse-v1`. TabPFN adds negligible value. Same LB as lean submit-v9 |
 | submit-v10 | Ridge stacking, 93 learners from 4 experiments (+ SVM + research features) | 0.9562 | 0.95372 | +0.00000 | Added SVM (near-zero weight) and research features (marginal). Same LB |
 | retrain-full-v2 | Ridge stacking, 104 learners trained on full data (train+holdout) | 0.9557† | **0.95380** | **+0.00008** | **Current best.** 19 models x 3 feature sets x 10f. OOF AUC for method selection |
-| submit-v11 | Ridge stacking, 8 curated learners trained on full data | 0.9556† | 0.95378 | +0.00006 | Curated subset of retrain-full-v2: xgboost, catboost, lightgbm, ft_transformer on raw/ablation-pruned |
+| submit-v11 | Ridge stacking, 114 learners (retrain-full-v2 + catboost_tuned) | 0.9556† | 0.95378 | −0.00002 | retrain-full-v2 (104 learners) + catboost_tuned retrain-full (10 seeds, ablation-pruned). catboost_tuned not selected by Ridge (OOF 0.9552 = identical to default). No improvement over retrain-full-v2 alone. |
 | cpu-retrain-v1 | Ridge, 20 CPU learners (lgbm variants + logreg) on `all` + `ablation-pruned`, retrain-full | 0.9554† | — | — | Local Mac run. lgbm/all ≈ lgbm/ablation-pruned (0.9552 vs 0.9553). logreg/all +0.0003 vs ablation-pruned. Combined with retrain-full-v2 (124 learners total): 0.95568 — zero improvement. CPU learners don't displace GPU model dominance |
 | tuned-retrain-v1 combined | Ridge, 114 learners (104 retrain-full-v2 + 60 tuned GBDTs on `all`+`ablation-pruned`) | 0.9557† | 0.95380 | +0.00000 | Tuned lgbm_tuned + xgboost_tuned + catboost × 5 seeds, 5+10 folds, retrain-full-direct. Holdout eval disabled for tuned models (OOF covers train+holdout combined). Hill climbing collapsed to uniform weights. Ridge dominated by existing retrain-full-v2 models. No improvement. |
 

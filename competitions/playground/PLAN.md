@@ -301,7 +301,7 @@ Current L2 LightGBM uses only OOF predictions as features. Adding prediction var
 | submit-v9 | 0.9558 holdout | 0.95372 | 8 greedy-selected x 3 seeds | Ridge |
 | submit-v10 | 0.9562 holdout | 0.95372 | 93 learners from 4 experiments | Ridge |
 | **retrain-full-v2** | **0.9557 OOF** | **0.95380** | **104 learners, full data** | **Ridge** |
-| submit-v11 | 0.9556 OOF | 0.95378 | 8 curated, full data | Ridge |
+| submit-v11 | 0.9556 OOF | 0.95378 | 114 learners (retrain-full-v2 + catboost_tuned) | Ridge |
 
 ### Key Findings (from previous steps)
 
