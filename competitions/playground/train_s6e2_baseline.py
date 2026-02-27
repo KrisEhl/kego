@@ -577,6 +577,27 @@ def get_models(
             "seed_key": "random_seed",
         },
         # === CatBoost variants (GPU) ===
+        # Optuna-tuned (catboost-tune-v1, 100 trials, 50K sample, all features, trial #52)
+        "catboost_tuned": {
+            "model": CatBoostClassifier,
+            "kwargs": {
+                "iterations": 2000,
+                "depth": 5,
+                "learning_rate": 0.02385,
+                "eval_metric": "AUC",
+                "early_stopping_rounds": 100,
+                "task_type": "GPU",
+                "gpu_ram_part": 0.5,
+                "bootstrap_type": "Bernoulli",
+                "subsample": 0.778,
+                "l2_leaf_reg": 20.26,
+                "random_strength": 8.73,
+                "cat_features": CAT_FEATURES,
+                "random_seed": 77,
+                "verbose": 500,
+            },
+            "seed_key": "random_seed",
+        },
         "catboost": {
             "model": CatBoostClassifier,
             "kwargs": {
