@@ -1,5 +1,9 @@
 # Plan: Next Steps — Maximize LB Score
 
+## Final Result (Competition Closed 2026-02-28)
+
+**Private LB: 0.95528, rank 377 / 4,371 (top 8.6%)**. Public LB was 0.95388 (rank 492). Jumped +115 spots on private evaluation.
+
 ## Status (2026-02-27)
 
 Current best: **0.95388 LB** (submit-v12, 134 learners, Ridge stacking, retrain-full-v2 + orig-stats).

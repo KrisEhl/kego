@@ -196,23 +196,22 @@ uv run python competitions/playground/train_s6e2_baseline.py --resume playground
 
 **Partial learners:** If a learner has some seeds completed but not all (e.g. 2 of 3 seeds finished), none of its seeds are preloaded — all seeds are retrained. This avoids complexity of un-averaging partial results.
 
-## Current Best
+## Final Result (Competition Closed 2026-02-28)
 
-- **Leaderboard (public)**: 0.95388 (~rank ~460 / 3,593)
+- **Private leaderboard**: 0.95528, **rank 377 / 4,371** (top 8.6%)
+- **Public leaderboard**: 0.95388, rank 492 / 4,371
+- **Jump on private**: +115 spots (492 → 377)
 - **OOF AUC (ensemble)**: 0.9557
 - **Method**: Ridge stacking over 134 learners trained on full data (retrain-full-v2 + retrain-full-orig-stats-v1)
-- **Bronze cutoff**: ~0.95395 (~+0.00007 away, as of 2026-02-27)
 
-### Top of Leaderboard (2026-02-25)
+### Final Private Leaderboard (top)
 
 | Rank | Team | Score |
 |------|------|-------|
-| 1 | Pirhosseinlou | 0.95414 |
-| 2 | Tshithihi | 0.95410 |
-| 3 | Chris Deotte | 0.95410 |
-| 4–20 | *(cluster of ~17 teams)* | 0.95408 |
-| ~360 | *(bronze cutoff, est.)* | ~0.95395 |
-| **~460** | **Us** | **0.95388** |
+| 1 | Masaya Kawamata | 0.95535 |
+| 2 | Akiyoshi Kinoshita | 0.95535 |
+| 3–20 | *(cluster)* | 0.95534 |
+| **377** | **Us (Kristian)** | **0.95528** |
 
 ## Local Validation vs Leaderboard
 
