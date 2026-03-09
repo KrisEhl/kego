@@ -20,7 +20,7 @@ The original data is combined with the synthetic training data during training t
 
 ## Scripts
 
-- `train_s6e2_baseline.py` — 19-model ensemble with multi-seed averaging and Ridge stacking (runs on Ray cluster)
+- `train_s6e2_baseline.py` — Up to 27 models with multi-seed averaging and Ridge stacking (runs on Ray cluster)
 - `compare_stacking.py` — Stacking comparison: simple average vs Ridge vs LightGBM meta-models
 - `analyze_ensemble.py` — Greedy forward selection and leave-one-out analysis of ensemble members
 - `analyze_disagreement.py` — Model disagreement matrix and best-run analysis using OOF predictions from MLflow
@@ -28,6 +28,8 @@ The original data is combined with the synthetic training data during training t
 - `select_features.py` — Fine-grained feature selection: per-feature ablation + forward selection with multi-seed averaging
 - `research_features.py` — Domain-driven feature research: generates ~140 candidates from clinical literature, evaluates via add-one screening against the ablation-pruned baseline
 - `test_features_local.py` — Local CPU feature engineering comparison (LightGBM + LogReg)
+- `ablate_original_data.py` — Quantifies the impact of including the 270-row UCI dataset: trains LightGBM with/without original rows across 5 seeds and compares holdout AUC
+- `soft_pseudo_labels.py` — Soft pseudo-labeling experiment: self-training with continuous probability labels on all 270K test rows (2 rounds, full and reduced weight variants)
 - `submit_s6e2.sh` — Submit predictions via Kaggle CLI
 - `explore_s6e2.py` — EDA and data exploration
 
