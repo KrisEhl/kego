@@ -42,7 +42,7 @@ IEEE-CIS Fraud Detection — predict whether an online transaction is fraudulent
 ### Missing Data is Structured, Not Random
 
 - Only 48 features have <1% missing; 289 have >10% missing
-- **V-features form 9 distinct NaN-pattern groups** where entire blocks go missing together (e.g., V95-V321 are always present; V138-V339 are 84% missing together)
+- **V-features form 14 distinct NaN-pattern groups** where entire blocks go missing together (e.g., V95-V137 are never missing; V138-V166 are always 84% missing together)
 - M-features show massive train/test missing rate shift: M7/M8/M9 are 67% missing in train but only 39% in test (27% shift)
 - NaN patterns likely indicate what data was available for each transaction type -- missingness itself is a feature
 
@@ -100,10 +100,40 @@ This confirms time-based CV is mandatory for reliable local validation.
 
 1. **Time-based CV** -- temporal split means random CV will leak future information
 2. **NaN as feature** -- create `is_null` binary features before imputation, especially for V and M groups
-3. **V-feature reduction** -- 339 V-features can be reduced to ~80-120 by keeping one representative per NaN-group + correlation cluster
+3. **V-feature reduction** -- 339 -> 140 features (see details below)
 4. **UID construction** -- `card1 + addr1` approximates unique cardholders for per-user aggregations
 5. **Memory optimization** -- downcast dtypes before feature engineering (1.9 GB baseline)
 6. **Class imbalance** -- use stratified sampling and AUC-focused objectives
+
+### V-Feature Reduction: 339 -> 140 (59% removed)
+
+V-features are not independent — they form structured groups that can be aggressively deduplicated:
+
+**Step 1: Group by NaN pattern.** Features within a group always go missing together, meaning they were derived from the same underlying data source. This reveals 14 groups.
+
+**Step 2: Cluster by correlation within each group.** Many features within a NaN group are highly correlated (|r| > 0.75) and carry redundant information. Greedy clustering merges these.
+
+**Step 3: Keep one representative per cluster** — the one with the highest |correlation with target|.
+
+| NaN Group | Missing % | Features | Clusters | Top representative |
+|---|---|---|---|---|
+| V95-V137 | 0% | 43 | 25 | V111 (\|r\|=0.129) |
+| V279-V321 | 0% | 32 | 14 | V304 (\|r\|=0.135) |
+| V12-V34 | 15% | 23 | 8 | V18 (\|r\|=0.184) |
+| V53-V74 | 15% | 22 | 8 | V74 (\|r\|=0.181) |
+| V75-V94 | 16% | 20 | 9 | V87 (\|r\|=0.248) |
+| V35-V52 | 30% | 18 | 8 | V45 (\|r\|=0.279) |
+| V1-V11 | 54% | 11 | 6 | V10 (\|r\|=0.081) |
+| V217-V278 | 76% | 46 | 14 | V257 (\|r\|=0.370) |
+| V167-V216 (two subgroups) | 74% | 50 | 19 | V201 (\|r\|=0.327) |
+| V220-V272 | 74% | 16 | 6 | V222 (\|r\|=0.151) |
+| V138-V166 | 84% | 29 | 7 | V156 (\|r\|=0.287) |
+| V322-V339 | 84% | 18 | 8 | V324 (\|r\|=0.075) |
+| V281-V315 | 0.1% | 11 | 8 | V283 (\|r\|=0.111) |
+
+The biggest wins are in the heavily-missing groups: the 76% group drops 46 -> 14, and the 74% groups drop 50 -> 19. These contain the strongest predictors (V257 at r=0.37, V244 at r=0.36), so the signal is preserved while removing correlated noise.
+
+Note: a |r| > 0.75 threshold is conservative. Tightening to 0.90 would keep ~180 features; loosening to 0.60 would keep ~100.
 
 ## Scripts
 
