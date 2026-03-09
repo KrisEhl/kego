@@ -40,3 +40,5 @@ notebooks/ariel/outputs_adc24_intro
 # debug
 .*.py
 catboost_info/
+
+quantum_docs.md
