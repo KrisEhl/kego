@@ -14,10 +14,11 @@ class EpochTimer:
     Usage::
 
         from kego.gpu.benchmark import EpochTimer
+
         timer = EpochTimer()
         net = NeuralNetClassifier(..., callbacks=[("timer", timer)])
         net.fit(X, y)
-        print(f"Avg epoch: {sum(timer.epoch_times)/len(timer.epoch_times):.2f}s")
+        print(f"Avg epoch: {sum(timer.epoch_times) / len(timer.epoch_times):.2f}s")
     """
 
     def __init__(self) -> None:

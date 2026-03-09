@@ -1,5 +1,3 @@
-from typing import Sequence
-
 import numpy as np
 import pandas as pd
 
@@ -12,7 +10,7 @@ class Normalizer:
 
     def fix_types(
         self,
-        columns_to_ignore: list[str] | None = [],
+        columns_to_ignore: list[str] | None = None,
         features: list[str] | None = None,
     ):
         if columns_to_ignore is None:
@@ -25,7 +23,7 @@ class Normalizer:
                 set(kego.lists.flatten_list([df.columns for df in self.dfs]))
             )
 
-        self.features = [c for c in self.features if not c in columns_to_ignore]
+        self.features = [c for c in self.features if c not in columns_to_ignore]
 
         print(f"There are {len(self.features)} FEATURES: {self.features}")
 
@@ -48,7 +46,6 @@ class Normalizer:
         print("We LABEL ENCODE the CATEGORICAL FEATURES: ", end="")
 
         for feature in self.features:
-
             # LABEL ENCODE CATEGORICAL AND CONVERT TO INT32 CATEGORY
             if feature in FEATURES_CATEGORICAL:
                 print(f"{feature}, ", end="")
@@ -64,7 +61,7 @@ class Normalizer:
                 if combined[feature].dtype == "int64":
                     combined[feature] = combined[feature].astype("int32")
 
-        n_dfs = [0] + np.cumsum([len(df) for df in self.dfs]).tolist()
+        n_dfs = [0, *np.cumsum([len(df) for df in self.dfs]).tolist()]
         self.dfs = [
             combined.loc[n_dfs[i] : n_dfs[i + 1] - 1] for i in range(len(self.dfs))
         ]

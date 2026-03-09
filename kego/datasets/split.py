@@ -59,9 +59,9 @@ def split_dataset(
         validate = validate_test
         test = None
     print(
-        f"Split as train: {train.shape[0]} ({train_size*100}%), "
-        f"validate: {validate.shape[0]} ({validate_size*100}%), "
-        f"test: {test.shape[0] if test is not None else None} ({test_size*100 if test_size is not None else None}%)"
+        f"Split as train: {train.shape[0]} ({train_size * 100}%), "
+        f"validate: {validate.shape[0]} ({validate_size * 100}%), "
+        f"test: {test.shape[0] if test is not None else None} ({test_size * 100 if test_size is not None else None}%)"
     )
     return train, validate, test
 

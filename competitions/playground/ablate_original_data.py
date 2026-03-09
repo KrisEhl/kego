@@ -197,7 +197,7 @@ def main():
         flush=True,
     )
     print(f"  Delta:            {delta:+.5f}", flush=True)
-    print(f"  (+{abs(delta)*100:.4f}% AUC)", flush=True)
+    print(f"  (+{abs(delta) * 100:.4f}% AUC)", flush=True)
 
 
 if __name__ == "__main__":

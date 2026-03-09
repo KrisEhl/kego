@@ -49,13 +49,35 @@ select = [
 ]
 ignore = [
     "E501",    # line length handled by formatter
+    "E741",    # ambiguous variable names (l, O — common in ML/math code)
     "S101",    # allow assert in non-test code (common in ML scripts)
+    "B905",    # zip() without strict= (too noisy, rarely a real bug)
     "TRY003",  # allow long exception messages
+    "RUF012",  # mutable class defaults (common pattern in dataclasses/configs)
+    "SIM102",  # nested if — sometimes clearer than single if with and
+    "SIM108",  # ternary operator — multi-line if/else often more readable
+    "SIM101",  # merged isinstance — less readable when checking different categories
+    "SIM103",  # return condition directly — if/else sometimes clearer
+    "B027",    # empty __init__ in ABC without abstract — intentional pattern
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"competitions/**/*.py" = ["S"]  # relax security checks in competition scripts
-"tests/**/*.py" = ["S101"]      # allow assert in tests
+# Legacy competition code — relax rules to avoid blocking commits
+"competitions/**/*.py" = [
+    "S", "B", "SIM", "TRY", "RUF",
+    "E402",   # import not at top (sys.path manipulation)
+    "E741",   # ambiguous variable names (l, O, I — common in ML)
+    "F821",   # undefined names (notebook cell ordering)
+    "F841",   # unused local variables (iterative scripts)
+]
+"competitions/**/*.ipynb" = [
+    "S", "B", "SIM", "TRY", "RUF",
+    "E402", "E741",
+    "F401",   # unused imports (notebook exploration)
+    "F821",   # undefined names (cell ordering)
+    "W291", "W293",  # whitespace in notebooks
+]
+"tests/**/*.py" = ["S101"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["kego"]

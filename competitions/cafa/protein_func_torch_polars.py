@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Protein function prediction (GPU-accelerated) — Polars + PyTorch
 Now supports external per-term weights via --weights (e.g., ia.csv with columns: EntryID,weight).
@@ -19,17 +18,16 @@ Train combining weights (multiply external with effective-number weighting):
 Predict:
   python protein_func_torch_polars.py predict --model ./torch_model --input test.csv --output preds.parquet
 """
+
 import argparse
 import json
-import math
 import os
 import sys
 import time
-from typing import Dict, List
 
 try:
     import polars as pl
-except Exception as e:
+except Exception:
     print(
         "ERROR: This script requires Polars. Install with: pip install polars",
         file=sys.stderr,
@@ -116,9 +114,9 @@ def seq_to_indices(seq: str, max_len: int):
 class ProtDataset(Dataset):
     def __init__(
         self,
-        sequences: List[str],
-        term_lists: List[List[str]],
-        label_map: Dict[str, int],
+        sequences: list[str],
+        term_lists: list[list[str]],
+        label_map: dict[str, int],
         max_len: int,
     ):
         self.seqs = sequences
@@ -352,7 +350,7 @@ def read_external_weights(path: str) -> dict:
 
 
 def align_class_weights(
-    labels: List[str], freqs_aligned: List[int], args
+    labels: list[str], freqs_aligned: list[int], args
 ) -> np.ndarray:
     """
     Build per-class weights according to args.weight_mode:
@@ -506,7 +504,7 @@ def train(args):
         )
         f1 = macro_f1(Y, P, 0.5) if len(Y) else 0.0
         print(
-            f"[EP {ep:02d}] train_loss={total/len(train_loader):.6f} val_macroF1@0.5={f1:.4f} time={time.time()-t0:.1f}s"
+            f"[EP {ep:02d}] train_loss={total / len(train_loader):.6f} val_macroF1@0.5={f1:.4f} time={time.time() - t0:.1f}s"
         )
         if f1 > best_f1:
             best_f1 = f1

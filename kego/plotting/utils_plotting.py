@@ -1,14 +1,9 @@
-import typing as t
-from typing import Literal, Optional
+from typing import Literal
 
 import matplotlib.colors
 import matplotlib.figure
 import numpy as np
 from matplotlib import pyplot as plt
-
-import kego.checks
-import kego.constants
-import kego.lists
 
 
 def set_font(font_size=10):
@@ -87,7 +82,7 @@ def annotate_values(
 
 def _get_values_from_bar_object(
     bar_object: matplotlib.container.BarContainer,
-) -> t.Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Debug function to obtain plotted values from a bar plot object
 

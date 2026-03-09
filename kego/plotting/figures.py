@@ -2,12 +2,14 @@ import collections
 import logging
 import os.path
 import pathlib
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 from matplotlib import pyplot as plt
 
+import kego.checks
 import kego.constants
+import kego.lists
 from kego.plotting.utils_plotting import pair_in_list, set_font
 
 
@@ -31,10 +33,10 @@ def plot_legend(axes):
 
 
 def create_figure_axes(
-    figure: Optional[plt.figure] = None,
-    axes: Optional[plt.axes] = None,
-    figure_size: Optional[Sequence] = None,
-    font_size: Optional[int] = 10,
+    figure: plt.figure | None = None,
+    axes: plt.axes | None = None,
+    figure_size: Sequence | None = None,
+    font_size: int | None = 10,
     aspect: str = "auto",
 ) -> tuple[plt.figure, plt.axes]:
     """
@@ -321,8 +323,9 @@ def create_axes_grid(
             axes_colorbar[i_row][i_col] = plt.axes(
                 [colorbar_left, colorbar_bottom, colorbar_width, colorbar_height]
             )
-    axes, axes_colorbar = np.array(axes, dtype=object), np.array(
-        axes_colorbar, dtype=object
+    axes, axes_colorbar = (
+        np.array(axes, dtype=object),
+        np.array(axes_colorbar, dtype=object),
     )
     if unravel:
         axes = kego.lists.flatten_list(axes)

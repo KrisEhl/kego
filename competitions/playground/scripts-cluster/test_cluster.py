@@ -34,7 +34,7 @@ else:
     for r in ray.get(ready):
         print(f"  OK: {r}", flush=True)
     for ref in not_ready:
-        print(f"  TIMEOUT: task did not complete in 60s", flush=True)
+        print("  TIMEOUT: task did not complete in 60s", flush=True)
         ray.cancel(ref)
 
 print("Done!", flush=True)

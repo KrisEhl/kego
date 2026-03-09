@@ -12,7 +12,6 @@ Usage:
 
 import argparse
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -27,8 +26,7 @@ sys.path.append(str(project_root))
 
 from sklearn.preprocessing import QuantileTransformer  # noqa: E402
 from skorch.callbacks import EarlyStopping  # noqa: E402
-from train_s6e2_baseline import (  # noqa: E402
-    CAT_FEATURES,
+from train_s6e2_baseline import (  # type: ignore[attr-defined]  # noqa: E402
     DATA_DIR,
     TARGET,
     TE_FEATURES,
@@ -404,7 +402,7 @@ def main():
 
     # Report results
     gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
-    logger.info(f"\n{'='*50}")
+    logger.info(f"\n{'=' * 50}")
     logger.info(f"Model: {model_name}")
     logger.info(f"GPU: {gpu_name}")
     logger.info(f"Total time: {total_time:.2f}s")
@@ -427,7 +425,7 @@ def main():
             f"GPU memory util: avg={gpu_monitor.avg_mem_util:.1f}%, "
             f"max={gpu_monitor.max_mem_util:.1f}%"
         )
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' * 50}")
 
     # Log to MLflow
     log_benchmark_to_mlflow(

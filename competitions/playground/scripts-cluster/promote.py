@@ -282,7 +282,7 @@ def cmd_auto(args):
         avg_auc = best_runs["metrics.holdout_auc"].mean()
         avg_str = f"{avg_auc:.4f}" if avg_auc == avg_auc else "?"
         exp = _exp_name(best_exp_id)
-        print(f"  {lid}: {len(best_runs)} seeds from {exp} " f"(avg holdout={avg_str})")
+        print(f"  {lid}: {len(best_runs)} seeds from {exp} (avg holdout={avg_str})")
 
     print(f"\nPromoted {promoted} runs to ensemble '{args.ensemble}'")
 

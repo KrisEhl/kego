@@ -145,7 +145,7 @@ def plot_histogram_2d(
     marginal_x_label_y:
         Y-axis label for plot `marginal_x`
     marginal_x_show_xticks:
-        Wether to show ticks along the x-axis for plot `marginal_x`
+        Whether to show ticks along the x-axis for plot `marginal_x`
     marginal_y:
         Add additional plot on top of histogram plot ("histogram"/"default"/None)
     marginal_y_label_x:
@@ -153,7 +153,7 @@ def plot_histogram_2d(
     marginal_y_label_y:
         Y-axis label for plot `marginal_y`
     marginal_y_show_yticks:
-        Wether to show ticks along the y-axis for plot `marginal_y`
+        Whether to show ticks along the y-axis for plot `marginal_y`
     marginal_color:
         Color of histogram bars in marginal plots
     figure_size:
@@ -766,9 +766,9 @@ def plot_histogram(
         else:
             values = counts
             if label_x == key_or_values:
-                label_x = f"Occurence of unique {label_x}"
+                label_x = f"Occurrence of unique {label_x}"
             elif label_x is None:
-                label_x = f"Occurence of unqiue values"
+                label_x = "Occurrence of unique values"
     if bin_edges is None:
         bin_edges, symlog_linear_threshold = get_bin_edges(
             data=values,

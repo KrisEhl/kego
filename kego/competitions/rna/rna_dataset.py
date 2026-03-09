@@ -1,6 +1,3 @@
-from typing import List, Tuple
-
-import numpy as np
 import polars as pl
 import torch
 from torch.utils.data import Dataset
@@ -56,14 +53,14 @@ class RNADataset(Dataset):
     def __len__(self) -> int:
         return len(self.sequences)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Get a sequence and its corresponding 3D coordinates."""
         return self.sequences[idx], self.coordinates[idx]
 
     @staticmethod
     def collate_fn(
-        batch: List[Tuple[torch.Tensor, torch.Tensor]],
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        batch: list[tuple[torch.Tensor, torch.Tensor]],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Custom collate function to handle variable length sequences."""
         sequences, coordinates = zip(*batch)
 

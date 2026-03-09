@@ -72,7 +72,7 @@ def _check_parameter_consistency(
         )
     if (facet_column or facet_row) and df is None:
         raise NotImplementedError(
-            f"Cannnot use {facet_column=} and/or {facet_row}, when {df=} is not given!"
+            f"Cannot use {facet_column=} and/or {facet_row}, when {df=} is not given!"
         )
 
 
@@ -232,8 +232,8 @@ def _prepare_axes_grid_creation(
     )
 
 
-def _add_titles(titles: list, delimeter: str = ", "):
-    return f"{delimeter}".join([t for t in titles if len(t)])
+def _add_titles(titles: list, delimiter: str = ", "):
+    return f"{delimiter}".join([t for t in titles if len(t)])
 
 
 def _add_masks(mask: np.ndarray | None, to_add: np.ndarray | None) -> np.ndarray | None:

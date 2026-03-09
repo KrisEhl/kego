@@ -28,7 +28,7 @@ def resolve_smi_index(cuda_index: int = 0) -> int:
             return cuda_index
 
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader,nounits"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=5,
@@ -42,7 +42,7 @@ def resolve_smi_index(cuda_index: int = 0) -> int:
             smi_uuid = parts[1].strip()
             if cuda_uuid in smi_uuid or smi_uuid in cuda_uuid:
                 return smi_idx
-    except Exception:
+    except Exception:  # noqa: S110
         pass
     return cuda_index
 
@@ -86,8 +86,8 @@ class GPUMonitor:
     def _poll(self) -> None:
         while not self._stop.is_set():
             try:
-                result = subprocess.run(
-                    [
+                result = subprocess.run(  # noqa: S603
+                    [  # noqa: S607
                         "nvidia-smi",
                         f"--id={self.device_index}",
                         "--query-gpu=utilization.gpu,utilization.memory",
@@ -101,7 +101,7 @@ class GPUMonitor:
                     parts = result.stdout.strip().split(",")
                     self.samples.append(float(parts[0].strip()))
                     self.mem_samples.append(float(parts[1].strip()))
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
             self._stop.wait(self.interval)
 

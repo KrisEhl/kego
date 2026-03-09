@@ -327,8 +327,8 @@ def main() -> None:
 
         print(
             f"  weight={tw} summary: baseline={baseline_auc:.5f} | "
-            f"round1={r1_auc:.5f} ({r1_auc-baseline_auc:+.5f}) | "
-            f"round2={r2_auc:.5f} ({r2_auc-baseline_auc:+.5f})\n",
+            f"round1={r1_auc:.5f} ({r1_auc - baseline_auc:+.5f}) | "
+            f"round2={r2_auc:.5f} ({r2_auc - baseline_auc:+.5f})\n",
             flush=True,
         )
 

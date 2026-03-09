@@ -319,9 +319,9 @@ def main():
     # ===================================================================
     # Step 1: Permutation importance baseline
     # ===================================================================
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"STEP 1: PERMUTATION IMPORTANCE ({args.repeats} repeats)")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     model_baseline, auc_baseline = _train_lgbm(
         train, y_train, holdout, y_holdout, all_features
@@ -373,11 +373,11 @@ def main():
     # ===================================================================
     # Step 2: Drop-one-at-a-time ablation (multi-seed)
     # ===================================================================
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(
         f"STEP 2: DROP-ONE-AT-A-TIME ABLATION ({len(all_features)} features x {len(seeds)} seeds)"
     )
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     baseline_ms = _eval_lgbm_multiseed(
         train, y_train, holdout, y_holdout, all_features, seeds
@@ -393,7 +393,7 @@ def main():
         delta = auc_without - baseline_ms
         ablation_results.append((feat, auc_without, delta))
         print(
-            f"  [{i+1}/{len(all_features)}] -{feat:<30} AUC={auc_without:.5f} (delta={delta:+.5f})"
+            f"  [{i + 1}/{len(all_features)}] -{feat:<30} AUC={auc_without:.5f} (delta={delta:+.5f})"
         )
 
     # Sort by delta descending (features whose removal helps most at top)
@@ -413,11 +413,11 @@ def main():
     # ===================================================================
     # Step 3: Forward selection by importance order (multi-seed)
     # ===================================================================
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(
         f"STEP 3: FORWARD SELECTION ({len(all_features)} features x {len(seeds)} seeds)"
     )
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     forward_history = []
     for i, _ in enumerate(features_by_importance, start=1):
@@ -447,9 +447,9 @@ def main():
     # ===================================================================
     # Step 4: Feature set comparison (4 sets x 2 model types, multi-seed)
     # ===================================================================
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("STEP 4: FEATURE SET COMPARISON (LightGBM + LogReg, multi-seed)")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     feature_sets = {
         f"All features ({len(all_features)})": all_features,
@@ -474,9 +474,9 @@ def main():
     # ===================================================================
     # Summary & recommendations
     # ===================================================================
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("RECOMMENDATIONS")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     print(f"\nForward-selected feature set ({len(forward_selected)} features):")
     for f in forward_selected:
@@ -489,22 +489,22 @@ def main():
         print(f"  - {f}{marker}")
 
     if harmful_features:
-        print(f"\nFeatures to DROP (removal improved AUC):")
+        print("\nFeatures to DROP (removal improved AUC):")
         for f in harmful_features:
             marker = " (engineered)" if f not in RAW_FEATURES else ""
             print(f"  - {f}{marker}")
 
-    print(f"\nFor TREES (LightGBM/XGBoost/CatBoost):")
+    print("\nFor TREES (LightGBM/XGBoost/CatBoost):")
     print(
         f"  Use forward-selected ({len(forward_selected)}) or ablation-pruned ({len(ablation_pruned)}),"
     )
-    print(f"  whichever scored higher in step 4.")
+    print("  whichever scored higher in step 4.")
 
-    print(f"\nFor NNs (ResNet/FTTransformer/RealMLP):")
+    print("\nFor NNs (ResNet/FTTransformer/RealMLP):")
     print(
-        f"  Compare forward-selected vs raw-only — NNs are more sensitive to noisy features."
+        "  Compare forward-selected vs raw-only — NNs are more sensitive to noisy features."
     )
-    print(f"  LogReg AUC above serves as a proxy for NN feature sensitivity.")
+    print("  LogReg AUC above serves as a proxy for NN feature sensitivity.")
 
 
 if __name__ == "__main__":

@@ -10,12 +10,20 @@ Example::
 
     from kego.semi_supervised.pseudo_labels import soft_pseudo_label_experiment
 
-    def my_train_fn(X_train, y_train, X_holdout, y_holdout, X_test, seed, sample_weight):
+
+    def my_train_fn(
+        X_train, y_train, X_holdout, y_holdout, X_test, seed, sample_weight
+    ):
         # train your model, return (holdout_auc, test_predictions)
         ...
 
+
     results = soft_pseudo_label_experiment(
-        X_train, y_train, X_holdout, y_holdout, X_test,
+        X_train,
+        y_train,
+        X_holdout,
+        y_holdout,
+        X_test,
         seeds=[42, 123, 777],
         train_fn=my_train_fn,
         test_weights=[1.0, 0.3],

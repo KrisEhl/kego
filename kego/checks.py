@@ -1,7 +1,5 @@
 import ast
-import collections
-from collections.abc import Iterable
-from typing import Iterator, Optional, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 
 import numpy as np
 
@@ -47,7 +45,7 @@ def _assert_same_type(variable, type_from_variable):
 
 
 def assert_same_type_as(
-    variable: object, type_from_variable: object, alternative: Optional[object] = None
+    variable: object, type_from_variable: object, alternative: object | None = None
 ):
     """Check if `variable` is same type as `type_from_variable` unless `variable` is `alternative`"""
     if variable is alternative:
@@ -57,7 +55,7 @@ def assert_same_type_as(
     except TypeError:
         raise TypeError(
             f"Variable {variable} not of expected type {type_from_variable}"
-        )
+        ) from None
 
 
 def any_of_type(variable_list: Iterable, type_: type):
@@ -69,21 +67,21 @@ def all_same_type(variable_list: Iterable, type_: type):
 
 
 def assert_shape(
-    variable, shape: tuple, name: Optional[str] = None, ignore_none: bool = True
+    variable, shape: tuple, name: str | None = None, ignore_none: bool = True
 ):
     if ignore_none:
         if variable is None:
             return
     if np.shape(variable) != shape:
         raise TypeError(
-            f"{name+': ' if name is not None else ''}{variable=} doesn't have required {shape=}!"
+            f"{name + ': ' if name is not None else ''}{variable=} doesn't have required {shape=}!"
         )
 
 
 def assert_all_same_type(variable_list: Iterable, type_: type):
     for var in variable_list:
         if not isinstance(var, type_):
-            raise ValueError(f"{var} not of type {type_.__name__}!")
+            raise TypeError(f"{var} not of type {type_.__name__}!")
 
 
 def validate_array(array: np.ndarray, type_: str = "float", name: str | None = None):

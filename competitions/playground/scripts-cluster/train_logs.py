@@ -52,7 +52,7 @@ PAT_DRIVER_COMPLETED = re.compile(
 )
 
 # Driver-side failure: "[3/20] Task failed: catboost/raw/5f seed=42 ..."
-PAT_DRIVER_FAILED = re.compile(rf"\[(\d+)/(\d+)\] Task failed.*")
+PAT_DRIVER_FAILED = re.compile(r"\[(\d+)/(\d+)\] Task failed.*")
 
 # Worker starting: "[catboost/raw/5f] Starting seed=42"
 PAT_WORKER_STARTING = re.compile(

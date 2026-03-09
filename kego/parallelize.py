@@ -1,6 +1,6 @@
 import itertools
 import multiprocessing
-from typing import Callable, Iterable, Optional
+from collections.abc import Callable, Iterable
 
 
 def get_processes(processes):
@@ -14,7 +14,7 @@ def parallelize(
     args_zipped: Iterable,
     processes: int = -1,
     single_arg: bool = False,
-    kwargs_as_dict: Optional[dict] = None,
+    kwargs_as_dict: dict | None = None,
 ):
     """
     parallelize function with args provided in zipped format

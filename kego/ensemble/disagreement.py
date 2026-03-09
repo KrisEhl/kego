@@ -108,7 +108,7 @@ def print_disagreement_report(
     header = f"{'':>14s}" + "".join(f"{s:>13s}" for s in short)
     print(header)
     print("-" * len(header))
-    for i, name in enumerate(model_names):
+    for i, _name in enumerate(model_names):
         row = f"{short[i]:>14s}"
         for j in range(len(model_names)):
             row += f"{'—':>13s}" if i == j else f"{matrix[i, j]:>13d}"
@@ -118,7 +118,7 @@ def print_disagreement_report(
     print("Higher = more diverse pair (better for ensembling)\n")
     print(header)
     print("-" * len(header))
-    for i, name in enumerate(model_names):
+    for i, _name in enumerate(model_names):
         row = f"{short[i]:>14s}"
         for j in range(len(model_names)):
             row += f"{'—':>13s}" if i == j else f"{sym[i, j]:>13d}"

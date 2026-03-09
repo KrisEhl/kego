@@ -1,5 +1,5 @@
 import pathlib
-from typing import Mapping, Optional, Sequence
+from collections.abc import Mapping, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -15,7 +15,7 @@ except ModuleNotFoundError as e:
         f"{e}\n"
         f"Optional dependencies missing, install via"
         " `poetry install --extras=train`"
-    )
+    ) from e
 
 
 def plot_prediction_certainty(
@@ -33,7 +33,7 @@ def plot_prediction_certainty(
     cmap="viridis",
     figure_size: tuple[float, float] | None = None,
     return_matrix: bool = False,
-    axes: Optional[plt.axes] = None,
+    axes: plt.axes | None = None,
     **kwargs,
 ) -> tuple[plt.Axes, tuple[plt.Axes, np.ndarray]]:
     """
@@ -245,7 +245,7 @@ def plot_roc(
     prediction_probabilities: Sequence,
     filename: str | pathlib.Path | None = None,
     font_size: int = 12,
-    figure_size: Optional[Sequence] = None,
+    figure_size: Sequence | None = None,
     axes: plt.Axes | None = None,
     fig: object | None = None,
     label_x: str | None = "False Positive Rate",
@@ -284,7 +284,7 @@ def plot_roc(
         false_positive_rate,
         true_positive_rate,
         lw=lw,
-        label="ROC curve (area = %.04f)" % roc_auc,
+        label=f"ROC curve (area = {roc_auc:.04f})",
     )
 
     axes.plot([0, 1], [0, 1], color="navy", lw=lw, linestyle="--")

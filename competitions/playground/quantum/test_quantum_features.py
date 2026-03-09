@@ -46,8 +46,6 @@ import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import StratifiedKFold
-from sklearn.preprocessing import StandardScaler
 
 # ── Constants ─────────────────────────────────────────────────────────────
 
@@ -270,8 +268,7 @@ def create_splits(
         f"holdout={len(holdout)}, full_train={len(remaining)}"
     )
     print(
-        f"  quantum_train target dist: "
-        f"{quantum_train[TARGET].value_counts().to_dict()}"
+        f"  quantum_train target dist: {quantum_train[TARGET].value_counts().to_dict()}"
     )
     print(f"  holdout target dist: {holdout[TARGET].value_counts().to_dict()}")
 
@@ -301,12 +298,12 @@ def submit_to_rimay(
 
     total_samples = len(X_train) + len(X_test)
     n_features = X_train.shape[1]
-    assert (
-        total_samples <= MAX_SAMPLES
-    ), f"Total samples {total_samples} exceeds limit {MAX_SAMPLES}"
-    assert (
-        n_features <= MAX_FEATURES
-    ), f"Features {n_features} exceeds limit {MAX_FEATURES}"
+    assert total_samples <= MAX_SAMPLES, (
+        f"Total samples {total_samples} exceeds limit {MAX_SAMPLES}"
+    )
+    assert n_features <= MAX_FEATURES, (
+        f"Features {n_features} exceeds limit {MAX_FEATURES}"
+    )
 
     print(
         f"\nRimay submission: {len(X_train)} train + {len(X_test)} test = "
@@ -761,7 +758,7 @@ def extract_quantum_features_fast(
             results = pool.map(_process_chunk, chunks)
         quantum_features = np.vstack(results)
     else:
-        print(f"    Single-threaded mode")
+        print("    Single-threaded mode")
         quantum_features = np.zeros((n_samples, n_out), dtype=np.float64)
         start = time.time()
         for idx in range(n_samples):
@@ -854,15 +851,15 @@ def train_evaluate_lgb(
     )
     ranked = sorted(importances.items(), key=lambda x: -x[1])
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Holdout AUC: {auc:.5f}")
     print(f"  Features: {X_train.shape[1]}")
     print(f"  Train rows: {X_train.shape[0]}")
-    print(f"  Top 10 features:")
+    print("  Top 10 features:")
     for i, (feat, imp) in enumerate(ranked[:10]):
-        print(f"    {i+1:2d}. {feat:<35s} {imp:>6.0f}")
+        print(f"    {i + 1:2d}. {feat:<35s} {imp:>6.0f}")
 
     return auc
 
@@ -1005,11 +1002,11 @@ def run_evaluation(
         print("\n  [Skipping Exp 4: no full quantum features available]")
 
     # ── Summary ──
-    print(f"\n{'='*60}")
-    print(f"  SUMMARY")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("  SUMMARY")
+    print(f"{'=' * 60}")
     print(f"  {'Experiment':<55s} {'AUC':>8s} {'Delta':>8s}")
-    print(f"  {'-'*55} {'-'*8} {'-'*8}")
+    print(f"  {'-' * 55} {'-' * 8} {'-' * 8}")
 
     baseline = results.get("vanilla_small", 0)
     for key, label in [
@@ -1022,7 +1019,7 @@ def run_evaluation(
         if key in results:
             delta = results[key] - baseline
             marker = " <-- baseline" if key == "vanilla_small" else ""
-            print(f"  {label:<55s} {results[key]:>8.5f} " f"{delta:>+8.5f}{marker}")
+            print(f"  {label:<55s} {results[key]:>8.5f} {delta:>+8.5f}{marker}")
 
     return results
 
@@ -1070,9 +1067,9 @@ def run_ablation(
     cat_features: list[str] | None = None,
 ) -> list[str]:
     """Forward selection: greedily add quantum features that improve AUC."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  ABLATION: {label}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Baseline: classical features only
     baseline_auc = _train_auc_quiet(
@@ -1095,7 +1092,7 @@ def run_ablation(
     print(
         f"\n  {'Step':<6s} {'Added Feature':<20s} {'AUC':>8s} {'Delta':>8s} {'Action':<10s}"
     )
-    print(f"  {'-'*6} {'-'*20} {'-'*8} {'-'*8} {'-'*10}")
+    print(f"  {'-' * 6} {'-' * 20} {'-' * 8} {'-' * 8} {'-' * 10}")
 
     step = 0
     while remaining:
@@ -1157,7 +1154,7 @@ def run_ablation(
         )
 
     # Summary
-    print(f"\n  {'─'*50}")
+    print(f"\n  {'─' * 50}")
     print(f"  Baseline AUC:  {baseline_auc:.5f}")
     print(f"  Final AUC:     {current_auc:.5f} ({current_auc - baseline_auc:+.5f})")
     print(f"  Selected {len(selected)}/{len(qf_names)} quantum features:")
@@ -1273,10 +1270,10 @@ def main():
 
         # Full-data quantum features (~630K train + 300 holdout)
         if args.full_quantum:
-            print(f"\n{'='*60}")
-            print(f"  Generating quantum features for full dataset...")
+            print(f"\n{'=' * 60}")
+            print("  Generating quantum features for full dataset...")
             print(f"  ({len(full_train)} train + {len(holdout)} holdout)")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             # Save/load cache for the expensive full computation
             cache_train = RESULTS_DIR / "quantum_features_full_train.npy"

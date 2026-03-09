@@ -1,6 +1,3 @@
-import typing as t
-from typing import Optional
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -11,12 +8,12 @@ import kego.plotting.utils_plotting
 
 def set_axes_timeseries(
     ax: plt.axes,
-    xlim: t.Optional[list] = None,
-    ylim: t.Optional[list] = None,
+    xlim: list | None = None,
+    ylim: list | None = None,
     fontsize: int = 8,
-    title: t.Optional[str] = None,
-    label_x: t.Optional[str] = None,
-    label_y: t.Optional[str] = None,
+    title: str | None = None,
+    label_x: str | None = None,
+    label_y: str | None = None,
 ):
     """
     Customizes matplotlib axes for timeseries plotting
@@ -49,17 +46,17 @@ def set_axes_timeseries(
 
 
 def plot_timeseries(
-    time: t.Union[np.ndarray, str],
-    y: t.Union[np.ndarray, str],
-    ds: Optional[pd.DataFrame] = None,
-    ax: t.Optional[plt.axes] = None,
-    fig: t.Optional[plt.figure] = None,
-    xlim: t.Optional[list] = None,
-    ylim: t.Optional[list] = None,
-    label_x: t.Optional[str] = None,
-    label_y: t.Optional[str] = None,
+    time: np.ndarray | str,
+    y: np.ndarray | str,
+    ds: pd.DataFrame | None = None,
+    ax: plt.axes | None = None,
+    fig: plt.figure | None = None,
+    xlim: list | None = None,
+    ylim: list | None = None,
+    label_x: str | None = None,
+    label_y: str | None = None,
     sort_by_time: bool = True,
-    label: Optional[str] = None,
+    label: str | None = None,
     **kwargs,
 ):
     """

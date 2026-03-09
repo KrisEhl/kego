@@ -10,32 +10,23 @@ from pathlib import Path
 # which lacks `ray` itself, causing workers to fail. Must be set before `import ray`.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 
-import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 import ray
-import xgboost as xgb
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
-from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score
-from sklearn.model_selection import StratifiedKFold
-from xgboost import XGBClassifier
 
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from kego.datasets.split import build_xy, split_dataset  # noqa: E402
+from kego.datasets.split import split_dataset  # noqa: E402
 from kego.ensemble import compute_ensemble  # noqa: E402
-from kego.ensemble.stacking import l2_stacking  # noqa: E402
-from kego.ensemble.weights import hill_climbing  # noqa: E402
 from kego.models.neural.ft_transformer import (  # noqa: E402
-    FTTransformerModule,
     SkorchFTTransformer,
 )
-from kego.models.neural.noise import GaussianNoise  # noqa: E402
-from kego.models.neural.resnet import ResNetModule, SkorchResNet  # noqa: E402
+from kego.models.neural.resnet import SkorchResNet  # noqa: E402
 from kego.models.wrappers import (  # noqa: E402
     GPUXGBClassifier,
     ScaledLogisticRegression,
@@ -1220,9 +1211,7 @@ def _run_optuna_study(
     # Determine Ray resource options for tuning.
     # XGBoost tuning uses CPU mode (device: "cpu" in search space).
     # Models ending in _cpu always use CPU resources regardless of prefix.
-    if model_name.endswith("_cpu"):
-        resource_opts = {"num_cpus": 8}
-    elif model_name.startswith("xgboost"):
+    if model_name.endswith("_cpu") or model_name.startswith("xgboost"):
         resource_opts = {"num_cpus": 8}
     elif model_name.startswith("catboost"):
         resource_opts = {"num_gpus": 0.5, "num_cpus": 1}
@@ -1232,13 +1221,9 @@ def _run_optuna_study(
             "num_cpus": 1,
             "resources": {"heavy_gpu": 1},
         }
-    elif model_name.startswith(("ft_transformer", "realmlp")):
-        resource_opts = {
-            "num_gpus": 1,
-            "num_cpus": 2,
-            "resources": {"heavy_gpu": 1},
-        }
-    elif any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES):
+    elif model_name.startswith(("ft_transformer", "realmlp")) or any(
+        model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES
+    ):
         resource_opts = {
             "num_gpus": 1,
             "num_cpus": 2,
@@ -1413,11 +1398,11 @@ def _run_optuna_study(
             )
 
     # Print best params
-    logger.info(f"\n{'='*50}")
+    logger.info(f"\n{'=' * 50}")
     logger.info(f"Best trial for {model_name}: #{study.best_trial.number}")
     logger.info(f"  OOF AUC: {study.best_value:.4f}")
     logger.info(f"  Params: {study.best_trial.params}")
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' * 50}")
 
     # Log best trial summary to MLflow
     if mlflow_ready:
@@ -1483,7 +1468,7 @@ def _ensemble_predictions(
     )
 
     # --- Display results ---
-    logger.info(f"\n{'='*50}")
+    logger.info(f"\n{'=' * 50}")
     for m in result.methods:
         extra = ""
         if "weights" in m.metadata:
@@ -1491,7 +1476,7 @@ def _ensemble_predictions(
         if "alpha" in m.metadata:
             extra = f" (alpha={m.metadata['alpha']:.2f})" + extra
         logger.info(f"{tag}{m.name}{extra} — {eval_label} AUC: {m.auc:.4f}")
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' * 50}")
 
     if holdout_labels is None:
         logger.info(f"{tag}(retrain-full: method selection based on OOF AUC)")
@@ -1505,7 +1490,7 @@ def _ensemble_predictions(
         logger.info(f"{tag}Calibration did not improve AUC, using raw predictions")
     else:
         logger.info(f"{tag}Skipping calibration comparison (no holdout for evaluation)")
-    logger.info(f"{'='*50}")
+    logger.info(f"{'=' * 50}")
 
     return result.best_test_preds, result.best_method, result.best_auc, result.all_aucs
 
@@ -1596,19 +1581,11 @@ def _train_ensemble(
                             "num_cpus": 1,
                             "resources": {"heavy_gpu": 1},
                         }
-                    elif model_name.startswith("realmlp"):
-                        opts = {
-                            "num_gpus": 1,
-                            "num_cpus": 2,
-                            "resources": {"heavy_gpu": 1},
-                        }
-                    elif model_name.startswith("ft_transformer"):
-                        opts = {
-                            "num_gpus": 1,
-                            "num_cpus": 2,
-                            "resources": {"heavy_gpu": 1},
-                        }
-                    elif is_neural:
+                    elif (
+                        model_name.startswith("realmlp")
+                        or model_name.startswith("ft_transformer")
+                        or is_neural
+                    ):
                         opts = {
                             "num_gpus": 1,
                             "num_cpus": 2,
@@ -1743,8 +1720,7 @@ def _train_ensemble(
                 holdout_labels, (all_holdout_preds[lid] >= 0.5).astype(int)
             )
             logger.info(
-                f"{lid} (avg {n} seeds) — "
-                f"Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
+                f"{lid} (avg {n} seeds) — Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
             )
         else:
             oof_auc = roc_auc_score(train_labels, all_oof_preds[lid])
@@ -1967,9 +1943,7 @@ def main():
         sample_submission = sample_submission.head(500).reset_index(drop=True)
         logger.info(f"DEBUG MODE: train={len(train_full)}, test={len(test)}")
 
-    logger.info(
-        f"Combined train: {len(train_full)} rows " f"(+{len(original)} original)"
-    )
+    logger.info(f"Combined train: {len(train_full)} rows (+{len(original)} original)")
 
     # Split into train (80%) and holdout (20%)
     train, holdout, _ = split_dataset(
@@ -2056,7 +2030,11 @@ def main():
         else (
             "fast"
             if args.fast
-            else "fast-full" if args.fast_full else "neural" if args.neural else "full"
+            else "fast-full"
+            if args.fast_full
+            else "neural"
+            if args.neural
+            else "full"
         )
     )
     tag = args.tag or mode_name
@@ -2232,14 +2210,15 @@ def main():
     # --- Kaggle submit + poll + log LB score ---
     if args.submit:
         import csv
-        import io
         import time
 
         competition = "playground-series-s6e2"
         message = (
             args.from_ensemble
             if args.from_ensemble
-            else "_".join(args.from_experiment) if args.from_experiment else tag
+            else "_".join(args.from_experiment)
+            if args.from_experiment
+            else tag
         )
 
         logger.info(f"Submitting to Kaggle competition: {competition}")

@@ -11,7 +11,7 @@ PATH_COMPETITION = pathlib.Path("../../data/nfl/nfl-big-data-bowl-2026-predictio
 PATH_TRAIN = PATH_COMPETITION / "train"
 PATH_TEST = PATH_COMPETITION / "test.csv"
 print(f"{os.listdir(PATH_COMPETITION)}")
-print(f"{os.listdir(PATH_COMPETITION/"train")}")
+print(f"{os.listdir(PATH_COMPETITION / 'train')}")
 
 filename_suffix = "_2023_w09.csv"
 input = pl.read_csv(PATH_TRAIN / f"input{filename_suffix}")

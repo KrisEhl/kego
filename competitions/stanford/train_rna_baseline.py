@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 import torch
@@ -74,11 +73,11 @@ def train_rna_model(
 
         # Compute average epoch loss
         avg_epoch_loss = epoch_loss / num_batches
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_epoch_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_epoch_loss:.4f}")
 
         # Save checkpoint every 10 epochs
         if (epoch + 1) % 10 == 0:
-            checkpoint_path = model_save_dir / f"rna_model_epoch_{epoch+1}.pt"
+            checkpoint_path = model_save_dir / f"rna_model_epoch_{epoch + 1}.pt"
             torch.save(
                 {
                     "epoch": epoch,

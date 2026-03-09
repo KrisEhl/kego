@@ -1,7 +1,7 @@
 import logging
+from collections.abc import Callable
 from functools import wraps
 from time import time
-from typing import Callable
 
 
 def timing(f: Callable):
@@ -14,7 +14,7 @@ def timing(f: Callable):
         ts = time()
         result = f(*args, **kw)
         te = time()
-        logging.info(f"func:{f.__name__} args:[{kw}] took: {te-ts} sec")
+        logging.info(f"func:{f.__name__} args:[{kw}] took: {te - ts} sec")
         return result
 
     return wrap

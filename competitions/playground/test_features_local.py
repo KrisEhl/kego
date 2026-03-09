@@ -202,16 +202,16 @@ def evaluate_lgb(train_df, name, te_features=None):
     mean_auc = np.mean(aucs)
     std_auc = np.std(aucs)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  5-Fold CV AUC: {mean_auc:.5f} (+/- {std_auc:.5f})")
     n_feats = len(importances_dict) if importances_dict else len(features)
     print(f"  Features: {n_feats}")
-    print(f"\n  Top 15 features by importance:")
+    print("\n  Top 15 features by importance:")
     ranked = sorted(importances_dict.items(), key=lambda x: -x[1])
     for i, (feat, imp) in enumerate(ranked[:15]):
-        print(f"    {i+1:2d}. {feat:<30s} {imp:>8.0f}")
+        print(f"    {i + 1:2d}. {feat:<30s} {imp:>8.0f}")
 
     return mean_auc
 
@@ -262,9 +262,9 @@ def main():
     )
 
     # ── LightGBM ──
-    print(f"\n{'='*60}")
-    print(f"  LightGBM COMPARISON")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("  LightGBM COMPARISON")
+    print(f"{'=' * 60}")
 
     lgb_raw = evaluate_lgb(combined, "LGB: Raw features")
     lgb_old = evaluate_lgb(engineer_old(combined), "LGB: Old FE")
@@ -275,7 +275,7 @@ def main():
         engineer_new(combined), "LGB: New FE + Target Encoding", te_features=TE_FEATURES
     )
 
-    print(f"\n  LightGBM Summary:")
+    print("\n  LightGBM Summary:")
     for label, auc in sorted(
         [
             ("Raw", lgb_raw),
@@ -288,9 +288,9 @@ def main():
         print(f"    {label:<20s} AUC={auc:.5f}  ({auc - lgb_raw:+.5f})")
 
     # ── LogReg ──
-    print(f"\n{'='*60}")
-    print(f"  LogisticRegression COMPARISON")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("  LogisticRegression COMPARISON")
+    print(f"{'=' * 60}")
 
     lr_raw = evaluate_logreg(combined, "LR: Raw features")
     lr_old = evaluate_logreg(engineer_old(combined), "LR: Old FE")
@@ -305,7 +305,7 @@ def main():
         drop_original=True,
     )
 
-    print(f"\n  LogReg Summary:")
+    print("\n  LogReg Summary:")
     for label, auc in sorted(
         [
             ("Raw", lr_raw),
@@ -319,9 +319,9 @@ def main():
         print(f"    {label:<20s} AUC={auc:.5f}  ({auc - lr_raw:+.5f})")
 
     # ── Overall ──
-    print(f"\n{'='*60}")
-    print(f"  OVERALL SUMMARY")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("  OVERALL SUMMARY")
+    print(f"{'=' * 60}")
     print(
         f"  {'Model':<12s} {'Raw':>10s} {'Old FE':>10s} {'New FE':>10s} {'TE+keep':>10s} {'TE+drop':>10s}"
     )

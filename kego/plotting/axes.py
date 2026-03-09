@@ -1,25 +1,22 @@
-import typing as t
 from collections.abc import Sequence
-from typing import Optional
 
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib import pyplot as plt
 
 import kego.constants
 
 
 def set_axes(
     ax: plt.axes,
-    xlim: t.Optional[list] = None,
-    ylim: t.Optional[list] = None,
+    xlim: list | None = None,
+    ylim: list | None = None,
     fontsize: int = 8,
-    title: t.Optional[str] = None,
-    label_x: t.Optional[str] = None,
-    label_y: t.Optional[str] = None,
-    labelrotation_x: t.Optional[float] = None,
-    labelrotation_y: t.Optional[float] = None,
+    title: str | None = None,
+    label_x: str | None = None,
+    label_y: str | None = None,
+    labelrotation_x: float | None = None,
+    labelrotation_y: float | None = None,
 ):
     """
     Customizes matplotlib axes object
@@ -108,8 +105,7 @@ def set_x_log(
     if log == "symlog":
         if axis_symlog_linear_threshold is None:
             raise ValueError(
-                f"If log=='symlog', setting "
-                f"{axis_symlog_linear_threshold=} required!"
+                f"If log=='symlog', setting {axis_symlog_linear_threshold=} required!"
             )
         axes.set_xscale("symlog", linthresh=axis_symlog_linear_threshold)
     elif log == "log":
@@ -141,8 +137,7 @@ def set_y_log(
     if log == "symlog":
         if axis_symlog_linear_threshold is None:
             raise ValueError(
-                "If log=='symlog', "
-                f"setting: {axis_symlog_linear_threshold=} required!"
+                f"If log=='symlog', setting: {axis_symlog_linear_threshold=} required!"
             )
         axes.set_yscale("symlog", linthresh=axis_symlog_linear_threshold)
     elif log == "log":
@@ -242,7 +237,7 @@ def _plot_colorbar(
 
 def plot_colorbar(
     plot: matplotlib.cm.ScalarMappable,
-    cax: Optional[kego.constants.TYPE_MATPLOTLIB_AXES] = None,
+    cax: kego.constants.TYPE_MATPLOTLIB_AXES | None = None,
     label: str | None = None,
     font_size: float = kego.constants.DEFAULT_FONTSIZE_SMALL,
 ) -> kego.constants.TYPE_MATPLOTLIB_COLORBAR:

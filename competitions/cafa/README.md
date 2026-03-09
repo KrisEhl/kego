@@ -10,7 +10,7 @@ In total there are three different testsets, one for each subontoloy.
 Weighted f1 where rare terms are weighted more highly.
 
 ## Submission file
-Protein id, GO terms and probability for term tab-seperated (!), e.g.
+Protein id, GO terms and probability for term tab-separated (!), e.g.
 ```
 P9WHI7   GO:0009274   0.931
 P9WHI7   GO:0071944   0.540
@@ -22,7 +22,7 @@ P04637   GO:0001091   0.49
 ```
 
 ### Optional Textual predictions
-Predict functionality of proteins in textual form. Will be evaluated seperately.
+Predict functionality of proteins in textual form. Will be evaluated separately.
 
 ## Background
 
@@ -58,7 +58,7 @@ VFCNKASIRIPWTKLKTHPICLSLDKVIMEMSTCEEPRSPNGPSPIATASGQSEYGFAEK
 
 #### Labels
 Labels for training sequences are contained in `train_terms.tsv`.
-Columns are `<UniProt><GO term ID><ontology>` (tab seperated).
+Columns are `<UniProt><GO term ID><ontology>` (tab separated).
 
 #### Taxonomy
 Taxonomy specifically list of proteins and the species they belong to (specifically their taxonomic identifier).

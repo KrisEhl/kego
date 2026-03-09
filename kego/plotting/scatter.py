@@ -1,6 +1,5 @@
 import numpy as np
 
-import kego.constants
 from kego.plotting.figures import create_figure_axes
 
 

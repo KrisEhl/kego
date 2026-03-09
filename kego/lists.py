@@ -1,4 +1,4 @@
-from typing import Iterable, overload
+from collections.abc import Iterable
 
 import numpy as np
 

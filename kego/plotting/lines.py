@@ -1,12 +1,11 @@
 import itertools
-import logging
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
 import kego.plotting.axes
 import kego.plotting.utils_plotting
-from kego.lists import is_listlike, to_nlength_tuple
+from kego.lists import to_nlength_tuple
 from kego.plotting.figures import (
     create_axes_grid,
     create_figure_axes,

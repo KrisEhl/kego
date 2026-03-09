@@ -1,5 +1,3 @@
-import json
-
 import arckit
 import drawsvg
 import numpy as np

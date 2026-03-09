@@ -9,11 +9,16 @@ Typical usage::
     import lightgbm as lgb
     from kego.features.selection import drop_one_ablation, forward_selection
 
+
     def lgbm_factory(seed):
         return lgb.LGBMClassifier(n_estimators=500, random_state=seed, verbosity=-1)
 
+
     results = drop_one_ablation(
-        X_train, y_train, X_holdout, y_holdout,
+        X_train,
+        y_train,
+        X_holdout,
+        y_holdout,
         features=feature_list,
         seeds=[42, 123, 777],
         model_factory=lgbm_factory,
@@ -261,7 +266,7 @@ def greedy_add_one_screening(
 
     results = []
     for i, feat in enumerate(candidate_features):
-        augmented = baseline_features + [feat]
+        augmented = [*baseline_features, feat]
         auc = eval_multiseed(
             X_train,
             y_train,

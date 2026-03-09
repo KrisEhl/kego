@@ -2,8 +2,6 @@ import os
 
 import numpy as np
 
-from kego.constants import TYPE_FILEPATHS
-
 
 def list_files(
     path,
@@ -13,7 +11,7 @@ def list_files(
 ):
     path = path.__str__()
     c = path.count(os.sep)
-    for root, dirs, files in os.walk(path):
+    for root, _dirs, files in os.walk(path):
         for name in files:
             result = os.path.join(root, name)
             if root.count(os.sep) - c - 1 <= level_max and (

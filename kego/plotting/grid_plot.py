@@ -3,7 +3,6 @@ from typing import Literal
 import numpy as np
 
 from kego.constants import DEFAULT_COLORMAP
-from kego.lists import to_nlength_tuple
 from kego.plotting.axes import set_axes
 from kego.plotting.colormesh import _plot_colormesh
 from kego.plotting.figures import create_axes_grid
@@ -34,7 +33,7 @@ def plot_grid_plot(
     n_plots = len(data_as_dict.items())
     n_columns = nx_max if n_plots >= nx_max else n_plots
     n_rows = int(np.ceil(n_plots / nx_max))
-    figure, axes_grid, axes_colorbar = create_axes_grid(
+    figure, axes_grid, _axes_colorbar = create_axes_grid(
         n_columns=n_columns, n_rows=n_rows
     )
 

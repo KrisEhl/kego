@@ -83,7 +83,9 @@ for col in CAT_FEATURES:
     print(
         f"  {'Value':>6s}  {'Count':>8s}  {'%':>7s}  {'Target%':>8s}  {'Test%':>7s}  {'Orig%':>7s}  Notes"
     )
-    print(f"  {'-'*6}  {'-'*8}  {'-'*7}  {'-'*8}  {'-'*7}  {'-'*7}  {'-'*20}")
+    print(
+        f"  {'-' * 6}  {'-' * 8}  {'-' * 7}  {'-' * 8}  {'-' * 7}  {'-' * 7}  {'-' * 20}"
+    )
 
     train_total = len(train)
     test_total = len(test)
@@ -117,7 +119,7 @@ for col in CAT_FEATURES:
     is_monotonic_inc = all(a <= b for a, b in zip(target_rates, target_rates[1:]))
     is_monotonic_dec = all(a >= b for a, b in zip(target_rates, target_rates[1:]))
     if not is_monotonic_inc and not is_monotonic_dec and len(vals) > 2:
-        print(f"  ** NON-MONOTONIC target rate: NOT truly ordinal!")
+        print("  ** NON-MONOTONIC target rate: NOT truly ordinal!")
         print(
             f"     Target rates by value: {dict(zip(vals, [f'{r:.3f}' for r in target_rates]))}"
         )
@@ -141,10 +143,10 @@ for col in CONT_FEATURES:
     print(f"  Range:          [{train[col].min():.1f}, {train[col].max():.1f}]")
     print(f"  IQR:            [{q1:.1f}, {q3:.1f}], IQR={iqr:.1f}")
     print(
-        f"  Mild outliers:  {len(mild)} ({len(mild)/len(train)*100:.2f}%)  bounds=[{lower:.1f}, {upper:.1f}]"
+        f"  Mild outliers:  {len(mild)} ({len(mild) / len(train) * 100:.2f}%)  bounds=[{lower:.1f}, {upper:.1f}]"
     )
     print(
-        f"  Extreme:        {len(extreme)} ({len(extreme)/len(train)*100:.2f}%)  bounds=[{extreme_lower:.1f}, {extreme_upper:.1f}]"
+        f"  Extreme:        {len(extreme)} ({len(extreme) / len(train) * 100:.2f}%)  bounds=[{extreme_lower:.1f}, {extreme_upper:.1f}]"
     )
 
     # Target rate in outliers vs non-outliers
@@ -159,7 +161,7 @@ for col in CONT_FEATURES:
     n_zero = (train[col] == 0).sum()
     if n_zero > 0 and col not in ("ST depression",):
         print(
-            f"  ** Zero values: {n_zero} ({n_zero/len(train)*100:.2f}%) — possible missing data"
+            f"  ** Zero values: {n_zero} ({n_zero / len(train) * 100:.2f}%) — possible missing data"
         )
         if col in original.columns:
             orig_zero = (original[col] == 0).sum()
@@ -234,7 +236,9 @@ dup_mask = train.duplicated(subset=feature_cols, keep=False)
 n_dup_rows = dup_mask.sum()
 n_dup_groups = train[dup_mask].groupby(feature_cols).ngroups
 
-print(f"  Rows involved in duplicates: {n_dup_rows} ({n_dup_rows/len(train)*100:.2f}%)")
+print(
+    f"  Rows involved in duplicates: {n_dup_rows} ({n_dup_rows / len(train) * 100:.2f}%)"
+)
 print(f"  Unique duplicate groups: {n_dup_groups}")
 
 # Check target consistency in duplicates
@@ -243,10 +247,10 @@ if n_dup_rows > 0:
     inconsistent = dup_groups.apply(lambda g: g.nunique() > 1)
     n_inconsistent = inconsistent.sum()
     print(
-        f"  Groups with INCONSISTENT targets: {n_inconsistent} ({n_inconsistent/max(n_dup_groups,1)*100:.1f}%)"
+        f"  Groups with INCONSISTENT targets: {n_inconsistent} ({n_inconsistent / max(n_dup_groups, 1) * 100:.1f}%)"
     )
     if n_inconsistent > 0:
-        print(f"  ** Same features, different labels — noisy labels!")
+        print("  ** Same features, different labels — noisy labels!")
 
     # Size distribution of duplicate groups
     group_sizes = dup_groups.size()
@@ -732,13 +736,13 @@ n_correct = train["correct"].sum()
 n_wrong = len(train) - n_correct
 n_fp = (train["error_type"] == "FP").sum()
 n_fn = (train["error_type"] == "FN").sum()
-print(f"  Correct: {n_correct} ({n_correct/len(train)*100:.2f}%)")
-print(f"  Wrong:   {n_wrong} ({n_wrong/len(train)*100:.2f}%)  FP={n_fp}  FN={n_fn}")
+print(f"  Correct: {n_correct} ({n_correct / len(train) * 100:.2f}%)")
+print(f"  Wrong:   {n_wrong} ({n_wrong / len(train) * 100:.2f}%)  FP={n_fp}  FN={n_fn}")
 
 # Confident mistakes (prob > 0.8 wrong direction)
 confident_wrong = train[(train["correct"] == 0) & (train["confidence"] > 0.3)]
 print(
-    f"  Confidently wrong (|prob-0.5|>0.3): {len(confident_wrong)} ({len(confident_wrong)/len(train)*100:.3f}%)"
+    f"  Confidently wrong (|prob-0.5|>0.3): {len(confident_wrong)} ({len(confident_wrong) / len(train) * 100:.3f}%)"
 )
 
 # --- Per-feature: misclassification rate in outlier vs non-outlier regions ---
@@ -761,9 +765,9 @@ for col in CONT_FEATURES:
     fp_normal = (train.loc[~is_outlier, "error_type"] == "FP").mean()
     fn_normal = (train.loc[~is_outlier, "error_type"] == "FN").mean()
 
-    print(f"\n  --- {col} ({n_out} outliers, {n_out/len(train)*100:.2f}%) ---")
+    print(f"\n  --- {col} ({n_out} outliers, {n_out / len(train) * 100:.2f}%) ---")
     print(
-        f"  Error rate:  outlier={err_outlier:.4f}  normal={err_normal:.4f}  (ratio={err_outlier/max(err_normal,1e-9):.2f}x)"
+        f"  Error rate:  outlier={err_outlier:.4f}  normal={err_normal:.4f}  (ratio={err_outlier / max(err_normal, 1e-9):.2f}x)"
     )
     print(f"  FP rate:     outlier={fp_outlier:.4f}  normal={fp_normal:.4f}")
     print(f"  FN rate:     outlier={fn_outlier:.4f}  normal={fn_normal:.4f}")
@@ -777,7 +781,9 @@ for col in CAT_FEATURES:
     print(
         f"  {'Value':>6s}  {'Count':>8s}  {'ErrRate':>8s}  {'FP%':>7s}  {'FN%':>7s}  {'ConfWrong':>10s}  Notes"
     )
-    print(f"  {'-'*6}  {'-'*8}  {'-'*8}  {'-'*7}  {'-'*7}  {'-'*10}  {'-'*20}")
+    print(
+        f"  {'-' * 6}  {'-' * 8}  {'-' * 8}  {'-' * 7}  {'-' * 7}  {'-' * 10}  {'-' * 20}"
+    )
 
     overall_err = 1 - train["correct"].mean()
     for v in vals:
@@ -791,7 +797,7 @@ for col in CAT_FEATURES:
 
         notes = []
         if err_rate > overall_err * 1.5:
-            notes.append(f"HIGH ERR ({err_rate/overall_err:.1f}x avg)")
+            notes.append(f"HIGH ERR ({err_rate / overall_err:.1f}x avg)")
         if n < len(train) * 0.01:
             notes.append("RARE")
 
@@ -847,7 +853,7 @@ for col in CONT_FEATURES:
     )
     for interval, row in grouped.iterrows():
         print(
-            f"  {str(interval):<25s}  {int(row['count']):>7d}  "  # type: ignore[index]
+            f"  {interval!s:<25s}  {int(row['count']):>7d}  "  # type: ignore[index]
             f"{row['target_rate']:>7.4f}  {row['error_rate']:>6.4f}  {int(row['conf_wrong']):>10d}"  # type: ignore[index]
         )
 

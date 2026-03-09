@@ -114,7 +114,7 @@ def greedy_forward_selection(
         candidate_results = []
 
         for candidate in sorted(available):
-            members = ensemble + [candidate]
+            members = [*ensemble, candidate]
             oof_matrix = np.column_stack([all_oof[m] for m in members])
             holdout_matrix = np.column_stack([all_holdout[m] for m in members])
 
@@ -160,7 +160,7 @@ def greedy_forward_selection(
                 )
             )
         else:
-            for candidate, auc, delta, corr, strat in candidate_results:
+            for candidate, _auc, delta, corr, strat in candidate_results:
                 rejected_rows.append((candidate, delta, corr, strat))
             break
 
@@ -252,10 +252,11 @@ def print_forward_selection(
 
     if rejected_rows:
         print("-" * w)
+        dash = "\u2014"
         for name, delta, corr, strat in rejected_rows:
             corr_str = f"{corr:.3f}" if corr is not None else "\u2014"
             print(
-                f"{'x':<6}{name:<30}{strat:>10}{'\u2014':>14}"
+                f"{'x':<6}{name:<30}{strat:>10}{dash:>14}"
                 f"{delta:>+11.5f}{corr_str:>12}{'(rejected)':>12}"
             )
 
@@ -289,8 +290,7 @@ def print_leave_one_out(
 
     for name, reduced_auc, delta, corr, verdict in rows:
         print(
-            f"{name:<35}{reduced_auc:>13.5f}{delta:>+11.5f}"
-            f"{corr:>12.3f}{verdict:>10}"
+            f"{name:<35}{reduced_auc:>13.5f}{delta:>+11.5f}{corr:>12.3f}{verdict:>10}"
         )
 
     print(f"{'=' * 90}")

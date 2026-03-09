@@ -767,9 +767,9 @@ def main() -> None:
     # ===================================================================
     # Step 1: Baselines (multi-seed)
     # ===================================================================
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("STEP 1: BASELINES")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     # 1a. Raw only (13 features) — use native cats
     raw_in_xtr = [f for f in RAW_FEATURES if f in X_tr.columns]
@@ -842,12 +842,12 @@ def main() -> None:
     baseline_set = set(abl_pruned_in_xtr)
     candidates = [f for f in all_features if f not in baseline_set]
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(
         f"STEP 2: ADD-ONE SCREENING ({len(candidates)} candidates, "
         f"baseline={len(abl_pruned_in_xtr)} features)"
     )
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"Baseline AUC: {auc_abl_ref:.5f}")
 
     screening_results = []
@@ -862,9 +862,9 @@ def main() -> None:
         elapsed = time.perf_counter() - t0
         eta = elapsed / (i + 1) * (len(candidates) - i - 1)
         print(
-            f"  [{i+1}/{len(candidates)}] +{feat:<35} "
+            f"  [{i + 1}/{len(candidates)}] +{feat:<35} "
             f"AUC={auc_with:.5f} (delta={delta:+.5f}) "
-            f"[ETA: {eta/60:.1f}min]"
+            f"[ETA: {eta / 60:.1f}min]"
         )
         if (i + 1) % 20 == 0:
             gc.collect()
@@ -876,10 +876,7 @@ def main() -> None:
     helpful_candidates = []
     for feat, auc_with, delta in screening_results:
         marker = "+" if delta > 0 else ""
-        print(
-            f"{feat:<45} {auc_with:>10.5f} {delta:>+10.5f} "
-            f"{_source_label(feat):>10}"
-        )
+        print(f"{feat:<45} {auc_with:>10.5f} {delta:>+10.5f} {_source_label(feat):>10}")
         if delta > 0:
             helpful_candidates.append((feat, delta))
 
@@ -896,18 +893,17 @@ def main() -> None:
     # Start from baseline. Add candidates sorted by Step 2 delta.
     # Keep each candidate only if it improves the running AUC.
     if not helpful_candidates:
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print("STEP 3: GREEDY FORWARD SELECTION — SKIPPED (no helpful candidates)")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         forward_selected = list(abl_pruned_in_xtr)
         auc_forward = auc_abl_ref
     else:
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(
-            f"STEP 3: GREEDY FORWARD SELECTION "
-            f"({len(helpful_candidates)} candidates)"
+            f"STEP 3: GREEDY FORWARD SELECTION ({len(helpful_candidates)} candidates)"
         )
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
         current_features = list(abl_pruned_in_xtr)
         current_auc = auc_abl_ref
@@ -929,15 +925,15 @@ def main() -> None:
                 current_auc = auc_with
                 added_features.append((feat, auc_with, delta))
                 print(
-                    f"  [{i+1}/{len(helpful_candidates)}] +{feat:<35} "
+                    f"  [{i + 1}/{len(helpful_candidates)}] +{feat:<35} "
                     f"AUC={auc_with:.5f} (delta={delta:+.5f}) KEPT "
-                    f"[ETA: {eta/60:.1f}min]"
+                    f"[ETA: {eta / 60:.1f}min]"
                 )
             else:
                 print(
-                    f"  [{i+1}/{len(helpful_candidates)}] +{feat:<35} "
+                    f"  [{i + 1}/{len(helpful_candidates)}] +{feat:<35} "
                     f"AUC={auc_with:.5f} (delta={delta:+.5f}) skipped "
-                    f"[ETA: {eta/60:.1f}min]"
+                    f"[ETA: {eta / 60:.1f}min]"
                 )
             if (i + 1) % 20 == 0:
                 gc.collect()
@@ -964,9 +960,9 @@ def main() -> None:
     # final combined set. Drop any that became redundant.
     added_only = [f for f in forward_selected if f not in baseline_set]
     if added_only:
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"STEP 4: DROP-ONE VALIDATION ({len(added_only)} added features)")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         print(f"Forward-selected AUC: {auc_forward:.5f}")
 
         drop_results = []
@@ -981,9 +977,9 @@ def main() -> None:
             elapsed = time.perf_counter() - t0
             eta = elapsed / (i + 1) * (len(added_only) - i - 1)
             print(
-                f"  [{i+1}/{len(added_only)}] -{feat:<35} "
+                f"  [{i + 1}/{len(added_only)}] -{feat:<35} "
                 f"AUC={auc_without:.5f} (delta={delta:+.5f}) "
-                f"[ETA: {eta/60:.1f}min]"
+                f"[ETA: {eta / 60:.1f}min]"
             )
 
         # Drop features whose removal improves AUC
@@ -1005,9 +1001,9 @@ def main() -> None:
     # ===================================================================
     # Step 5: Final comparison
     # ===================================================================
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("STEP 5: FINAL COMPARISON")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     results = [
         (f"Raw only ({len(raw_in_xtr)})", auc_raw),

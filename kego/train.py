@@ -1,9 +1,8 @@
 import logging
-from typing import Literal
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +34,18 @@ def train_model_split(
     holdout: pd.DataFrame,
     features: list[str],
     target: str,
-    kwargs_model: dict = {},
-    kwargs_fit: dict = {},
+    kwargs_model: dict | None = None,
+    kwargs_fit: dict | None = None,
     folds_n=10,
     use_probability: bool = True,
     use_eval_set: bool = True,
     kfold_seed: int = 42,
     fold_preprocess=None,
 ):
+    if kwargs_model is None:
+        kwargs_model = {}
+    if kwargs_fit is None:
+        kwargs_fit = {}
     kf = StratifiedKFold(n_splits=folds_n, shuffle=True, random_state=kfold_seed)
 
     oof_xgb = np.zeros(len(train))
@@ -50,9 +53,8 @@ def train_model_split(
     holdout_xgb = np.zeros(len(holdout))
     model_trained = None
     for i, (train_index, test_index) in enumerate(kf.split(train, train[target])):
-
         logger.info("#" * 25)
-        logger.info(f"### Fold {i+1}")
+        logger.info(f"### Fold {i + 1}")
         logger.info("#" * 25)
         x_train = train.loc[train_index, features].copy()
         y_train = train.loc[train_index, target]
@@ -75,7 +77,10 @@ def train_model_split(
             model_trained.fit(x_train, y_train, **kwargs_fit)
 
         if use_probability:
-            predict = lambda x: model_trained.predict_proba(x)[:, 1]
+
+            def predict(x, _model=model_trained):
+                return _model.predict_proba(x)[:, 1]
+
         else:
             predict = model_trained.predict
 
