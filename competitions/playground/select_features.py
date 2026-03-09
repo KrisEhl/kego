@@ -15,6 +15,7 @@ import os
 import sys
 from pathlib import Path
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
@@ -175,8 +176,6 @@ LGBM_PARAMS = {
 
 def _train_lgbm(X_train, y_train, X_holdout, y_holdout, features, cat_feats=None):
     """Train LightGBM and return holdout AUC."""
-    import lightgbm as lgb
-
     model = LGBMClassifier(**LGBM_PARAMS)
     fit_cat = [c for c in (cat_feats or CAT_FEATURES) if c in features]
     model.fit(
@@ -193,8 +192,6 @@ def _train_lgbm(X_train, y_train, X_holdout, y_holdout, features, cat_feats=None
 
 def _eval_lgbm_multiseed(X_train, y_train, X_holdout, y_holdout, features, seeds):
     """Train LightGBM once per seed and return mean holdout AUC."""
-    import lightgbm as lgb
-
     fit_cat = [c for c in CAT_FEATURES if c in features]
     aucs = []
     for seed in seeds:

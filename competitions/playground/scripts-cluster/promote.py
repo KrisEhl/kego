@@ -27,6 +27,7 @@ import os
 import sys
 
 import mlflow
+import pandas as pd
 
 TAG_PREFIX = "ensemble"
 
@@ -66,8 +67,6 @@ def _collect_and_filter(args):
     if args.all:
         runs_df = mlflow.search_runs(search_all_experiments=True)
     else:
-        import pandas as pd
-
         all_runs = []
         for exp_name in args.experiment:
             exp = mlflow.get_experiment_by_name(exp_name)

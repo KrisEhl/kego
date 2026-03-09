@@ -20,15 +20,20 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
+from sklearn.preprocessing import QuantileTransformer  # noqa: E402
+from skorch.callbacks import EarlyStopping  # noqa: E402
 from train_s6e2_baseline import (  # noqa: E402
     CAT_FEATURES,
     DATA_DIR,
     TARGET,
     TE_FEATURES,
+    FTTransformerModule,
+    ResNetModule,
     ScaledRealMLP,
     SkorchFTTransformer,
     SkorchResNet,
@@ -41,6 +46,7 @@ from train_s6e2_baseline import (  # noqa: E402
 from kego.datasets.split import split_dataset  # noqa: E402
 from kego.gpu.benchmark import EpochTimer, log_benchmark_to_mlflow  # noqa: E402
 from kego.gpu.monitor import GPUMonitor  # noqa: E402
+from kego.models.neural.amp import AMPNeuralNetBinaryClassifier  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -164,14 +170,6 @@ def _benchmark_skorch(model, model_name, train, holdout, features, profile):
     torch.manual_seed(model.random_state)
 
     if model_name == "resnet":
-        import torch.nn as nn
-        from sklearn.preprocessing import QuantileTransformer
-        from skorch.callbacks import EarlyStopping
-        from train_s6e2_baseline import (
-            AMPNeuralNetBinaryClassifier,
-            ResNetModule,
-        )
-
         scaler = QuantileTransformer(
             output_distribution="normal", random_state=model.random_state
         )
@@ -210,13 +208,6 @@ def _benchmark_skorch(model, model_name, train, holdout, features, profile):
         X_fit, y_fit = X_np, y_train
 
     elif model_name == "ft_transformer":
-        import torch.nn as nn
-        from skorch.callbacks import EarlyStopping
-        from train_s6e2_baseline import (
-            AMPNeuralNetBinaryClassifier,
-            FTTransformerModule,
-        )
-
         X_prep = model._prepare(train[feat], fit=True)
         n_cont = len(model.cont_cols) if model.cont_cols else X_prep.shape[1]
 
