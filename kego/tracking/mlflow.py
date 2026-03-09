@@ -104,8 +104,16 @@ def get_completed_fingerprints(experiment_name, tracking_uri):
     return fingerprints, runs[has_fp]
 
 
-def load_predictions_from_mlflow(experiment_names, tracking_uri):
-    """Load per-model averaged predictions from MLflow experiments."""
+def load_predictions_from_mlflow(
+    experiment_names, tracking_uri, folds: int | None = None
+):
+    """Load per-model averaged predictions from MLflow experiments.
+
+    Args:
+        experiment_names: List of MLflow experiment names to load from.
+        tracking_uri: MLflow tracking URI.
+        folds: If set, only include runs where params.folds_n matches this value.
+    """
     import mlflow
 
     mlflow.set_tracking_uri(tracking_uri)
@@ -120,6 +128,16 @@ def load_predictions_from_mlflow(experiment_names, tracking_uri):
         runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
         # Filter out ensemble runs (NOT LIKE not supported by MLflow API)
         runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
+
+        if folds is not None:
+            folds_col = "params.folds_n"
+            if folds_col in runs.columns:
+                runs = runs[runs[folds_col] == str(folds)]
+            else:
+                logger.warning(
+                    f"Column '{folds_col}' not found in '{exp_name}', skipping folds filter"
+                )
+
         logger.info(f"Experiment '{exp_name}': {len(runs)} model runs")
         all_runs.append(runs)
 

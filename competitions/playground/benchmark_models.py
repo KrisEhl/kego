@@ -13,15 +13,12 @@ Usage:
 import argparse
 import logging
 import os
-import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import skorch
 import torch
 
 project_root = Path(__file__).resolve().parents[2]
@@ -42,6 +39,8 @@ from train_s6e2_baseline import (  # noqa: E402
 )
 
 from kego.datasets.split import split_dataset  # noqa: E402
+from kego.gpu.benchmark import EpochTimer, log_benchmark_to_mlflow  # noqa: E402
+from kego.gpu.monitor import GPUMonitor  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -124,116 +123,6 @@ def _build_model(model_name, models_config, batch_size, num_workers, epochs, com
         return model
     else:
         raise ValueError(f"Unknown model: {model_name}")
-
-
-class EpochTimer(skorch.callbacks.Callback):
-    """Skorch callback that records per-epoch wall time."""
-
-    def __init__(self):
-        self.epoch_times = []
-        self._epoch_start = None
-
-    def on_epoch_begin(self, net, **kwargs):
-        self._epoch_start = time.time()
-
-    def on_epoch_end(self, net, **kwargs):
-        if self._epoch_start is not None:
-            self.epoch_times.append(time.time() - self._epoch_start)
-
-
-def _resolve_smi_index(cuda_index=0):
-    """Map PyTorch CUDA device index to nvidia-smi device index via UUID."""
-    if not torch.cuda.is_available():
-        return cuda_index
-    try:
-        # Get UUID from PyTorch (format: bytes, no "GPU-" prefix)
-        props = torch.cuda.get_device_properties(cuda_index)
-        cuda_uuid = str(props.uuid) if hasattr(props, "uuid") else None
-        if cuda_uuid is None:
-            return cuda_index
-
-        # Query nvidia-smi for index,uuid mapping
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode != 0:
-            return cuda_index
-
-        for line in result.stdout.strip().split("\n"):
-            parts = line.split(",")
-            smi_idx = int(parts[0].strip())
-            smi_uuid = parts[1].strip()
-            # PyTorch uuid may or may not have "GPU-" prefix
-            if cuda_uuid in smi_uuid or smi_uuid in cuda_uuid:
-                return smi_idx
-    except Exception:
-        pass
-    return cuda_index
-
-
-class GPUMonitor:
-    """Sample GPU utilization via nvidia-smi in a background thread."""
-
-    def __init__(self, device_index=0, interval=1.0):
-        self.device_index = _resolve_smi_index(device_index)
-        self.interval = interval
-        self.samples = []
-        self.mem_samples = []
-        self._stop = threading.Event()
-        self._thread = None
-
-    def start(self):
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._poll, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-
-    def _poll(self):
-        while not self._stop.is_set():
-            try:
-                result = subprocess.run(
-                    [
-                        "nvidia-smi",
-                        f"--id={self.device_index}",
-                        "--query-gpu=utilization.gpu,utilization.memory",
-                        "--format=csv,noheader,nounits",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if result.returncode == 0:
-                    parts = result.stdout.strip().split(",")
-                    self.samples.append(float(parts[0].strip()))
-                    self.mem_samples.append(float(parts[1].strip()))
-            except Exception:
-                pass
-            self._stop.wait(self.interval)
-
-    @property
-    def avg_gpu_util(self):
-        return sum(self.samples) / len(self.samples) if self.samples else 0.0
-
-    @property
-    def max_gpu_util(self):
-        return max(self.samples) if self.samples else 0.0
-
-    @property
-    def avg_mem_util(self):
-        return (
-            sum(self.mem_samples) / len(self.mem_samples) if self.mem_samples else 0.0
-        )
-
-    @property
-    def max_mem_util(self):
-        return max(self.mem_samples) if self.mem_samples else 0.0
 
 
 def _patch_compile(model, compile_flag):
@@ -433,73 +322,6 @@ def _benchmark_realmlp(model, train, features, profile):
     return [], total_time, n_samples, gpu_monitor
 
 
-def _log_to_mlflow(
-    model_name,
-    batch_size,
-    num_workers,
-    compile_flag,
-    epochs,
-    epoch_times,
-    total_time,
-    n_samples,
-    gpu_monitor,
-):
-    """Log benchmark results to MLflow."""
-    try:
-        import mlflow
-    except ImportError:
-        logger.warning("mlflow not installed, skipping logging")
-        return
-
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
-    if not tracking_uri:
-        logger.warning("MLFLOW_TRACKING_URI not set, skipping MLflow logging")
-        return
-
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment("benchmark")
-
-    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
-    run_name = f"{model_name}_{batch_size}bs_{num_workers}w"
-
-    with mlflow.start_run(run_name=run_name):
-        mlflow.log_params(
-            {
-                "model": model_name,
-                "batch_size": batch_size,
-                "num_workers": num_workers,
-                "compile": compile_flag,
-                "epochs": epochs,
-                "gpu": gpu_name,
-            }
-        )
-
-        metrics = {"total_time": total_time}
-
-        if epoch_times:
-            avg_epoch = sum(epoch_times) / len(epoch_times)
-            throughput = n_samples / avg_epoch if avg_epoch > 0 else 0
-            metrics["avg_epoch_time"] = avg_epoch
-            metrics["throughput_samples_per_sec"] = throughput
-            for i, t in enumerate(epoch_times, 1):
-                metrics[f"epoch_{i}_time"] = t
-        else:
-            # RealMLP: no per-epoch times
-            throughput = n_samples / total_time if total_time > 0 else 0
-            metrics["throughput_samples_per_sec"] = throughput
-
-        if gpu_monitor.samples:
-            metrics["avg_gpu_util"] = gpu_monitor.avg_gpu_util
-            metrics["max_gpu_util"] = gpu_monitor.max_gpu_util
-            metrics["avg_mem_util"] = gpu_monitor.avg_mem_util
-            metrics["max_mem_util"] = gpu_monitor.max_mem_util
-            metrics["gpu_samples"] = len(gpu_monitor.samples)
-
-        mlflow.log_metrics(metrics)
-
-    logger.info(f"MLflow: logged run '{run_name}' to experiment 'benchmark'")
-
-
 def main():
     parser = argparse.ArgumentParser(description="Benchmark neural models on S6E2")
     parser.add_argument(
@@ -617,16 +439,18 @@ def main():
     logger.info(f"{'='*50}")
 
     # Log to MLflow
-    _log_to_mlflow(
-        model_name,
-        effective_bs,
-        effective_nw,
-        compile_flag,
-        args.epochs,
-        epoch_times,
-        total_time,
-        n_samples,
-        gpu_monitor,
+    log_benchmark_to_mlflow(
+        model_name=model_name,
+        params={
+            "batch_size": effective_bs,
+            "num_workers": effective_nw,
+            "compile": compile_flag,
+            "epochs": args.epochs,
+        },
+        epoch_times=epoch_times,
+        total_time=total_time,
+        n_samples=n_samples,
+        gpu_monitor=gpu_monitor,
     )
 
 

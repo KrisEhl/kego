@@ -21,6 +21,13 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 project_root = Path(__file__).resolve().parents[2]
+sys.path.append(str(project_root))
+
+from kego.ensemble.disagreement import (  # noqa: E402
+    build_disagreement_matrix,
+    print_disagreement_report,
+    unique_correct_counts,
+)
 
 DATA_DIR = (
     Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
@@ -193,28 +200,6 @@ def load_best_runs(folds, experiments=None, features=None):
     return best
 
 
-def build_disagreement_matrix(oof_preds, labels, threshold=0.5):
-    """Build matrix where (i,j) = count of samples where model i is correct and model j is wrong."""
-    model_names = sorted(oof_preds.keys())
-    n = len(model_names)
-
-    # Binary correctness per model
-    correct = {}
-    for name in model_names:
-        preds = (oof_preds[name] >= threshold).astype(int)
-        correct[name] = preds == labels
-
-    # Disagreement matrix: (i,j) = i correct AND j wrong
-    matrix = np.zeros((n, n), dtype=int)
-    for i, name_i in enumerate(model_names):
-        for j, name_j in enumerate(model_names):
-            if i == j:
-                continue
-            matrix[i, j] = np.sum(correct[name_i] & ~correct[name_j])
-
-    return model_names, matrix, correct
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Analyze model disagreement and best runs"
@@ -253,12 +238,7 @@ def main():
 
     model_names, matrix, correct = build_disagreement_matrix(oof_preds, labels)
 
-    # Compute unique correct per model
-    all_correct = np.column_stack([correct[n] for n in model_names])
-    unique_correct = {}
-    for i, name in enumerate(model_names):
-        others_correct = np.delete(all_correct, i, axis=1).any(axis=1)
-        unique_correct[name] = int((correct[name] & ~others_correct).sum())
+    unique_correct = unique_correct_counts(model_names, correct)
 
     # === Combined summary table ===
     print("\n=== Model Summary ===")
@@ -302,62 +282,7 @@ def main():
                 f"{'—':>6s}  {info['experiment']}"
             )
 
-    # Print disagreement matrix
-    print("\n=== Disagreement Matrix ===")
-    print(
-        "Cell (row, col) = # samples where ROW model is correct but COL model is wrong\n"
-    )
-
-    short_names = [n[:12] for n in model_names]
-    header = f"{'':>14s}" + "".join(f"{s:>13s}" for s in short_names)
-    print(header)
-    print("-" * len(header))
-
-    for i, name in enumerate(model_names):
-        row = f"{short_names[i]:>14s}"
-        for j in range(len(model_names)):
-            if i == j:
-                row += f"{'—':>13s}"
-            else:
-                row += f"{matrix[i, j]:>13d}"
-        print(row)
-
-    # Symmetric disagreement
-    print("\n=== Symmetric Disagreement (total unique info per pair) ===")
-    print("Higher = more diverse pair (better for ensembling)\n")
-
-    sym_matrix = matrix + matrix.T
-    header = f"{'':>14s}" + "".join(f"{s:>13s}" for s in short_names)
-    print(header)
-    print("-" * len(header))
-
-    for i, name in enumerate(model_names):
-        row = f"{short_names[i]:>14s}"
-        for j in range(len(model_names)):
-            if i == j:
-                row += f"{'—':>13s}"
-            else:
-                row += f"{sym_matrix[i, j]:>13d}"
-        print(row)
-
-    # Most/least redundant pairs
-    print("\n=== Top 10 Most Diverse Pairs ===")
-    pairs = []
-    for i in range(len(model_names)):
-        for j in range(i + 1, len(model_names)):
-            pairs.append((model_names[i], model_names[j], sym_matrix[i, j]))
-    pairs.sort(key=lambda x: x[2], reverse=True)
-    for name_i, name_j, count in pairs[:10]:
-        print(f"  {name_i:35s} vs {name_j:35s}  {count:5d} disagreements")
-
-    print("\n=== Top 10 Most Redundant Pairs ===")
-    for name_i, name_j, count in pairs[-10:]:
-        print(f"  {name_i:35s} vs {name_j:35s}  {count:5d} disagreements")
-
-    # Unique correct (already computed)
-    print("\n=== Unique Correct Predictions (right when ALL others are wrong) ===")
-    for name in model_names:
-        print(f"  {name:35s}  {unique_correct[name]:4d} unique correct")
+    print_disagreement_report(model_names, matrix, correct)
 
 
 if __name__ == "__main__":
