@@ -288,7 +288,7 @@ def submit_to_rimay(
     y_test: pd.DataFrame,
     num_shots: int = 500,
     num_runs: int = 1,
-) -> dict:
+) -> tuple:
     """Upload data to Rimay Simulator and return execution metadata."""
     from planqk.api.client import PlanqkApiClient
     from planqk.service.client import PlanqkServiceClient
@@ -301,12 +301,12 @@ def submit_to_rimay(
 
     total_samples = len(X_train) + len(X_test)
     n_features = X_train.shape[1]
-    assert total_samples <= MAX_SAMPLES, (
-        f"Total samples {total_samples} exceeds limit {MAX_SAMPLES}"
-    )
-    assert n_features <= MAX_FEATURES, (
-        f"Features {n_features} exceeds limit {MAX_FEATURES}"
-    )
+    assert (
+        total_samples <= MAX_SAMPLES
+    ), f"Total samples {total_samples} exceeds limit {MAX_SAMPLES}"
+    assert (
+        n_features <= MAX_FEATURES
+    ), f"Features {n_features} exceeds limit {MAX_FEATURES}"
 
     print(
         f"\nRimay submission: {len(X_train)} train + {len(X_test)} test = "
@@ -453,9 +453,7 @@ def download_quantum_features(output_datapool_id: str, num_runs: int = 1) -> dic
             "yq_train": yq_train,
             "yq_test": yq_test,
         }
-        print(
-            f"  Run {run_idx}: Xq_train={Xq_train.shape}, Xq_test={Xq_test.shape}"
-        )
+        print(f"  Run {run_idx}: Xq_train={Xq_train.shape}, Xq_test={Xq_test.shape}")
 
     return results
 
@@ -577,12 +575,12 @@ def extract_quantum_features_local(
     for idx in range(n_samples):
         for j in range(len(observables)):
             pub_idx = idx * len(observables) + j
-            quantum_features[idx, j] = float(
-                all_values[pub_idx].data.evs
-            )
+            quantum_features[idx, j] = float(all_values[pub_idx].data.evs)
 
     elapsed = time.time() - start
-    print(f"    Completed in {elapsed:.1f}s ({elapsed / n_samples * 1000:.1f}ms/sample)")
+    print(
+        f"    Completed in {elapsed:.1f}s ({elapsed / n_samples * 1000:.1f}ms/sample)"
+    )
 
     return quantum_features, names
 
@@ -833,7 +831,7 @@ def train_evaluate_lgb(
         if available_cats:
             fit_kwargs["categorical_feature"] = available_cats
 
-    fit_kwargs["eval_set"] = [(X_holdout, y_holdout)]
+    fit_kwargs["eval_set"] = [(X_holdout, y_holdout)]  # type: ignore[list-item]
     fit_kwargs["callbacks"] = [
         lightgbm.early_stopping(50),
         lightgbm.log_evaluation(0),
@@ -844,11 +842,16 @@ def train_evaluate_lgb(
     auc = roc_auc_score(y_holdout, preds)
 
     # Feature importances (top 10)
-    importances = dict(zip(
-        (X_train.columns if isinstance(X_train, pd.DataFrame)
-         else [f"f{i}" for i in range(X_train.shape[1])]),
-        model.feature_importances_,
-    ))
+    importances = dict(
+        zip(
+            (
+                X_train.columns
+                if isinstance(X_train, pd.DataFrame)
+                else [f"f{i}" for i in range(X_train.shape[1])]
+            ),
+            model.feature_importances_,
+        )
+    )
     ranked = sorted(importances.items(), key=lambda x: -x[1])
 
     print(f"\n{'='*60}")
@@ -891,7 +894,10 @@ def run_evaluation(
     X_ho = ho_eng[FEATURES_ABLATION_PRUNED]
 
     auc1 = train_evaluate_lgb(
-        X_qt, y_qt, X_ho, y_ho,
+        X_qt,
+        y_qt,
+        X_ho,
+        y_ho,
         LGB_PARAMS_SMALL,
         "Exp 1: Vanilla LightGBM (700 rows, ablation-pruned)",
         cat_features=cats_in_ablation,
@@ -908,18 +914,26 @@ def run_evaluation(
         qf_names = [f"qf_{i}" for i in range(n_qf)]
 
         # Concatenate ablation-pruned features with quantum features
-        X_qt_q = pd.concat([
-            X_qt.reset_index(drop=True),
-            pd.DataFrame(Xq_train, columns=qf_names),
-        ], axis=1)
-        X_ho_q = pd.concat([
-            X_ho.reset_index(drop=True),
-            pd.DataFrame(Xq_test, columns=qf_names),
-        ], axis=1)
+        X_qt_q = pd.concat(
+            [
+                X_qt.reset_index(drop=True),
+                pd.DataFrame(Xq_train, columns=qf_names),
+            ],
+            axis=1,
+        )
+        X_ho_q = pd.concat(
+            [
+                X_ho.reset_index(drop=True),
+                pd.DataFrame(Xq_test, columns=qf_names),
+            ],
+            axis=1,
+        )
 
         auc2 = train_evaluate_lgb(
-            X_qt_q, y_qt.reset_index(drop=True),
-            X_ho_q, y_ho.reset_index(drop=True),
+            X_qt_q,
+            y_qt.reset_index(drop=True),
+            X_ho_q,
+            y_ho.reset_index(drop=True),
             LGB_PARAMS_SMALL,
             f"Exp 2: Quantum LightGBM (700 rows, ablation-pruned + {n_qf} quantum)",
             cat_features=cats_in_ablation,
@@ -943,7 +957,10 @@ def run_evaluation(
     X_ft = ft_eng[FEATURES_ABLATION_PRUNED]
 
     auc3 = train_evaluate_lgb(
-        X_ft, y_ft, X_ho, y_ho,
+        X_ft,
+        y_ft,
+        X_ho,
+        y_ho,
         LGB_PARAMS_FULL,
         f"Exp 3: Vanilla LightGBM ({len(full_train)} rows, ablation-pruned)",
         cat_features=cats_in_ablation,
@@ -959,18 +976,26 @@ def run_evaluation(
         n_qf = Xq_ft.shape[1]
         qf_names = [f"qf_{i}" for i in range(n_qf)]
 
-        X_ft_q = pd.concat([
-            X_ft.reset_index(drop=True),
-            pd.DataFrame(Xq_ft, columns=qf_names),
-        ], axis=1)
-        X_ho_q_full = pd.concat([
-            X_ho.reset_index(drop=True),
-            pd.DataFrame(Xq_ho_full, columns=qf_names),
-        ], axis=1)
+        X_ft_q = pd.concat(
+            [
+                X_ft.reset_index(drop=True),
+                pd.DataFrame(Xq_ft, columns=qf_names),
+            ],
+            axis=1,
+        )
+        X_ho_q_full = pd.concat(
+            [
+                X_ho.reset_index(drop=True),
+                pd.DataFrame(Xq_ho_full, columns=qf_names),
+            ],
+            axis=1,
+        )
 
         auc4 = train_evaluate_lgb(
-            X_ft_q, y_ft.reset_index(drop=True),
-            X_ho_q_full, y_ho.reset_index(drop=True),
+            X_ft_q,
+            y_ft.reset_index(drop=True),
+            X_ho_q_full,
+            y_ho.reset_index(drop=True),
             LGB_PARAMS_FULL,
             f"Exp 4: Quantum LightGBM ({len(full_train)} rows, ablation-pruned + {n_qf} quantum)",
             cat_features=cats_in_ablation,
@@ -997,10 +1022,7 @@ def run_evaluation(
         if key in results:
             delta = results[key] - baseline
             marker = " <-- baseline" if key == "vanilla_small" else ""
-            print(
-                f"  {label:<55s} {results[key]:>8.5f} "
-                f"{delta:>+8.5f}{marker}"
-            )
+            print(f"  {label:<55s} {results[key]:>8.5f} " f"{delta:>+8.5f}{marker}")
 
     return results
 
@@ -1025,7 +1047,7 @@ def _train_auc_quiet(
         available_cats = [c for c in cat_features if c in X_train.columns]
         if available_cats:
             fit_kwargs["categorical_feature"] = available_cats
-    fit_kwargs["eval_set"] = [(X_holdout, y_holdout)]
+    fit_kwargs["eval_set"] = [(X_holdout, y_holdout)]  # type: ignore[list-item]
     fit_kwargs["callbacks"] = [
         lightgbm.early_stopping(50),
         lightgbm.log_evaluation(0),
@@ -1054,9 +1076,12 @@ def run_ablation(
 
     # Baseline: classical features only
     baseline_auc = _train_auc_quiet(
-        X_train_classical, y_train,
-        X_holdout_classical, y_holdout,
-        params, cat_features,
+        X_train_classical,
+        y_train,
+        X_holdout_classical,
+        y_holdout,
+        params,
+        cat_features,
     )
     print(f"\n  Baseline (classical only): {baseline_auc:.5f}")
     print(f"  Classical features: {X_train_classical.shape[1]}")
@@ -1067,7 +1092,9 @@ def run_ablation(
     remaining = list(range(len(qf_names)))
     current_auc = baseline_auc
 
-    print(f"\n  {'Step':<6s} {'Added Feature':<20s} {'AUC':>8s} {'Delta':>8s} {'Action':<10s}")
+    print(
+        f"\n  {'Step':<6s} {'Added Feature':<20s} {'AUC':>8s} {'Delta':>8s} {'Action':<10s}"
+    )
     print(f"  {'-'*6} {'-'*20} {'-'*8} {'-'*8} {'-'*10}")
 
     step = 0
@@ -1078,23 +1105,34 @@ def run_ablation(
         for qi in remaining:
             # Build feature set: classical + selected + candidate
             sel_indices = [qf_names.index(s) for s in selected] + [qi]
-            X_tr = pd.concat([
-                X_train_classical.reset_index(drop=True),
-                pd.DataFrame(
-                    Xq_train[:, sel_indices],
-                    columns=[qf_names[i] for i in sel_indices],
-                ),
-            ], axis=1)
-            X_ho = pd.concat([
-                X_holdout_classical.reset_index(drop=True),
-                pd.DataFrame(
-                    Xq_holdout[:, sel_indices],
-                    columns=[qf_names[i] for i in sel_indices],
-                ),
-            ], axis=1)
+            X_tr = pd.concat(
+                [
+                    X_train_classical.reset_index(drop=True),
+                    pd.DataFrame(
+                        Xq_train[:, sel_indices],
+                        columns=[qf_names[i] for i in sel_indices],
+                    ),
+                ],
+                axis=1,
+            )
+            X_ho = pd.concat(
+                [
+                    X_holdout_classical.reset_index(drop=True),
+                    pd.DataFrame(
+                        Xq_holdout[:, sel_indices],
+                        columns=[qf_names[i] for i in sel_indices],
+                    ),
+                ],
+                axis=1,
+            )
 
             auc = _train_auc_quiet(
-                X_tr, y_train, X_ho, y_holdout, params, cat_features,
+                X_tr,
+                y_train,
+                X_ho,
+                y_holdout,
+                params,
+                cat_features,
             )
             if auc > best_auc:
                 best_auc = auc
@@ -1136,33 +1174,44 @@ def run_ablation(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Quantum Feature Extraction Experiment")
+    parser = argparse.ArgumentParser(
+        description="Quantum Feature Extraction Experiment"
+    )
     parser.add_argument(
-        "--rimay", action="store_true",
+        "--rimay",
+        action="store_true",
         help="Use Rimay API instead of local simulation",
     )
     parser.add_argument(
-        "--full-quantum", action="store_true",
+        "--full-quantum",
+        action="store_true",
         help="Generate quantum features for full ~630K dataset (takes ~3 min)",
     )
     parser.add_argument(
-        "--ablation", action="store_true",
+        "--ablation",
+        action="store_true",
         help="Run forward-selection ablation on quantum features",
     )
     parser.add_argument(
-        "--submit-only", action="store_true",
+        "--submit-only",
+        action="store_true",
         help="(Rimay) Submit and save metadata, don't wait for results",
     )
     parser.add_argument(
-        "--evaluate-only", action="store_true",
+        "--evaluate-only",
+        action="store_true",
         help="(Rimay) Skip API submission, load results from output datapool",
     )
     parser.add_argument(
-        "--num-shots", type=int, default=500,
+        "--num-shots",
+        type=int,
+        default=500,
         help="Measurement shots per circuit (default: 500)",
     )
     parser.add_argument(
-        "--num-runs", type=int, default=1,
+        "--num-runs",
+        type=int,
+        default=1,
         help="Independent runs on simulator (default: 1)",
     )
     args = parser.parse_args()
@@ -1183,14 +1232,18 @@ def main():
     if args.rimay:
         # ── Rimay API path ──
         if not args.evaluate_only:
-            X_train_raw = quantum_train[RAW_FEATURES].reset_index(drop=True).astype(float)
+            X_train_raw = (
+                quantum_train[RAW_FEATURES].reset_index(drop=True).astype(float)
+            )
             y_train_raw = quantum_train[[TARGET]].reset_index(drop=True).astype(int)
             X_test_raw = holdout[RAW_FEATURES].reset_index(drop=True).astype(float)
             y_test_raw = holdout[[TARGET]].reset_index(drop=True).astype(int)
 
             metadata, client, execution = submit_to_rimay(
-                X_train_raw, y_train_raw,
-                X_test_raw, y_test_raw,
+                X_train_raw,
+                y_train_raw,
+                X_test_raw,
+                y_test_raw,
                 num_shots=args.num_shots,
                 num_runs=args.num_runs,
             )
@@ -1259,8 +1312,11 @@ def main():
 
     # Run evaluation
     run_evaluation(
-        quantum_train, holdout, full_train,
-        quantum_features, quantum_features_full,
+        quantum_train,
+        holdout,
+        full_train,
+        quantum_features,
+        quantum_features_full,
     )
 
     # Ablation study

@@ -1,4 +1,8 @@
-import pandas as pd, numpy as np, json, os
+import json
+import os
+
+import numpy as np
+import pandas as pd
 from planqk.api.client import PlanqkApiClient
 
 np.random.seed(42)
