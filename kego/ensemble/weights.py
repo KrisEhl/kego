@@ -7,12 +7,12 @@ def hill_climbing(
     labels: np.ndarray,
     model_names: list[str],
     n_iterations: int = 10,
+    step: float = 0.01,
 ) -> np.ndarray:
     """Find ensemble weights by greedy hill climbing on AUC."""
     n_models = oof_matrix.shape[1]
     best_weights = np.ones(n_models) / n_models
     best_auc = roc_auc_score(labels, oof_matrix @ best_weights)
-    step = 0.01
 
     for _ in range(n_iterations):
         improved = False
