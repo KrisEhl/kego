@@ -44,7 +44,7 @@ End your response with \\boxed{N} where N is your final integer answer (0-99999)
 """
 
 MAX_TIR_STEPS = 6
-MAX_TOKENS = 8192
+MAX_TOKENS = 7500
 RESULTS_DIR = Path(__file__).parent / "eval_results"
 
 # ---------------------------------------------------------------------------
