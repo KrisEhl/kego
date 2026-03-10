@@ -222,6 +222,8 @@ def load_reference() -> list[dict]:
 def run_eval(
     problems: list[dict], client: OpenAI, model: str, n: int, tag: str
 ) -> None:
+    from tqdm import tqdm
+
     RESULTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = RESULTS_DIR / f"eval_{tag}_{timestamp}.csv"
@@ -234,10 +236,12 @@ def run_eval(
     )
     t0 = time.time()
 
-    for i, p in enumerate(problems):
+    pbar = tqdm(problems, unit="problem", dynamic_ncols=True)
+    for i, p in enumerate(pbar):
         pid = p["id"]
         true_ans = p["answer"]
-        print(f"[{i + 1}/{len(problems)}] {pid} | true={true_ans}", flush=True)
+        pbar.set_description(f"{pid} | correct {correct}/{i}")
+        print(f"\n[{i + 1}/{len(problems)}] {pid} | true={true_ans}", flush=True)
 
         pred, vote_dist = solve_with_voting(p["problem"], client, model, n=n)
         is_correct = pred == true_ans
@@ -245,6 +249,7 @@ def run_eval(
             correct += 1
 
         elapsed = time.time() - t0
+        pbar.set_postfix(acc=f"{correct}/{i + 1}", elapsed=f"{elapsed / 60:.1f}m")
         print(
             f"  vote: {vote_dist} → pred={pred} | {'✓' if is_correct else '✗'} | {elapsed:.0f}s elapsed\n",
             flush=True,
@@ -294,6 +299,9 @@ def main() -> None:
         "--n", type=int, default=8, help="Samples per problem (majority vote)"
     )
     parser.add_argument("--limit", type=int, default=0, help="Max problems (0 = all)")
+    parser.add_argument(
+        "--offset", type=int, default=0, help="Skip first N problems (resume)"
+    )
     args = parser.parse_args()
 
     client = OpenAI(base_url=LLM_BASE_URL, api_key="local")
@@ -313,6 +321,8 @@ def main() -> None:
         problems = load_reference()
         tag = "reference"
 
+    if args.offset:
+        problems = problems[args.offset :]
     if args.limit:
         problems = problems[: args.limit]
 
