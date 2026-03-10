@@ -16,11 +16,20 @@ Prize pool: $2.2M. Problems: national olympiad → IMO level, integer answers 0�
 - TIR loop: up to 4 code execution steps per sample
 - 2× H100 on Kaggle
 
+### Local baseline (QwQ-32B AWQ, N=4, maj@4, AIME 2025)
+
+**8/30 = 26.7%** — reference point for all future local comparisons.
+
+Correct: aime25_0 (70), aime25_2 (16), aime25_3 (117), aime25_5 (504), aime25_7 (77), aime25_15 (468), aime25_16 (49), aime25_18 (106).
+
+Pattern on misses: many problems where all 4 samples confidently agree on the wrong answer — not a voting problem, the model is genuinely wrong. More samples (N=16) would help marginally but not fix fundamental model capability gaps.
+
 ### Submissions
 
-| Version | Score | Notes |
-|---|---|---|
-| v11 | pending | QwQ-32B AWQ, N=16, majority vote, TIR |
+| Version | LB Score | Local maj@4 | Notes |
+|---|---|---|---|
+| v11 | failed | — | Bug: `KAGGLE_IS_COMPETITION_RERUN` never set → ran mock server, submitted all-42 |
+| v12 | pending | — | Fix: always run vLLM + serve(), 16K context, 12K max_tokens, 6 TIR steps |
 
 ---
 
