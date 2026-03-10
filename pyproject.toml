@@ -93,4 +93,5 @@ members = [
     ".",
     "competitions/nfl-big-data-bowl-2026-prediction",
     "competitions/ai-masters-fraud-detection",
+    "competitions/ai-mathematical-olympiad-progress-prize-3",
 ]

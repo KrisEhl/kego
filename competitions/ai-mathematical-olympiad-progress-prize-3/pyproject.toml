@@ -1,0 +1,10 @@
+[project]
+name = "ai-mathematical-olympiad-progress-prize-3"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13.12"
+dependencies = [
+    "openai>=1.0",
+    "pandas>=2.0",
+]
