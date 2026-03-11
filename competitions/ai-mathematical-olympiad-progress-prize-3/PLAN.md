@@ -29,7 +29,11 @@ Pattern on misses: many problems where all 4 samples confidently agree on the wr
 | Version | LB Score | Local maj@4 | Notes |
 |---|---|---|---|
 | v11 | failed | — | Bug: `KAGGLE_IS_COMPETITION_RERUN` never set → ran mock server, submitted all-42 |
-| v12 | pending | — | Fix: always run vLLM + serve(), 16K context, 12K max_tokens, 6 TIR steps |
+| v12 | ERROR | — | Bug: TENSOR_PARALLEL=2 hardcoded, Kaggle regular kernel only has 1 GPU |
+| v13/v14 | ERROR | — | P100 sm_60 incompatibility: vLLM fails → serve() never runs → regular run ERROR |
+| v15 | ERROR | — | Same P100 issue — serve() called but placeholder parquet missing |
+| v16 | pending | — | Fix: graceful vLLM fallback (VLLM_STARTED flag), placeholder parquet written first |
+| v17 | not yet | — | Fix: MAX_TOKENS = (MAX_MODEL_LEN-2000)//6 = 2397 (prev 12288 filled context after 1 step) |
 
 ---
 
@@ -76,14 +80,26 @@ After each Kaggle submission: compute `kaggle_score / local_maj@N`. Track ratio 
 
 ## Next Steps (ordered by expected impact)
 
-### Step 1: Switch to OpenReasoning-Nemotron-32B
+### Step 1: Switch to OpenReasoning-Nemotron-32B ✓ IN PROGRESS
 
-`nvidia/OpenReasoning-Nemotron-32B` — AIME 2025 pass@1 = **84%** vs QwQ-32B ~65%. Distilled from DeepSeek-R1-0528. TIR + CoT both supported. CC-BY-4.0 licensed.
+Downloaded: `abhishekchohan/OpenReasoning-Nemotron-32B-W4A16` (19.2GB, compressed-tensors W4A16)
+Path: `/home/kristian/projects/kego/models/OpenReasoning-Nemotron-32B-W4A16`
 
-- Download from HF: `nvidia/OpenReasoning-Nemotron-32B`
-- Check quantized AWQ variants on HF for 1-card fit (~18GB)
-- GGUF Q8_0 (~34GB) spans both 3090s for max quality
-- Run local AIME 2025 eval, compare to QwQ-32B baseline
+**vLLM settings that work (2× RTX 3090):**
+```bash
+CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0,1 \
+  vllm serve .../OpenReasoning-Nemotron-32B-W4A16 \
+  --port 8080 --tensor-parallel-size 2 \
+  --max-model-len 16384 --gpu-memory-utilization 0.85 \
+  --max-num-seqs 32 --trust-remote-code --disable-log-requests
+```
+- W4A16 takes ~21GB on single GPU → must use TP=2 (2× 3090, 48GB total)
+- `--max-num-seqs 32` needed to avoid OOM in CUDA graph warmup (default=256 OOM)
+- `--enforce-eager` works but is ~5× slower — avoid it
+- With `max_model_len=16384`: use `MAX_TOKENS=2500` for 6-step TIR (context fills after 2 steps with MAX_TOKENS=7500)
+
+**Eval running** (2026-03-11): N=4, AIME 2025, ~3.3 hour ETA
+- Problem 1 (aime25_0=70): 4/4 correct ✓
 
 ### Step 2: Set up local eval harness
 
@@ -149,6 +165,12 @@ This approach raised baseline accuracy from ~35% to 85.7% on IMO 2025 problems (
 ## Already Tried / Dead Ends
 
 - **`run_local_gateway` in dev mode**: `*data_batch` unpacks polars DataFrame to column names → predict called with 2 string args instead of 1 DataFrame. Fixed by bypassing it entirely (direct loop over `iter_slices`).
+- **`TENSOR_PARALLEL=2` hardcoded**: Regular Kaggle kernel environment can give 1 or 2 GPUs. v12 errored because only 1 GPU was available (T4/P100) but TP=2 was hardcoded. Fix: detect GPU count with `nvidia-smi`. Note: Kaggle code competitions need the kernel to have completed a run (produced the output file) BEFORE you can submit it to the competition grader.
+- **Submission 400 "Notebook is still running"**: You can't submit a kernel version to the competition grader until it has finished its regular Kaggle run. Wait for `KernelWorkerStatus.COMPLETE` or `ERROR`.
+- **Regular Kaggle kernel has Tesla P100 (sm_60)**: PyTorch >= 2.0 requires sm_70+. vLLM fails to start on P100. If Cell 3 raises RuntimeError, serve() never runs → regular run ERROR → Kaggle refuses competition submission. Fix: wrap vLLM startup in try-except, set `VLLM_STARTED=False`, have predict() return 42, call serve() — it uses local test data in non-competition mode.
+- **OpenReasoning-Nemotron-32B-W4A16 is worse than QwQ-32B**: Local eval (N=4, AIME 2025) showed 2/15 = 13% vs QwQ 5/15 = 33% on same problems. W4A16 quantization significantly degrades capability. Stick with QwQ-32B on Kaggle. The full BF16 model would be better but requires >48GB VRAM.
+- **MAX_TOKENS=12288 on 2× H100 fills context after 1 step**: With MAX_MODEL_LEN=16384, setting MAX_TOKENS=12288 uses 12288+300=12588 tokens after step 1. Step 2 gets only 16384-12588-200=3596 tokens. Step 3 context full → effectively 2-step TIR instead of 6. Fixed: MAX_TOKENS=(MAX_MODEL_LEN-2000)//MAX_TIR_STEPS=2397 for 6 proper steps.
+- **Submissions table**: v11 (ERROR), v12 (ERROR: TP=2 hardcoded), v13-v15 (ERROR: P100 incompatibility, serve() never ran). v16 (pending: graceful fallback + max-num-seqs 32). v17 (pending: MAX_TOKENS fix).
 
 ---
 
