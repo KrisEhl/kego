@@ -9,12 +9,17 @@ Prize pool: $2.2M. Problems: national olympiad → IMO level, integer answers 0�
 
 ### Current best
 
-**Baseline notebook submitted (v11), score TBD.**
+**v16 submitted to competition grader — COMPLETE, score pending (AIMO3 doesn't show public scores via CLI).**
 
 - Model: QwQ-32B AWQ via vLLM
 - N=16 samples, majority vote
-- TIR loop: up to 4 code execution steps per sample
+- TIR loop: up to 6 steps, but MAX_TOKENS was too high → effectively 1-2 steps (fixed in v17)
 - 2× H100 on Kaggle
+
+**v17 regular run complete — ready for tomorrow's submission.**
+
+- Same as v16 but: MAX_TOKENS=(16384-2000)//6=2397 for proper 6-step TIR
+- Also: vLLM wait loop exits immediately on process crash (no 10-min wait on P100)
 
 ### Local baseline (QwQ-32B AWQ, N=4, maj@4, AIME 2025)
 
@@ -32,8 +37,8 @@ Pattern on misses: many problems where all 4 samples confidently agree on the wr
 | v12 | ERROR | — | Bug: TENSOR_PARALLEL=2 hardcoded, Kaggle regular kernel only has 1 GPU |
 | v13/v14 | ERROR | — | P100 sm_60 incompatibility: vLLM fails → serve() never runs → regular run ERROR |
 | v15 | ERROR | — | Same P100 issue — serve() called but placeholder parquet missing |
-| v16 | pending | — | Fix: graceful vLLM fallback (VLLM_STARTED flag), placeholder parquet written first |
-| v17 | not yet | — | Fix: MAX_TOKENS = (MAX_MODEL_LEN-2000)//6 = 2397 (prev 12288 filled context after 1 step) |
+| v16 | COMPLETE (no score shown) | — | Fix: graceful vLLM fallback (VLLM_STARTED flag), placeholder parquet written first |
+| v17 | ready to submit | — | Fix: MAX_TOKENS=2397/step + early vLLM crash detection |
 
 ---
 
@@ -98,8 +103,11 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0,1 \
 - `--enforce-eager` works but is ~5× slower — avoid it
 - With `max_model_len=16384`: use `MAX_TOKENS=2500` for 6-step TIR (context fills after 2 steps with MAX_TOKENS=7500)
 
-**Eval running** (2026-03-11): N=4, AIME 2025, ~3.3 hour ETA
-- Problem 1 (aime25_0=70): 4/4 correct ✓
+**Final result** (2026-03-11, N=4, AIME 2025): **3/30 = 10.0%** — significantly worse than QwQ-32B (8/30 = 26.7%).
+- W4A16 quantization severely degrades capability at this level.
+- **Decision: abandon Nemotron W4A16, keep QwQ-32B as base model.**
+
+### Step 1: STATUS — CLOSED (Nemotron W4A16 not viable)
 
 ### Step 2: Set up local eval harness
 
@@ -168,9 +176,9 @@ This approach raised baseline accuracy from ~35% to 85.7% on IMO 2025 problems (
 - **`TENSOR_PARALLEL=2` hardcoded**: Regular Kaggle kernel environment can give 1 or 2 GPUs. v12 errored because only 1 GPU was available (T4/P100) but TP=2 was hardcoded. Fix: detect GPU count with `nvidia-smi`. Note: Kaggle code competitions need the kernel to have completed a run (produced the output file) BEFORE you can submit it to the competition grader.
 - **Submission 400 "Notebook is still running"**: You can't submit a kernel version to the competition grader until it has finished its regular Kaggle run. Wait for `KernelWorkerStatus.COMPLETE` or `ERROR`.
 - **Regular Kaggle kernel has Tesla P100 (sm_60)**: PyTorch >= 2.0 requires sm_70+. vLLM fails to start on P100. If Cell 3 raises RuntimeError, serve() never runs → regular run ERROR → Kaggle refuses competition submission. Fix: wrap vLLM startup in try-except, set `VLLM_STARTED=False`, have predict() return 42, call serve() — it uses local test data in non-competition mode.
-- **OpenReasoning-Nemotron-32B-W4A16 is worse than QwQ-32B**: Local eval (N=4, AIME 2025) showed 2/15 = 13% vs QwQ 5/15 = 33% on same problems. W4A16 quantization significantly degrades capability. Stick with QwQ-32B on Kaggle. The full BF16 model would be better but requires >48GB VRAM.
+- **OpenReasoning-Nemotron-32B-W4A16 is worse than QwQ-32B**: Full eval (N=4, all 30 AIME 2025 problems) = **3/30 = 10.0%** vs QwQ **8/30 = 26.7%**. W4A16 quantization severely degrades capability. Stick with QwQ-32B on Kaggle. The full BF16 model would require >48GB VRAM (out of scope).
 - **MAX_TOKENS=12288 on 2× H100 fills context after 1 step**: With MAX_MODEL_LEN=16384, setting MAX_TOKENS=12288 uses 12288+300=12588 tokens after step 1. Step 2 gets only 16384-12588-200=3596 tokens. Step 3 context full → effectively 2-step TIR instead of 6. Fixed: MAX_TOKENS=(MAX_MODEL_LEN-2000)//MAX_TIR_STEPS=2397 for 6 proper steps.
-- **Submissions table**: v11 (ERROR), v12 (ERROR: TP=2 hardcoded), v13-v15 (ERROR: P100 incompatibility, serve() never ran). v16 (pending: graceful fallback + max-num-seqs 32). v17 (pending: MAX_TOKENS fix).
+- **Submissions table**: v11-v15 all failed (various bugs). v16 COMPLETE on grader (score not shown by CLI — AIMO3 may not expose public scores). v17 ready for tomorrow.
 
 ---
 
