@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -44,7 +45,7 @@ End your response with \\boxed{N} where N is your final integer answer (0-99999)
 """
 
 MAX_TIR_STEPS = 6
-MAX_TOKENS = 7500
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "7500"))
 RESULTS_DIR = Path(__file__).parent / "eval_results"
 
 # ---------------------------------------------------------------------------
@@ -143,18 +144,178 @@ def solve_tir(
     return extract_answer(all_text)
 
 
-def solve_with_voting(
-    problem: str, client: OpenAI, model: str, n: int = 8
-) -> tuple[int | None, dict]:
-    answers = []
-    for i in range(n):
-        temp = 0.0 if i == 0 else 0.7
+def solve_tir_full(
+    problem: str, client: OpenAI, model: str, temperature: float = 0.0
+) -> tuple[int | None, str]:
+    """Like solve_tir but also returns the full assistant reasoning text."""
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": problem},
+    ]
+    for _ in range(MAX_TIR_STEPS):
+        reply = _chat(client, model, messages, temperature)
+        messages.append({"role": "assistant", "content": reply})
+        code_blocks = extract_code_blocks(reply)
+        if code_blocks:
+            out = execute_python(code_blocks[-1])
+            messages.append({"role": "user", "content": f"Code output:\n{out}"})
+        if not code_blocks:
+            ans = extract_answer(reply)
+            if ans is not None:
+                full_text = "\n".join(
+                    m["content"] for m in messages if m["role"] == "assistant"
+                )
+                return ans, full_text
+            messages.append(
+                {"role": "user", "content": "Give your final answer as \\boxed{N}."}
+            )
+        elif extract_answer(reply) is not None:
+            break
+    all_text = "\n".join(m["content"] for m in messages if m["role"] == "assistant")
+    return extract_answer(all_text), all_text
+
+
+GENSELECT_SYSTEM = """\
+You are an expert math competition judge. You will be given a problem and several candidate solutions.
+Your task is to identify which solution is most likely correct and reliable.
+
+Respond with ONLY a single line: BEST: <index>
+where <index> is the 1-based index of the best solution (e.g. BEST: 3).
+"""
+
+
+JUDGE_MODEL = os.getenv("JUDGE_MODEL", "")  # e.g. "claude-haiku-4-5-20251001"
+
+
+def _genselect_anthropic(user_msg: str) -> str | None:
+    """Call Anthropic API as judge (no GPU needed)."""
+    import anthropic
+
+    judge_model = JUDGE_MODEL or "claude-haiku-4-5-20251001"
+    ac = anthropic.Anthropic()
+    resp = ac.messages.create(
+        model=judge_model,
+        system=GENSELECT_SYSTEM,
+        messages=[{"role": "user", "content": user_msg}],
+        temperature=0.0,
+        max_tokens=64,
+    )
+    return resp.content[0].text if resp.content else None
+
+
+def _genselect_local(user_msg: str, client: OpenAI, model: str) -> str | None:
+    """Call local vLLM server as judge."""
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": GENSELECT_SYSTEM},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.0,
+        max_tokens=64,
+    )
+    return resp.choices[0].message.content or None
+
+
+def genselect(
+    problem: str,
+    candidates: list[tuple[int | None, str]],
+    client: OpenAI,
+    model: str,
+    judge: str = "local",
+) -> int | None:
+    """Use a model to select the best candidate solution.
+
+    judge="local"     — use the same vLLM server (needs GPU)
+    judge="anthropic" — use Claude API (no GPU, runs on Mac)
+    """
+    if not candidates:
+        return None
+    valid = [(ans, text) for ans, text in candidates if ans is not None]
+    if not valid:
+        return None
+    if len(valid) == 1:
+        return valid[0][0]
+
+    parts = [f"Problem:\n{problem}\n"]
+    for i, (ans, text) in enumerate(valid, 1):
+        snippet = text[:3000] + "..." if len(text) > 3000 else text
+        parts.append(f"--- Solution {i} (answer: {ans}) ---\n{snippet}")
+    user_msg = (
+        "\n\n".join(parts) + "\n\nWhich solution is most reliable? Reply BEST: <index>."
+    )
+
+    try:
+        if judge == "anthropic":
+            raw = _genselect_anthropic(user_msg)
+        else:
+            raw = _genselect_local(user_msg, client, model)
+        if raw:
+            m = re.search(r"BEST:\s*(\d+)", raw, re.IGNORECASE)
+            if m:
+                idx = int(m.group(1)) - 1
+                if 0 <= idx < len(valid):
+                    return valid[idx][0]
+    except Exception as e:
+        print(f"    [genselect error: {e}]", flush=True)
+
+    counter = Counter(ans for ans, _ in valid)
+    return counter.most_common(1)[0][0]
+
+
+def _run_sample(
+    i: int, problem: str, client: OpenAI, model: str, aggregation: str
+) -> tuple[int, int | None, str | None]:
+    """Run a single TIR sample. Returns (index, answer, text_or_None)."""
+    temp = 0.0 if i == 0 else 0.7
+    if aggregation == "genselect":
+        ans, text = solve_tir_full(problem, client, model, temperature=temp)
+        return i, ans, text
+    else:
         ans = solve_tir(problem, client, model, temperature=temp)
-        if ans is not None:
-            answers.append(ans)
-        print(f"    sample {i + 1}/{n} → {ans}", flush=True)
+        return i, ans, None
+
+
+def solve_with_voting(
+    problem: str,
+    client: OpenAI,
+    model: str,
+    n: int = 8,
+    aggregation: str = "majority",
+    judge: str = "local",
+    parallel: bool = True,
+) -> tuple[int | None, dict]:
+    results: list[tuple[int, int | None, str | None]] = []
+
+    if parallel and n > 1:
+        with ThreadPoolExecutor(max_workers=n) as pool:
+            futures = {
+                pool.submit(_run_sample, i, problem, client, model, aggregation): i
+                for i in range(n)
+            }
+            for fut in as_completed(futures):
+                idx, ans, text = fut.result()
+                results.append((idx, ans, text))
+                print(f"    sample {idx + 1}/{n} → {ans}", flush=True)
+        results.sort(key=lambda x: x[0])
+    else:
+        for i in range(n):
+            idx, ans, text = _run_sample(i, problem, client, model, aggregation)
+            results.append((idx, ans, text))
+            print(f"    sample {i + 1}/{n} → {ans}", flush=True)
+
+    answers = [ans for _, ans, _ in results if ans is not None]
+    candidates = [(ans, text) for _, ans, text in results if text is not None]
+
     if not answers:
         return None, {}
+    if aggregation == "genselect":
+        winner = genselect(problem, candidates, client, model, judge=judge)
+        if winner is None:
+            counter = Counter(answers)
+            winner, _ = counter.most_common(1)[0]
+        print(f"    [genselect/{judge}] selected: {winner}", flush=True)
+        return winner, dict(Counter(answers))
     counter = Counter(answers)
     winner, _ = counter.most_common(1)[0]
     return winner, dict(counter)
@@ -220,7 +381,14 @@ def load_reference() -> list[dict]:
 
 
 def run_eval(
-    problems: list[dict], client: OpenAI, model: str, n: int, tag: str
+    problems: list[dict],
+    client: OpenAI,
+    model: str,
+    n: int,
+    tag: str,
+    aggregation: str = "majority",
+    judge: str = "local",
+    parallel: bool = True,
 ) -> None:
     from tqdm import tqdm
 
@@ -231,8 +399,12 @@ def run_eval(
     correct = 0
     rows = []
 
+    judge_label = (
+        f"{aggregation}/{judge}" if aggregation == "genselect" else aggregation
+    )
+    parallel_label = "parallel" if parallel else "sequential"
     print(
-        f"\nEvaluating {len(problems)} problems | model={model} | n={n} | tag={tag}\n"
+        f"\nEvaluating {len(problems)} problems | model={model} | n={n} | tag={tag} | agg={judge_label} | sampling={parallel_label}\n"
     )
     t0 = time.time()
 
@@ -243,7 +415,15 @@ def run_eval(
         pbar.set_description(f"{pid} | correct {correct}/{i}")
         print(f"\n[{i + 1}/{len(problems)}] {pid} | true={true_ans}", flush=True)
 
-        pred, vote_dist = solve_with_voting(p["problem"], client, model, n=n)
+        pred, vote_dist = solve_with_voting(
+            p["problem"],
+            client,
+            model,
+            n=n,
+            aggregation=aggregation,
+            judge=judge,
+            parallel=parallel,
+        )
         is_correct = pred == true_ans
         if is_correct:
             correct += 1
@@ -302,6 +482,23 @@ def main() -> None:
     parser.add_argument(
         "--offset", type=int, default=0, help="Skip first N problems (resume)"
     )
+    parser.add_argument(
+        "--aggregation",
+        choices=["majority", "genselect"],
+        default="majority",
+        help="Answer aggregation method (majority vote or GenSelect model-as-judge)",
+    )
+    parser.add_argument(
+        "--judge",
+        choices=["local", "anthropic"],
+        default="local",
+        help="Judge backend for GenSelect: 'local' uses vLLM, 'anthropic' uses Claude API (no GPU needed)",
+    )
+    parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        help="Disable parallel sampling (default: parallel=True, all N samples sent concurrently to vLLM)",
+    )
     args = parser.parse_args()
 
     client = OpenAI(base_url=LLM_BASE_URL, api_key="local")
@@ -326,7 +523,16 @@ def main() -> None:
     if args.limit:
         problems = problems[: args.limit]
 
-    run_eval(problems, client, model, n=args.n, tag=tag)
+    run_eval(
+        problems,
+        client,
+        model,
+        n=args.n,
+        tag=tag,
+        aggregation=args.aggregation,
+        judge=args.judge,
+        parallel=not args.no_parallel,
+    )
 
 
 if __name__ == "__main__":
