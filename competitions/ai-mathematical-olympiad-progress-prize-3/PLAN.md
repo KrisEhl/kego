@@ -9,36 +9,42 @@ Prize pool: $2.2M. Problems: national olympiad → IMO level, integer answers 0�
 
 ### Current best
 
-**v16 submitted to competition grader — COMPLETE, score pending (AIMO3 doesn't show public scores via CLI).**
+**v19 submitted — includes GPU capability logging + robust install. No public score shown (AIMO3 doesn't expose via CLI).**
 
 - Model: QwQ-32B AWQ via vLLM
 - N=16 samples, majority vote
-- TIR loop: up to 6 steps, but MAX_TOKENS was too high → effectively 1-2 steps (fixed in v17)
-- 2× H100 on Kaggle
+- TIR loop: up to 6 steps, MAX_TOKENS=2397/step (correct)
+- Fatal error pattern detection → exits in ~15s on P100 instead of 600s
+- GPU capability logging via nvidia-smi → will reveal grader GPU type in logs
 
-**v17 regular run complete — ready for tomorrow's submission.**
+**Next submission (v20):** GenSelect + parallel sampling — implement and push when ready.
 
-- Same as v16 but: MAX_TOKENS=(16384-2000)//6=2397 for proper 6-step TIR
-- Also: vLLM wait loop exits immediately on process crash (no 10-min wait on P100)
+### Local baselines (QwQ-32B AWQ, AIME 2025)
 
-### Local baseline (QwQ-32B AWQ, N=4, maj@4, AIME 2025)
+| Run | N | Sampling | MAX_TOKENS | Score | Notes |
+|---|---|---|---|---|---|
+| **maj@4 sequential** | 4 | sequential | 7500 | **8/30 = 26.7%** | Reference baseline |
+| maj@8 sequential | 8 | sequential | 2397 | 3/30 = 10% | MAX_TOKENS too short — model cut off mid-reasoning |
+| **maj@8 parallel** | 8 | parallel | 7500 | **~10-12/30 est.** | Partial (machine went offline at 20/30, was 8/20 = 40%) |
 
-**8/30 = 26.7%** — reference point for all future local comparisons.
+**Key finding:** MAX_TOKENS=2397 is for Kaggle (6 steps × 2397 ≈ 14K, fits in 16K context). For local eval, each sample is independent — use MAX_TOKENS=7500.
 
-Correct: aime25_0 (70), aime25_2 (16), aime25_3 (117), aime25_5 (504), aime25_7 (77), aime25_15 (468), aime25_16 (49), aime25_18 (106).
+**Key finding:** Parallel sampling (ThreadPoolExecutor, N concurrent vLLM requests) is ~5–8× faster with no quality loss. 30 problems in ~60 min vs 7+ hours sequential.
 
-Pattern on misses: many problems where all 4 samples confidently agree on the wrong answer — not a voting problem, the model is genuinely wrong. More samples (N=16) would help marginally but not fix fundamental model capability gaps.
+Correct at N=4: aime25_0 (70), aime25_2 (16), aime25_3 (117), aime25_5 (504), aime25_7 (77), aime25_15 (468), aime25_16 (49), aime25_18 (106).
 
 ### Submissions
 
-| Version | LB Score | Local maj@4 | Notes |
-|---|---|---|---|
-| v11 | failed | — | Bug: `KAGGLE_IS_COMPETITION_RERUN` never set → ran mock server, submitted all-42 |
-| v12 | ERROR | — | Bug: TENSOR_PARALLEL=2 hardcoded, Kaggle regular kernel only has 1 GPU |
-| v13/v14 | ERROR | — | P100 sm_60 incompatibility: vLLM fails → serve() never runs → regular run ERROR |
-| v15 | ERROR | — | Same P100 issue — serve() called but placeholder parquet missing |
-| v16 | COMPLETE (no score shown) | — | Fix: graceful vLLM fallback (VLLM_STARTED flag), placeholder parquet written first |
-| v17 | ready to submit | — | Fix: MAX_TOKENS=2397/step + early vLLM crash detection |
+| Version | LB Score | Notes |
+|---|---|---|
+| v11 | failed | Bug: `KAGGLE_IS_COMPETITION_RERUN` never set → ran mock server, submitted all-42 |
+| v12 | ERROR | Bug: TENSOR_PARALLEL=2 hardcoded, Kaggle regular kernel only has 1 GPU |
+| v13/v14 | ERROR | P100 sm_60 incompatibility: vLLM fails → serve() never runs → regular run ERROR |
+| v15 | ERROR | Same P100 issue — serve() called but placeholder parquet missing |
+| v16 | COMPLETE (no score) | Fix: graceful vLLM fallback, placeholder parquet written first |
+| v17 | COMPLETE | Fix: MAX_TOKENS=2397/step + early vLLM crash detection |
+| v18 | 400 Bad Request | Daily limit already used by v16 |
+| v19 | submitted | GPU capability logging + robust install; score pending |
 
 ---
 
@@ -109,7 +115,7 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=0,1 \
 
 ### Step 1: STATUS — CLOSED (Nemotron W4A16 not viable)
 
-### Step 2: Set up local eval harness
+### Step 2: Set up local eval harness ✓ DONE
 
 Build `eval.py` that:
 - Loads AIME 2024/2025 from HuggingFace datasets
@@ -118,7 +124,7 @@ Build `eval.py` that:
 - Reports pass@1 and maj@N per problem + aggregate accuracy
 - Saves results to CSV for comparison
 
-### Step 3: GenSelect aggregation (replace majority vote)
+### Step 3: GenSelect aggregation (replace majority vote) ✓ IMPLEMENTED (not yet eval'd)
 
 **Highest-leverage improvement from AIMO-2 research.** Instead of majority vote, prompt the model to read N candidate solutions and select the best one. The AIMO-2 1st place team (NVIDIA) used GenSelect and it was their key differentiator.
 
