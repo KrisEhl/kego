@@ -44,6 +44,8 @@ FMIN = 20
 FMAX = 16000
 CLIP_DURATION = 5  # seconds
 CLIP_SAMPLES = SR * CLIP_DURATION
+CLIP_FRAMES = CLIP_SAMPLES // HOP_LENGTH  # ~312 mel time frames per 5s clip
+CACHE_DIR = DATA / "specs_cache"
 
 # ImageNet mean/std (applied per-channel on stacked 3-channel spectrogram)
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -136,6 +138,38 @@ def specaugment(
 
 
 # ---------------------------------------------------------------------------
+# Spec cache helpers
+# ---------------------------------------------------------------------------
+
+
+def load_spec_crop(filename: str, augment: bool = False) -> np.ndarray:
+    """Load a 5s mel spec crop from cache (fast) or compute on-the-fly (slow fallback)."""
+    stem = Path(filename).stem
+    subdir = Path(filename).parent
+    cache_path = CACHE_DIR / subdir / f"{stem}.npy"
+
+    if cache_path.exists():
+        spec = np.load(cache_path).astype(np.float32)  # (n_mels, T)
+        # Random crop to CLIP_FRAMES from the cached full-file spec
+        t = spec.shape[1]
+        if t > CLIP_FRAMES:
+            start = np.random.randint(0, t - CLIP_FRAMES + 1)
+            spec = spec[:, start : start + CLIP_FRAMES]
+        elif t < CLIP_FRAMES:
+            spec = np.pad(spec, ((0, 0), (0, CLIP_FRAMES - t)))
+    else:
+        # Fallback: load audio and compute spec on-the-fly
+        path = DATA / "train_audio" / filename
+        y = load_audio(path)
+        y = crop_or_pad(y)
+        spec = make_melspec(y)
+
+    if augment:
+        spec = specaugment(spec)
+    return spec
+
+
+# ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
 
@@ -179,15 +213,7 @@ class BirdDataset(Dataset):
     def __getitem__(self, idx: int):
         row = self.df.iloc[idx]
         # filename already includes subdirectory e.g. "64898/XC12345.ogg"
-        path = self.audio_dir / row["filename"]
-
-        y = load_audio(path)
-        y = crop_or_pad(y)
-
-        spec = make_melspec(y)
-        if self.augment:
-            spec = specaugment(spec)
-
+        spec = load_spec_crop(row["filename"], augment=self.augment)
         x = spec_to_tensor(spec)
         label = self._make_label(row)
         return x, torch.from_numpy(label)
