@@ -19,6 +19,7 @@ from pathlib import Path
 import librosa
 import numpy as np
 import pandas as pd
+import soundfile as sf
 import timm
 import torch
 import torch.nn as nn
@@ -55,14 +56,29 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
 def load_audio(path: Path, sr: int = SR) -> np.ndarray:
-    y, _ = librosa.load(path, sr=sr, mono=True)
+    """Load audio, reading only a random 5s chunk to avoid loading long files fully."""
+    try:
+        info = sf.info(path)
+        total_frames = info.frames
+        native_sr = info.samplerate
+        clip_frames_native = int(CLIP_DURATION * native_sr)
+        if total_frames > clip_frames_native:
+            max_start = total_frames - clip_frames_native
+            start = np.random.randint(0, max_start + 1)
+            offset = start / native_sr
+        else:
+            offset = 0.0
+        y, _ = librosa.load(
+            path, sr=sr, mono=True, offset=offset, duration=CLIP_DURATION
+        )
+    except Exception:
+        y, _ = librosa.load(path, sr=sr, mono=True, duration=CLIP_DURATION)
     return y
 
 
 def crop_or_pad(y: np.ndarray, length: int = CLIP_SAMPLES) -> np.ndarray:
     if len(y) >= length:
-        start = np.random.randint(0, len(y) - length + 1)
-        return y[start : start + length]
+        return y[:length]
     return np.pad(y, (0, length - len(y)))
 
 
