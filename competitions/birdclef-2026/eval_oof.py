@@ -61,19 +61,19 @@ def run_inference(
 
 
 def compute_cmap(preds: np.ndarray, labels: np.ndarray) -> tuple[float, np.ndarray]:
-    """Class-mean average precision. Skips classes with no positive labels."""
+    """Class-mean average precision. Skips classes with no positive labels.
+    Labels are binarized (>0) to handle soft secondary-label targets.
+    """
+    bin_labels = (labels > 0).astype(np.int32)
     n_classes = labels.shape[1]
     aps = []
-    valid_mask = []
     for c in range(n_classes):
-        if labels[:, c].sum() == 0:
-            valid_mask.append(False)
+        if bin_labels[:, c].sum() == 0:
             aps.append(np.nan)
             continue
-        ap = average_precision_score(labels[:, c], preds[:, c])
+        ap = average_precision_score(bin_labels[:, c], preds[:, c])
         aps.append(ap)
-        valid_mask.append(True)
-    cmap = np.nanmean(aps)
+    cmap = float(np.nanmean(aps))
     return cmap, np.array(aps)
 
 
@@ -135,7 +135,7 @@ def main() -> None:
 
         fold_cmap, fold_aps = compute_cmap(preds, labels)
         try:
-            fold_auc = roc_auc_score(labels, preds, average="macro")
+            fold_auc = roc_auc_score((labels > 0).astype(int), preds, average="macro")
         except ValueError:
             fold_auc = float("nan")
 
@@ -151,7 +151,9 @@ def main() -> None:
     print("\n--- OOF aggregate ---")
     oof_cmap, oof_aps = compute_cmap(all_preds, all_labels)
     try:
-        oof_auc = roc_auc_score(all_labels, all_preds, average="macro")
+        oof_auc = roc_auc_score(
+            (all_labels > 0).astype(int), all_preds, average="macro"
+        )
     except ValueError:
         oof_auc = float("nan")
     print(f"OOF cmAP   : {oof_cmap:.4f}")
@@ -162,7 +164,7 @@ def main() -> None:
         {
             "primary_label": species,
             "ap": oof_aps,
-            "n_positive": all_labels.sum(axis=0).astype(int),
+            "n_positive": (all_labels > 0).sum(axis=0).astype(int),
         }
     ).merge(
         taxonomy[["primary_label", "common_name", "class_name"]],
