@@ -366,7 +366,38 @@ def main() -> None:
             fontweight="bold",
         )
 
-    axes[4, 1].set_visible(False)
+    # 14. 2D histogram: recording count distribution per class
+    ax = axes[4, 1]
+    spp_df = (
+        vc.reset_index()
+        .rename(columns={"primary_label": "primary_label", "count": "n_recordings"})
+        .merge(
+            taxonomy[["primary_label", "class_name"]], on="primary_label", how="left"
+        )
+    )
+    log_bins = np.logspace(0, np.log10(vc.max() + 1), 20)
+    class_order = class_spp.index.tolist()  # sorted by species count desc
+    heatmap = np.zeros((len(class_order), len(log_bins) - 1), dtype=int)
+    for i, cls in enumerate(class_order):
+        vals = spp_df.loc[spp_df["class_name"] == cls, "n_recordings"].values
+        heatmap[i], _ = np.histogram(vals, bins=log_bins)
+    im = ax.imshow(
+        heatmap,
+        aspect="auto",
+        cmap="YlOrRd",
+        extent=[0, len(log_bins) - 1, len(class_order) - 0.5, -0.5],
+    )
+    ax.set_yticks(range(len(class_order)))
+    ax.set_yticklabels(class_order, fontsize=8)
+    bin_centers = (log_bins[:-1] + log_bins[1:]) / 2
+    tick_pos = np.linspace(0, len(log_bins) - 2, 6)
+    tick_vals = [int(bin_centers[min(int(p), len(bin_centers) - 1)]) for p in tick_pos]
+    ax.set_xticks(tick_pos)
+    ax.set_xticklabels(tick_vals, fontsize=7)
+    ax.set_xlabel("Recordings per species")
+    ax.set_title("Species distribution: count vs recordings (2D histogram)")
+    plt.colorbar(im, ax=ax, label="# species", shrink=0.8)
+
     axes[4, 2].set_visible(False)
 
     # 4. Rating distribution

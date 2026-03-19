@@ -36,7 +36,7 @@ from train import (
     spec_to_tensor,
 )
 
-OUT = Path("outputs")
+OUT = Path(__file__).parent / "outputs"
 
 
 class BirdModel(nn.Module):

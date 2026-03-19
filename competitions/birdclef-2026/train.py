@@ -32,7 +32,7 @@ from torch.utils.data import DataLoader, Dataset
 # ---------------------------------------------------------------------------
 
 DATA = Path(os.getenv("KEGO_PATH_DATA", "data")) / "birdclef" / "birdclef-2026"
-OUT = Path("outputs")
+OUT = Path(__file__).parent / "outputs"
 # Species list comes from taxonomy (234 species), not just train (206 species).
 # 28 species have zero training examples — model outputs 0 for them by default.
 
