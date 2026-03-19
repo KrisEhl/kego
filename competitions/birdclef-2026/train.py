@@ -51,6 +51,11 @@ CACHE_DIR = DATA / "specs_cache"
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
+# Baseline config — matches public SED baseline (LB 0.862)
+N_MELS_BASELINE = 224
+N_FFT_BASELINE = 2048
+CACHE_DIR_BASELINE = DATA / "specs_cache_224"
+
 
 # ---------------------------------------------------------------------------
 # Audio utilities
@@ -84,13 +89,15 @@ def crop_or_pad(y: np.ndarray, length: int = CLIP_SAMPLES) -> np.ndarray:
     return np.pad(y, (0, length - len(y)))
 
 
-def make_melspec(y: np.ndarray, sr: int = SR) -> np.ndarray:
+def make_melspec(
+    y: np.ndarray, sr: int = SR, n_mels: int = N_MELS, n_fft: int = N_FFT
+) -> np.ndarray:
     mel = librosa.feature.melspectrogram(
         y=y,
         sr=sr,
-        n_mels=N_MELS,
+        n_mels=n_mels,
         hop_length=HOP_LENGTH,
-        n_fft=N_FFT,
+        n_fft=n_fft,
         fmin=FMIN,
         fmax=FMAX,
     )
@@ -98,14 +105,21 @@ def make_melspec(y: np.ndarray, sr: int = SR) -> np.ndarray:
 
 
 def spec_to_tensor(spec: np.ndarray) -> torch.Tensor:
-    """Normalize and stack to 3-channel tensor for ImageNet-pretrained backbone."""
-    # spec: (n_mels, time) in dB, range roughly [-80, 0]
+    """Z-score + ImageNet normalisation (default pipeline)."""
     spec = (spec - spec.mean()) / (spec.std() + 1e-6)
     img = np.stack([spec, spec, spec], axis=0)  # (3, n_mels, time)
     t = torch.from_numpy(img)
     mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
     std = torch.tensor(IMAGENET_STD).view(3, 1, 1)
     return (t - mean) / std
+
+
+def spec_to_tensor_minmax(spec: np.ndarray) -> torch.Tensor:
+    """Per-sample min-max normalisation (baseline pipeline, no ImageNet stats)."""
+    s_min, s_max = spec.min(), spec.max()
+    spec = (spec - s_min) / (s_max - s_min + 1e-7)
+    img = np.stack([spec, spec, spec], axis=0)
+    return torch.from_numpy(img).float()
 
 
 # ---------------------------------------------------------------------------
@@ -142,27 +156,32 @@ def specaugment(
 # ---------------------------------------------------------------------------
 
 
-def load_spec_crop(filename: str, augment: bool = False) -> np.ndarray:
+def load_spec_crop(
+    filename: str,
+    augment: bool = False,
+    cache_dir: Path = CACHE_DIR,
+    n_mels: int = N_MELS,
+    n_fft: int = N_FFT,
+) -> np.ndarray:
     """Load a 5s mel spec crop from cache (fast) or compute on-the-fly (slow fallback)."""
     stem = Path(filename).stem
     subdir = Path(filename).parent
-    cache_path = CACHE_DIR / subdir / f"{stem}.npy"
+    cache_path = cache_dir / subdir / f"{stem}.npy"
+    clip_frames = CLIP_SAMPLES // HOP_LENGTH
 
     if cache_path.exists():
         spec = np.load(cache_path).astype(np.float32)  # (n_mels, T)
-        # Random crop to CLIP_FRAMES from the cached full-file spec
         t = spec.shape[1]
-        if t > CLIP_FRAMES:
-            start = np.random.randint(0, t - CLIP_FRAMES + 1)
-            spec = spec[:, start : start + CLIP_FRAMES]
-        elif t < CLIP_FRAMES:
-            spec = np.pad(spec, ((0, 0), (0, CLIP_FRAMES - t)))
+        if t > clip_frames:
+            start = np.random.randint(0, t - clip_frames + 1)
+            spec = spec[:, start : start + clip_frames]
+        elif t < clip_frames:
+            spec = np.pad(spec, ((0, 0), (0, clip_frames - t)))
     else:
-        # Fallback: load audio and compute spec on-the-fly
         path = DATA / "train_audio" / filename
         y = load_audio(path)
         y = crop_or_pad(y)
-        spec = make_melspec(y)
+        spec = make_melspec(y, n_mels=n_mels, n_fft=n_fft)
 
     if augment:
         spec = specaugment(spec)
@@ -183,6 +202,10 @@ class BirdDataset(Dataset):
         audio_dir: Path,
         augment: bool = False,
         secondary_weight: float = 0.5,
+        cache_dir: Path = CACHE_DIR,
+        n_mels: int = N_MELS,
+        n_fft: int = N_FFT,
+        minmax_norm: bool = False,
     ):
         self.df = df.reset_index(drop=True)
         self.species_to_idx = species_to_idx
@@ -190,6 +213,10 @@ class BirdDataset(Dataset):
         self.audio_dir = audio_dir
         self.augment = augment
         self.secondary_weight = secondary_weight
+        self.cache_dir = cache_dir
+        self.n_mels = n_mels
+        self.n_fft = n_fft
+        self.minmax_norm = minmax_norm
 
     def __len__(self) -> int:
         return len(self.df)
@@ -212,9 +239,14 @@ class BirdDataset(Dataset):
 
     def __getitem__(self, idx: int):
         row = self.df.iloc[idx]
-        # filename already includes subdirectory e.g. "64898/XC12345.ogg"
-        spec = load_spec_crop(row["filename"], augment=self.augment)
-        x = spec_to_tensor(spec)
+        spec = load_spec_crop(
+            row["filename"],
+            augment=self.augment,
+            cache_dir=self.cache_dir,
+            n_mels=self.n_mels,
+            n_fft=self.n_fft,
+        )
+        x = spec_to_tensor_minmax(spec) if self.minmax_norm else spec_to_tensor(spec)
         label = self._make_label(row)
         return x, torch.from_numpy(label)
 
@@ -266,6 +298,67 @@ class BirdModelSED(nn.Module):
             torch.sigmoid(att).sum(1) + 1e-7
         )
         return clip  # (B, n_classes) probabilities
+
+
+class GEMFreqPool(nn.Module):
+    """Generalised-mean pooling over the frequency axis (learnable exponent)."""
+
+    def __init__(self, p_init: float = 3.0, eps: float = 1e-6):
+        super().__init__()
+        self.p = nn.Parameter(torch.tensor(p_init))
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # (B, C, H, W)
+        p = self.p.clamp(min=1.0)
+        return x.clamp(min=self.eps).pow(p).mean(dim=2).pow(1.0 / p)  # (B, C, W)
+
+
+class AttentionSEDHead(nn.Module):
+    """1D-conv attention head with tanh+softmax — matches public baseline."""
+
+    def __init__(self, feat_dim: int, num_classes: int, dropout: float = 0.1):
+        super().__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+        )
+        self.att_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
+        self.cls_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: (B, C, T)
+        x = self.fc(x.permute(0, 2, 1)).permute(0, 2, 1)  # (B, C, T)
+        att = F.softmax(torch.tanh(self.att_conv(x)), dim=-1)  # (B, n_classes, T)
+        cls = self.cls_conv(x)  # (B, n_classes, T)
+        return torch.sigmoid((att * cls).sum(dim=-1))  # (B, n_classes) probs
+
+
+class BirdModelBaseline(nn.Module):
+    """Replicates public SED baseline: GEMFreqPool + AttentionSEDHead.
+
+    Default backbone: tf_efficientnet_b0.ns_jft_in1k (NoisyStudent JFT pretrained).
+    Returns probabilities — use F.binary_cross_entropy.
+    """
+
+    def __init__(
+        self,
+        backbone: str,
+        n_classes: int,
+        pretrained: bool = True,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.encoder = timm.create_model(
+            backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
+        )
+        feat_dim = self.encoder.num_features
+        self.gem_pool = GEMFreqPool(p_init=3.0)
+        self.head = AttentionSEDHead(feat_dim, n_classes, dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feat = self.encoder(x)  # (B, C, H', T')
+        feat = self.gem_pool(feat)  # (B, C, T')
+        return self.head(feat)  # (B, n_classes) probabilities
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +434,11 @@ def main():
     parser.add_argument(
         "--sed", action="store_true", help="Use SED head (attention pooling over time)"
     )
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Replicate public baseline: n_mels=224, n_fft=2048, GEMFreqPool+AttentionSEDHead, NoisyStudent backbone, minmax norm",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -349,11 +447,34 @@ def main():
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+    # Mel / cache config
+    if args.baseline:
+        cache_dir = CACHE_DIR_BASELINE
+        n_mels_cfg = N_MELS_BASELINE
+        n_fft_cfg = N_FFT_BASELINE
+        minmax_norm = True
+        default_backbone = "tf_efficientnet_b0.ns_jft_in1k"
+    else:
+        cache_dir = CACHE_DIR
+        n_mels_cfg = N_MELS
+        n_fft_cfg = N_FFT
+        minmax_norm = False
+        default_backbone = "efficientnet_b0"
+
+    if args.backbone == "efficientnet_b0" and args.baseline:
+        args.backbone = default_backbone
+
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-    head = "SED" if args.sed else "plain"
+    if args.baseline:
+        head = "baseline"
+    elif args.sed:
+        head = "SED"
+    else:
+        head = "plain"
     print(
         f"Device: {device} | Backbone: {args.backbone} | Head: {head} | Fold: {args.fold}"
     )
+    print(f"Mel: n_mels={n_mels_cfg}, n_fft={n_fft_cfg} | Cache: {cache_dir.name}")
 
     # Load metadata — file is train.csv (not train_metadata.csv)
     meta = pd.read_csv(DATA / "train.csv")
@@ -381,8 +502,15 @@ def main():
         train_df = train_df.head(64)
         val_df = val_df.head(32)
 
-    train_ds = BirdDataset(train_df, species_to_idx, n_species, audio_dir, augment=True)
-    val_ds = BirdDataset(val_df, species_to_idx, n_species, audio_dir, augment=False)
+    ds_kwargs = dict(
+        cache_dir=cache_dir, n_mels=n_mels_cfg, n_fft=n_fft_cfg, minmax_norm=minmax_norm
+    )
+    train_ds = BirdDataset(
+        train_df, species_to_idx, n_species, audio_dir, augment=True, **ds_kwargs
+    )
+    val_ds = BirdDataset(
+        val_df, species_to_idx, n_species, audio_dir, augment=False, **ds_kwargs
+    )
 
     train_loader = DataLoader(
         train_ds,
@@ -400,7 +528,9 @@ def main():
         pin_memory=True,
     )
 
-    if args.sed:
+    if args.baseline:
+        model = BirdModelBaseline(args.backbone, n_species).to(device)
+    elif args.sed:
         model = BirdModelSED(args.backbone, n_species).to(device)
     else:
         model = BirdModel(args.backbone, n_species).to(device)
@@ -412,13 +542,21 @@ def main():
 
     OUT.mkdir(exist_ok=True)
     best_val_loss = float("inf")
-    suffix = "_sed" if args.sed else ""
+    if args.baseline:
+        suffix = "_baseline"
+    elif args.sed:
+        suffix = "_sed"
+    else:
+        suffix = ""
     best_path = OUT / f"{args.backbone}{suffix}_fold{args.fold}.pt"
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-        train_loss = train_epoch(model, train_loader, optimizer, device, sed=args.sed)
-        val_loss = val_epoch(model, val_loader, device, sed=args.sed)
+        is_prob_model = args.sed or args.baseline
+        train_loss = train_epoch(
+            model, train_loader, optimizer, device, sed=is_prob_model
+        )
+        val_loss = val_epoch(model, val_loader, device, sed=is_prob_model)
         scheduler.step()
 
         elapsed = time.time() - t0
@@ -438,7 +576,11 @@ def main():
                     "model": model.state_dict(),
                     "val_loss": val_loss,
                     "sed": args.sed,
+                    "baseline": args.baseline,
                     "backbone": args.backbone,
+                    "n_mels": n_mels_cfg,
+                    "n_fft": n_fft_cfg,
+                    "minmax_norm": minmax_norm,
                 },
                 best_path,
             )

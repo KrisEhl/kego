@@ -21,7 +21,18 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 from tqdm import tqdm
-from train import DATA, FMAX, FMIN, HOP_LENGTH, N_FFT, N_MELS, SR
+from train import (
+    CACHE_DIR_BASELINE,
+    DATA,
+    FMAX,
+    FMIN,
+    HOP_LENGTH,
+    N_FFT,
+    N_FFT_BASELINE,
+    N_MELS,
+    N_MELS_BASELINE,
+    SR,
+)
 
 MAX_DURATION = 30.0  # seconds; longer files are truncated
 CACHE_DIR = DATA / "specs_cache"
@@ -29,7 +40,7 @@ CACHE_DIR = DATA / "specs_cache"
 
 def compute_and_save(args: tuple) -> tuple[str, bool, str]:
     """Worker: load audio, compute mel spec, save as float16 npy."""
-    filename, audio_dir, cache_dir = args
+    filename, audio_dir, cache_dir, n_mels, n_fft = args
     src = audio_dir / filename
     stem = Path(filename).stem
     subdir = Path(filename).parent
@@ -57,9 +68,9 @@ def compute_and_save(args: tuple) -> tuple[str, bool, str]:
         mel = librosa.feature.melspectrogram(
             y=y,
             sr=SR,
-            n_mels=N_MELS,
+            n_mels=n_mels,
             hop_length=HOP_LENGTH,
-            n_fft=N_FFT,
+            n_fft=n_fft,
             fmin=FMIN,
             fmax=FMAX,
         )
@@ -74,11 +85,25 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Compute 224-mel specs (n_fft=2048) into specs_cache_224/ for baseline model",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Only report cache completeness, don't compute",
     )
     args = parser.parse_args()
+
+    if args.baseline:
+        cache_dir = CACHE_DIR_BASELINE
+        n_mels = N_MELS_BASELINE
+        n_fft = N_FFT_BASELINE
+    else:
+        cache_dir = CACHE_DIR
+        n_mels = N_MELS
+        n_fft = N_FFT
 
     train = pd.read_csv(DATA / "train.csv")
     audio_dir = DATA / "train_audio"
@@ -88,23 +113,24 @@ def main() -> None:
         cached = sum(
             1
             for f in filenames
-            if (CACHE_DIR / Path(f).parent / f"{Path(f).stem}.npy").exists()
+            if (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()
         )
         print(f"Cache: {cached}/{len(filenames)} files ({cached / len(filenames):.1%})")
         if cached < len(filenames):
             missing = [
                 f
                 for f in filenames
-                if not (CACHE_DIR / Path(f).parent / f"{Path(f).stem}.npy").exists()
+                if not (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()
             ]
             print(f"Missing: {missing[:5]}{'...' if len(missing) > 5 else ''}")
         return
 
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tasks = [(f, audio_dir, CACHE_DIR) for f in filenames]
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tasks = [(f, audio_dir, cache_dir, n_mels, n_fft) for f in filenames]
 
     print(f"Computing specs for {len(tasks)} files with {args.workers} workers...")
-    print(f"Output: {CACHE_DIR}")
+    print(f"n_mels={n_mels}, n_fft={n_fft}")
+    print(f"Output: {cache_dir}")
 
     ok = skipped = errors = 0
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
@@ -122,7 +148,7 @@ def main() -> None:
                 pbar.update(1)
                 pbar.set_postfix(ok=ok, skip=skipped, err=errors)
 
-    total_gb = sum(f.stat().st_size for f in CACHE_DIR.rglob("*.npy")) / 1024**3
+    total_gb = sum(f.stat().st_size for f in cache_dir.rglob("*.npy")) / 1024**3
     print(f"\nDone. ok={ok}, skipped={skipped}, errors={errors}")
     print(f"Cache size: {total_gb:.1f} GB")
 
