@@ -3,10 +3,10 @@
 Competition: multilabel bird species identification from passive acoustic monitoring (PAM)
 recordings in the Pantanal wetlands, South America.
 
-- **Metric**: Custom multilabel metric (likely padded-cMAP or ROC-AUC per species, then averaged)
+- **Metric**: cmAP (class-mean average precision)
 - **Prize**: $50,000
 - **Deadline**: May 27, 2026
-- **Data**: ~16GB audio (.ogg). 35,549 labeled training clips.
+- **Data**: ~15GB audio (.ogg). 35,549 labeled training clips.
 - **Task**: Given 5s soundscape chunk, predict which of 234 species are present (multilabel)
 
 ### Data facts (confirmed from EDA)
@@ -18,7 +18,7 @@ recordings in the Pantanal wetlands, South America.
 | Target species | **234** (from taxonomy.csv) |
 | Species with training data | **206** (28 zero-shot, mostly sonotype splits `47158son*`) |
 | Primary label format | Mixed: numeric iNat taxon ID OR eBird code (e.g. `ashgre1`) |
-| Filename format | Includes subdirectory: `{taxon_id}/{filename}.ogg` → `train_audio/{filename}` |
+| Filename format | Includes subdirectory: `{taxon_id}/{filename}.ogg` |
 | Class breakdown | Aves 93%, Amphibia 5%, Insecta 1%, Mammalia <1%, Reptilia <1% |
 | Recordings/species | min=1, median=125, max=499 |
 | Secondary labels | 4,372 recordings (12%) have secondary species |
@@ -28,139 +28,145 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best
+### Current best: LB 0.758
 
-None yet. Baseline public SED notebook: **LB 0.862**.
+Gap to public SED baseline (0.862) = ~0.10. Target: beat 0.862 with a bigger backbone + better augmentation.
 
-### Local baseline
+### Results
 
-Not started.
+| Version | LB | OOF cmAP | Notes |
+|---|---|---|---|
+| EfficientNet-B0, 30 epochs | **0.758** | 0.5003 | 5-fold, precomputed spec cache, CPU inference |
+| EfficientNet-B3, 50 epochs | pending | pending | training in progress on 2× RTX 3090 |
 
-### Submissions
+### Kaggle setup
 
-| Version | LB Score | Notes |
-|---|---|---|
-| — | — | Not yet submitted |
+- **Notebook**: `aldisued/birdclef-2026-efficientnet-b0-inference` (v14)
+- **Dataset**: `aldisued/birdclef2026-efficientnet-b0` (5× fold checkpoints, ~85MB)
+- **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
+- Kaggle mounts data at `/kaggle/input/competitions/birdclef-2026/` and datasets at `/kaggle/input/datasets/{owner}/{slug}/`; notebook auto-detects both via glob
 
----
-
-## Architecture: Standard BirdCLEF Approach
-
-Every top BirdCLEF solution uses the same core pipeline:
-
-```
-Audio clip (5s)
-  → Mel-spectrogram (128 mel bins, hop_length=512 @ 32kHz)
-  → CNN backbone (EfficientNet-B3/B4 or ConvNeXt-Small)
-  → Sigmoid output (one logit per species)
-  → BCE loss with label smoothing
-  → Test: sliding window over soundscape, max-pool per species
+### Submit command
+```bash
+cd competitions/birdclef-2026
+kaggle kernels push   # push new version
+kaggle competitions submit -c birdclef-2026 \
+  -k aldisued/birdclef-2026-efficientnet-b0-inference \
+  -f submission.csv -v <VERSION> -m "<description>"
 ```
 
 ---
 
-## Steps (ordered by expected impact)
+## What's done
 
-### Step 1: EDA + data setup
-
-- [ ] Inspect `train_metadata.csv`: species counts, recording durations, geographic spread
-- [ ] Check class distribution — long tail expected (common species >> rare)
-- [ ] Listen to 5-10 samples per species type; understand audio quality
-- [ ] Understand test format: soundscape files → need sliding window inference
-- [ ] Check if unlabeled soundscape data is provided (common in BirdCLEF for self-supervised pretraining)
-
-### Step 2: First training baseline (EfficientNet-B0, fast iteration)
-
-Goal: reproduce ~0.85 LB with minimal code.
-
-**Data pipeline:**
-- Load training clips; resample to 32kHz
-- Crop/pad to 5 seconds
-- Compute log-mel spectrogram: n_mels=128, fmin=20, fmax=16000
-- Normalize per-image (mean/std from ImageNet)
-
-**Model:**
-- `timm.create_model('efficientnet_b0', pretrained=True, num_classes=N_SPECIES)`
-- Replace first conv if needed for 1-channel input (or stack spectrogram 3×)
-
-**Training:**
-- BCE loss + label smoothing 0.05
-- AdamW, cosine LR schedule, 30 epochs
-- Stratified 5-fold CV by species (rare species need to appear in val)
-- Secondary label handling: treat as soft labels (0.5) not hard positives
-
-**Augmentation (audio-domain):**
-- `audiomentations`: AddGaussianNoise, TimeStretch, PitchShift, Shift
-- Mixup on spectrograms (works well for BirdCLEF)
-- Random power (volume) augmentation
-
-**Inference:**
-- Sliding window: 5s chunks with 2.5s overlap over soundscape
-- Max-pool predictions across all chunks per soundscape
-- Threshold at 0.5 (tune on OOF)
-
-### Step 3: Scale up backbone + training tricks
-
-Once baseline is running:
-
-- **EfficientNet-B3/B4 or ConvNeXt-Small** — typical sweet spot for BirdCLEF
-- **Pretrained on AudioSet** via `hear-eval-kit` or `BirdNET` features as additional input
-- **Focal loss** — handles class imbalance better than BCE
-- **CutMix / SpecAugment** — key augmentation for spectrograms
-- **Secondary labels** — use competition-provided secondary labels as soft positives (0.3–0.5)
-- **Longer training** (50–100 epochs) with warmup
-
-### Step 4: Self-supervised pretraining on unlabeled soundscapes *(optional fallback)*
-
-Only pursue if supervised baseline plateaus and there's time budget (~1-2 days of compute).
-
-If unlabeled soundscape data is available (BirdCLEF 2024/2025 included it):
-- Pretrain with BYOL / MoCo on unlabeled Pantanal soundscapes
-- Fine-tune on labeled data
-- Expected gain: +0.02–0.05 LB
-- **Skip if** Step 3 ensemble already beats public SED baseline by a comfortable margin
-
-### Step 5: Ensemble + post-processing
-
-- **Ensemble**: 5-fold × 3 seeds × 2 backbones → 30 models, weighted average
-- **Pseudo-labeling**: generate soft labels on test soundscapes, retrain
-- **Species-specific thresholds**: optimize per-species threshold on OOF (vs global 0.5)
-- **Calibration**: Platt scaling on OOF predictions
+- [x] EDA + data setup (`analyze_data.py`, plots in `plots/`)
+- [x] Training pipeline (`train.py`): EfficientNet-B0, 5-fold, 30 epochs, SpecAugment, mixup, label smoothing
+- [x] Precomputed spec cache (`precompute_specs.py`): float16 .npy, 14× speedup, ~10.5GB
+- [x] OOF evaluation (`eval_oof.py`): cmAP + ROC-AUC per fold
+- [x] Kaggle inference notebook with CPU-only sliding-window inference
+- [x] First LB score: **0.758**
 
 ---
 
-## Hardware Plan
+## Next steps (ordered by expected impact)
 
-Training on **2× RTX 3090** at `kristian@omarchyd.fritz.box`:
+### Step 1: Bigger backbone — EfficientNet-B3 or ConvNeXt-Small *(highest priority)*
+
+EfficientNet-B0 → B3 is a well-known +0.03–0.05 LB jump in BirdCLEF with minimal code changes.
 
 ```bash
-# Single-GPU training (DDP not needed for EfficientNet-B0/B3)
-ssh kristian@omarchyd.fritz.box
-cd ~/projects/kego/competitions/birdclef-2026
-python train.py --fold 0 --backbone efficientnet_b0 --gpu 0
+# train.py already accepts --backbone flag; just change the model name
+BACKBONE=efficientnet_b3
+for FOLD in 0 1 2 3 4; do
+  CUDA_VISIBLE_DEVICES=... uv run python train.py --fold $FOLD --backbone $BACKBONE &
+done
 ```
 
-For full 5-fold training: run 5 parallel jobs (1 GPU each × 2 GPUs → 2 folds at a time).
+Expected: LB ~0.80–0.82.
 
-Data needs to be downloaded/synced to Linux machine:
+### Step 2: Longer training + better augmentation
+
+- 50–60 epochs (currently 30)
+- Increase SpecAugment strength (more time/freq masking)
+- Add CutMix on spectrograms
+- Mixup alpha 0.4 (currently may be lower)
+
+### Step 3: Secondary label handling
+
+Currently secondary labels are soft (0.5). Try:
+- Hard positives at 1.0 (simpler)
+- Focal loss to down-weight easy negatives
+
+### Step 4: SED (Sound Event Detection) head
+
+Top BirdCLEF solutions use a SED head (frame-level predictions + attention pooling) instead of global average pooling. This is likely the main reason the public baseline (0.862) outperforms our model despite both using EfficientNet-B0. The SED head enables the model to localize bird calls within the 5s clip.
+
+Architecture change in `train.py`:
+```python
+# Replace global avg pool + linear head with:
+# Conv → frame-level logits (T, n_classes) → attention-weighted pool
+```
+
+Expected gain: +0.05–0.08 over plain classifier.
+
+### Step 5: Pretrained audio backbone
+
+Use weights pretrained on bird/environmental audio rather than ImageNet. Options investigated:
+
+**Option A — PANNs CNN14 (recommended first try)**
+- Pretrained on Google AudioSet (2M clips, 527 classes incl. many bird/nature sounds)
+- CNN architecture → fast CPU inference (critical for Kaggle scoring)
+- Same mel spectrogram interface as current pipeline; spec cache needs recompute (different mel params)
+- Used by BirdCLEF 2025 winner (ConvNeXt + AudioSet pretraining)
+- Install: `pip install panns-inference` or load via timm
+
+**Option B — DBD-research-group/AST-BirdSet-XCM (HuggingFace)**
+- AST (Audio Spectrogram Transformer) fine-tuned on BirdSet (large Xeno-Canto subset — same source as our data)
+- 86M params, HuggingFace Transformers compatible
+- **Risk**: Transformer CPU inference is 5–10× slower than CNN → may blow 90-min Kaggle scoring limit
+- Worth benchmarking inference speed before committing
+
+**Option C — BirdNET-Analyzer**
+- Cornell Lab classifier trained on ~6000 bird species
+- Harder to integrate (different SR/mel params, proprietary training data)
+- Lower priority
+
+**Decision rule**: Test inference speed on one soundscape file before choosing. If AST processes <2s/soundscape on CPU, it's viable. Otherwise, PANNs CNN14.
+
+### Step 6: Ensemble
+
+Once multiple backbones/configs trained:
+- Average sigmoid outputs across folds and backbones
+- Greedy ensemble selection on OOF cmAP
+
+---
+
+## Hardware
+
+Training on **2× RTX 3090** at `kristian@omarchyd` (Tailscale) / `kristian@omarchyd.fritz.box` (LAN).
+Spec cache at `data/birdclef/birdclef-2026/specs_cache/` (~10.5GB, precomputed).
+
 ```bash
-rsync -avz --rsync-path=/usr/bin/rsync ~/projects/kego/data/birdclef/ \
-  kristian@omarchyd.fritz.box:~/projects/kego/data/birdclef/
+ssh kristian@omarchyd
+cd ~/projects/kego
+git pull
+CUDA_VISIBLE_DEVICES=0 uv run python competitions/birdclef-2026/train.py --fold 0 &
+CUDA_VISIBLE_DEVICES=1 uv run python competitions/birdclef-2026/train.py --fold 1 &
 ```
 
 ---
 
-## Key References
+## Key references
 
-- [BirdCLEF 2025 1st place](https://www.kaggle.com/competitions/birdclef-2025/discussion) — ConvNeXt + AudioSet pretraining
-- [BirdCLEF 2024 solutions](https://www.kaggle.com/competitions/birdclef-2024/discussion)
-- [SED Baseline LB 0.862](https://www.kaggle.com/code/aidensong123/birdclef-2026-sed-baseline-lb-0-862) — starting point
+- [SED Baseline LB 0.862](https://www.kaggle.com/code/aidensong123/birdclef-2026-sed-baseline-lb-0-862)
 - [PyTorch Baseline Inference](https://www.kaggle.com/code/antoinemasq/birdclef-2026-pytorch-baseline-inference)
-- [BirdNET](https://github.com/kahst/BirdNET-Analyzer) — pretrained bird sound model
+- [BirdCLEF 2025 1st place](https://www.kaggle.com/competitions/birdclef-2025/discussion) — ConvNeXt + AudioSet pretraining
+- [BirdNET](https://github.com/kahst/BirdNET-Analyzer)
 
 ---
 
-## Dead Ends / Notes
+## Dead ends / lessons learned
 
-- Raw waveform models (wav2vec2, etc.) generally underperform mel-spectrogram CNNs for BirdCLEF
-- Per-species normalization of spectrograms doesn't help (ImageNet normalization works fine)
+- `enable_gpu: true` in kernel-metadata.json → silent scoring failure (competition GPU limit = 0 min)
+- OOF cmAP (clip-level) ≠ LB cmAP (soundscape-level) — expect a large gap; don't over-optimize OOF
+- Plain classifier head underperforms SED head significantly for soundscape-level scoring

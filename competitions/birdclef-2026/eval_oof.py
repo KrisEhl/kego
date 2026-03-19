@@ -6,15 +6,19 @@ checkpoint and computes:
   - macro ROC-AUC
   - per-class AP (saved to CSV for inspection)
 
+Also evaluates on the 66 labeled train soundscapes (sliding-window, ensemble
+of all fold checkpoints) — this is the closest local proxy to LB.
+
 Usage:
     python eval_oof.py
-    python eval_oof.py --backbone convnext_small  # if you trained a different arch
-    python eval_oof.py --folds 0 1 2              # subset of folds
+    python eval_oof.py --backbone efficientnet_b3
+    python eval_oof.py --skip-soundscapes   # clip OOF only
 """
 
 import argparse
 from pathlib import Path
 
+import librosa
 import numpy as np
 import pandas as pd
 import torch
@@ -24,8 +28,12 @@ from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from train import (
+    CLIP_SAMPLES,
     DATA,
+    SR,
     BirdDataset,
+    make_melspec,
+    spec_to_tensor,
 )
 
 OUT = Path("outputs")
@@ -77,6 +85,89 @@ def compute_cmap(preds: np.ndarray, labels: np.ndarray) -> tuple[float, np.ndarr
     return cmap, np.array(aps)
 
 
+@torch.no_grad()
+def eval_soundscapes(
+    models: list[nn.Module],
+    species: list[str],
+    species_to_idx: dict[str, int],
+    device: torch.device,
+) -> float:
+    """Sliding-window inference on the 66 labeled train soundscapes.
+
+    Uses the full model ensemble (all fold checkpoints averaged).
+    Returns soundscape-level cmAP — much closer to LB than clip OOF.
+    """
+    sc_labels = pd.read_csv(DATA / "train_soundscapes_labels.csv")
+    sc_dir = DATA / "train_soundscapes"
+    n_species = len(species)
+
+    all_preds, all_labels = [], []
+
+    for filename in tqdm(sc_labels["filename"].unique(), desc="Soundscapes"):
+        sc_path = sc_dir / filename
+        if not sc_path.exists():
+            continue
+
+        # Load full soundscape
+        y, _ = librosa.load(sc_path, sr=SR, mono=True)
+
+        # Slice into 5s non-overlapping chunks
+        chunks = []
+        pos = 0
+        while pos + CLIP_SAMPLES <= len(y):
+            chunk = y[pos : pos + CLIP_SAMPLES]
+            chunks.append(spec_to_tensor(make_melspec(chunk)))
+            pos += CLIP_SAMPLES
+        if not chunks:
+            continue
+
+        batch = torch.stack(chunks).to(device)  # (n_chunks, 3, n_mels, t)
+
+        # Ensemble: average sigmoid predictions across all models
+        fold_preds = []
+        for model in models:
+            model.eval()
+            logits = model(batch)
+            fold_preds.append(torch.sigmoid(logits).cpu().numpy())
+        pred_chunks = np.mean(fold_preds, axis=0)  # (n_chunks, n_species)
+
+        # Match labels: sc_labels has one row per 5s chunk
+        sc_rows = sc_labels[sc_labels["filename"] == filename].copy()
+
+        # Convert "HH:MM:SS" end time to chunk index
+        def end_to_idx(end_str: str) -> int:
+            h, m, s = map(int, end_str.split(":"))
+            return (h * 3600 + m * 60 + s) // 5 - 1
+
+        for _, row in sc_rows.iterrows():
+            chunk_idx = end_to_idx(row["end"])
+            if chunk_idx >= len(pred_chunks):
+                continue
+            label = np.zeros(n_species, dtype=np.float32)
+            for sp in str(row["primary_label"]).split(";"):
+                sp = sp.strip()
+                if sp in species_to_idx:
+                    label[species_to_idx[sp]] = 1.0
+            all_preds.append(pred_chunks[chunk_idx])
+            all_labels.append(label)
+
+    if not all_preds:
+        print("No soundscape predictions collected.")
+        return float("nan")
+
+    preds = np.stack(all_preds)  # (N_chunks, n_species)
+    labels = np.stack(all_labels)  # (N_chunks, n_species)
+
+    cmap, aps = compute_cmap(preds, labels)
+
+    # Per-class breakdown (only species that appear in soundscape labels)
+    present = np.where(labels.sum(axis=0) > 0)[0]
+    print("\n--- Soundscape eval ---")
+    print(f"Chunks: {len(preds)} | Species with labels: {len(present)}/234")
+    print(f"Soundscape cmAP: {cmap:.4f}")
+    return cmap
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backbone", default="efficientnet_b0")
@@ -86,6 +177,11 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--skip-soundscapes",
+        action="store_true",
+        help="Skip soundscape-level evaluation",
+    )
     args = parser.parse_args()
 
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
@@ -189,6 +285,27 @@ def main() -> None:
     out_csv = OUT / "oof_per_class_ap.csv"
     ap_df.sort_values("ap").to_csv(out_csv, index=False)
     print(f"\nPer-class AP saved → {out_csv}")
+
+    # Soundscape-level evaluation (closest proxy to LB)
+    if not args.skip_soundscapes and (DATA / "train_soundscapes_labels.csv").exists():
+        print("\n" + "=" * 50)
+        print("SOUNDSCAPE-LEVEL EVALUATION (LB proxy)")
+        print("=" * 50)
+        # Load all available fold checkpoints as an ensemble
+        sc_models = []
+        for fold in range(args.n_folds):
+            ckpt_path = OUT / f"{args.backbone}_fold{fold}.pt"
+            if ckpt_path.exists():
+                ckpt = torch.load(ckpt_path, map_location=device)
+                m = BirdModel(args.backbone, n_species).to(device)
+                m.load_state_dict(ckpt["model"])
+                sc_models.append(m)
+        print(f"Ensemble: {len(sc_models)} fold checkpoints")
+        sc_cmap = eval_soundscapes(sc_models, species, species_to_idx, device)
+        print("\nSummary:")
+        print(f"  Clip OOF cmAP        : {oof_cmap:.4f}")
+        print(f"  Soundscape cmAP      : {sc_cmap:.4f}  ← LB proxy")
+        print("  LB (reference)       : check submissions")
 
 
 if __name__ == "__main__":

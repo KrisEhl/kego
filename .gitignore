@@ -34,6 +34,9 @@ model_data/
 __pycache__/
 *.egg-info/
 
+*.log
+*.parquet
+
 # outputs
 notebooks/ariel/outputs_adc24_intro
 

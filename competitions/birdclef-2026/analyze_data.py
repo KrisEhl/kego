@@ -222,6 +222,58 @@ def main() -> None:
         print("Skipped (--audio-sample 0)")
 
     # -----------------------------------------------------------------------
+    section("RECORDING TYPES (XC metadata)")
+    # -----------------------------------------------------------------------
+    if "type" in train.columns:
+        xc = train[train["collection"] == "XC"].copy()
+        type_counts: dict[str, int] = {}
+        for raw in xc["type"]:
+            try:
+                types = ast.literal_eval(str(raw))
+                for t in types:
+                    t = t.strip()
+                    if t:
+                        type_counts[t] = type_counts.get(t, 0) + 1
+            except (ValueError, SyntaxError):
+                pass
+        type_series = pd.Series(type_counts).sort_values(ascending=False)
+        print(f"XC recordings: {len(xc):,} (iNat has no type metadata)")
+        print("Top recording types:")
+        print(type_series.head(15).to_string())
+    else:
+        type_series = pd.Series(dtype=int)
+
+    # -----------------------------------------------------------------------
+    section("TRAIN SOUNDSCAPES")
+    # -----------------------------------------------------------------------
+    sc_path = DATA / "train_soundscapes_labels.csv"
+    if sc_path.exists():
+        sc = pd.read_csv(sc_path)
+        print(f"Labeled soundscape rows : {len(sc):,}")
+        print(f"Unique soundscapes      : {sc['filename'].nunique()}")
+        n_chunks_per_sc = sc.groupby("filename").size()
+        print(
+            f"Chunks per soundscape   : min={n_chunks_per_sc.min()}, max={n_chunks_per_sc.max()}, median={n_chunks_per_sc.median():.0f}"
+        )
+        print(
+            f"Typical duration        : {n_chunks_per_sc.median() * 5:.0f}s = {n_chunks_per_sc.median() * 5 / 60:.1f} min"
+        )
+        species_per_chunk = sc["primary_label"].str.split(";").str.len()
+        print(
+            f"Species per 5s chunk    : min={species_per_chunk.min()}, max={species_per_chunk.max()}, median={species_per_chunk.median():.1f}, mean={species_per_chunk.mean():.1f}"
+        )
+        print(
+            "\nNote: soundscape labels have multiple co-occurring species per chunk (';'-separated)"
+        )
+        print(
+            "      This reflects real test conditions — very different from isolated training clips."
+        )
+    else:
+        sc = None
+        species_per_chunk = None
+        print("train_soundscapes_labels.csv not found")
+
+    # -----------------------------------------------------------------------
     section("TEST SOUNDSCAPES")
     # -----------------------------------------------------------------------
     test_dir = DATA / "test_soundscapes"
@@ -246,7 +298,7 @@ def main() -> None:
         print("Skipped (--no-plots)")
         return
 
-    fig, axes = plt.subplots(3, 3, figsize=(18, 14))
+    fig, axes = plt.subplots(5, 3, figsize=(18, 22))
     fig.suptitle(
         "BirdCLEF+ 2026 — Training Data Overview", fontsize=14, fontweight="bold"
     )
@@ -272,19 +324,50 @@ def main() -> None:
     ax.set_xlabel("Recordings")
     ax.set_title("Top 25 species")
 
-    # 3. Class breakdown (pie)
+    # 3. Class breakdown — recordings per class (log scale, counts in tick labels)
     ax = axes[0, 2]
-    class_counts = train["class_name"].value_counts()
-    wedge_colors = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2"]
-    ax.pie(
-        class_counts.values,
-        labels=class_counts.index,
-        autopct="%1.1f%%",
-        colors=wedge_colors[: len(class_counts)],
-        startangle=90,
-        textprops={"fontsize": 8},
+    class_recs = train["class_name"].value_counts()
+    class_spp = taxonomy["class_name"].value_counts()
+    classes = class_recs.index.tolist()
+    x = np.arange(len(classes))
+    ax.bar(x, [class_recs.get(c, 0) for c in classes], color="#4e79a7")
+    ax.set_yscale("log")
+    ax.set_xticks(x)
+    ax.set_xticklabels(
+        [
+            f"{c}\n{class_recs.get(c, 0):,} rec\n{class_spp.get(c, 0)} spp"
+            for c in classes
+        ],
+        fontsize=7,
     )
-    ax.set_title("Training recordings by class")
+    ax.set_ylabel("Recordings (log scale)")
+    ax.set_title("Recordings by class (birds dominate)")
+
+    # 13. Species count per class (new)
+    ax = axes[4, 0]
+    classes_tax = class_spp.index.tolist()
+    colors = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f"]
+    bars = ax.bar(
+        classes_tax,
+        [class_spp[c] for c in classes_tax],
+        color=colors[: len(classes_tax)],
+    )
+    ax.set_ylabel("Number of species")
+    ax.set_title("Species count by class (taxonomy)")
+    for bar in bars:
+        h = bar.get_height()
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            h + 0.5,
+            str(int(h)),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+        )
+
+    axes[4, 1].set_visible(False)
+    axes[4, 2].set_visible(False)
 
     # 4. Rating distribution
     ax = axes[1, 0]
@@ -383,6 +466,58 @@ def main() -> None:
     ax.set_title(f"Zero-shot species by class (n={len(zs_df)})")
     for i, (cls, cnt) in enumerate(zs_class.items()):
         ax.text(i, cnt + 0.2, str(cnt), ha="center", fontsize=9)
+
+    # 10. Recording type breakdown (XC only)
+    ax = axes[3, 0]
+    if len(type_series) > 0:
+        top_types = type_series.head(12)
+        ax.barh(range(len(top_types)), top_types.values[::-1], color="steelblue")
+        ax.set_yticks(range(len(top_types)))
+        ax.set_yticklabels(top_types.index[::-1], fontsize=7)
+        ax.set_xlabel("Recordings (XC only)")
+        ax.set_title("Recording types (XC metadata)")
+    else:
+        ax.set_visible(False)
+
+    # 11. Species co-occurrence per chunk in soundscapes
+    ax = axes[3, 1]
+    if species_per_chunk is not None:
+        ax.hist(
+            species_per_chunk,
+            bins=range(1, species_per_chunk.max() + 2),
+            color="coral",
+            edgecolor="white",
+            linewidth=0.5,
+            align="left",
+        )
+        ax.axvline(
+            species_per_chunk.mean(),
+            color="navy",
+            linestyle="--",
+            label=f"mean={species_per_chunk.mean():.1f}",
+        )
+        ax.set_xlabel("Species per 5s chunk")
+        ax.set_ylabel("Chunk count")
+        ax.set_title("Co-occurrence in train soundscapes")
+        ax.legend(fontsize=8)
+    else:
+        ax.set_visible(False)
+
+    # 12. Chunks per soundscape distribution
+    ax = axes[3, 2]
+    if sc is not None:
+        ax.hist(
+            n_chunks_per_sc.values,
+            bins=20,
+            color="mediumseagreen",
+            edgecolor="white",
+            linewidth=0.5,
+        )
+        ax.set_xlabel("Chunks per soundscape (5s each)")
+        ax.set_ylabel("Soundscapes")
+        ax.set_title(f"Soundscape length (n={len(n_chunks_per_sc)} soundscapes)")
+    else:
+        ax.set_visible(False)
 
     plt.tight_layout()
     out_path = Path(args.out)
