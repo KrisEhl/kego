@@ -28,21 +28,21 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB 0.758
+### Current best: LB 0.776
 
-Gap to public SED baseline (0.862) = ~0.10. Target: beat 0.862 with a bigger backbone + better augmentation.
+Gap to public SED baseline (0.862) = ~0.086. Bigger backbone alone is not enough — SED head is the key architectural change needed next.
 
 ### Results
 
 | Version | LB | OOF cmAP | Notes |
 |---|---|---|---|
-| EfficientNet-B0, 30 epochs | **0.758** | 0.5003 | 5-fold, precomputed spec cache, CPU inference |
-| EfficientNet-B3, 50 epochs | pending | pending | training in progress on 2× RTX 3090 |
+| EfficientNet-B0, 30 epochs | 0.758 | 0.5003 | 5-fold, precomputed spec cache, CPU inference |
+| EfficientNet-B3, 50 epochs | **0.776** | pending | 5-fold, val_loss=0.0310, +0.018 vs B0 |
 
 ### Kaggle setup
 
-- **Notebook**: `aldisued/birdclef-2026-efficientnet-b0-inference` (v14)
-- **Dataset**: `aldisued/birdclef2026-efficientnet-b0` (5× fold checkpoints, ~85MB)
+- **Notebook**: `aldisued/birdclef-2026-efficientnet-b3-inference` (v1)
+- **Dataset**: `aldisued/birdclef2026-efficientnet-b3` (5× fold checkpoints, ~215MB)
 - **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
 - Kaggle mounts data at `/kaggle/input/competitions/birdclef-2026/` and datasets at `/kaggle/input/datasets/{owner}/{slug}/`; notebook auto-detects both via glob
 
@@ -70,19 +70,9 @@ kaggle competitions submit -c birdclef-2026 \
 
 ## Next steps (ordered by expected impact)
 
-### Step 1: Bigger backbone — EfficientNet-B3 or ConvNeXt-Small *(highest priority)*
+### ~~Step 1: Bigger backbone — EfficientNet-B3~~ ✓ DONE — LB 0.776
 
-EfficientNet-B0 → B3 is a well-known +0.03–0.05 LB jump in BirdCLEF with minimal code changes.
-
-```bash
-# train.py already accepts --backbone flag; just change the model name
-BACKBONE=efficientnet_b3
-for FOLD in 0 1 2 3 4; do
-  CUDA_VISIBLE_DEVICES=... uv run python train.py --fold $FOLD --backbone $BACKBONE &
-done
-```
-
-Expected: LB ~0.80–0.82.
+B0→B3 gave +0.018 LB (less than expected +0.03–0.05). Plain classifier head is the bottleneck, not backbone size.
 
 ### Step 2: Longer training + better augmentation
 
