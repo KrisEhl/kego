@@ -1,6 +1,7 @@
 # data
 *.txt
 *.json
+!**/kernel-metadata.json
 *.csv
 *.xml
 data/*
