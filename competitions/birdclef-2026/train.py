@@ -238,9 +238,46 @@ class BirdModel(nn.Module):
         return self.backbone(x)
 
 
+class BirdModelSED(nn.Module):
+    """SED head: frame-level predictions + attention pooling over time.
+
+    Keeps spatial feature maps from the backbone (no global pool), pools over
+    the frequency axis, then applies attention-weighted pooling over time frames.
+    Returns clip-level probabilities (not logits) — use F.binary_cross_entropy.
+    """
+
+    def __init__(self, backbone: str, n_classes: int, pretrained: bool = True):
+        super().__init__()
+        self.encoder = timm.create_model(
+            backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
+        )
+        feat_dim = self.encoder.num_features
+        self.fc = nn.Linear(feat_dim, n_classes)
+        self.att = nn.Linear(feat_dim, n_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        feat = self.encoder(x)  # (B, C, H', T') — spatial feature maps
+        feat = feat.mean(dim=2)  # pool over freq → (B, C, T')
+        feat = feat.permute(0, 2, 1)  # (B, T', C)
+        logit = self.fc(feat)  # (B, T', n_classes) — frame logits
+        att = self.att(feat)  # (B, T', n_classes) — attention logits
+        # Attention-weighted clip-level prediction (PANNs-style)
+        clip = (torch.sigmoid(logit) * torch.sigmoid(att)).sum(1) / (
+            torch.sigmoid(att).sum(1) + 1e-7
+        )
+        return clip  # (B, n_classes) probabilities
+
+
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
+
+
+def _bce(preds: torch.Tensor, targets: torch.Tensor, sed: bool) -> torch.Tensor:
+    """BCE loss — with_logits for plain model, standard BCE for SED (probs)."""
+    if sed:
+        return F.binary_cross_entropy(preds, targets)
+    return F.binary_cross_entropy_with_logits(preds, targets)
 
 
 def train_epoch(
@@ -250,6 +287,7 @@ def train_epoch(
     device: torch.device,
     use_mixup: bool = True,
     label_smoothing: float = 0.05,
+    sed: bool = False,
 ) -> float:
     model.train()
     total_loss = 0.0
@@ -257,10 +295,9 @@ def train_epoch(
         x, y = x.to(device), y.to(device)
         if use_mixup:
             x, y = mixup(x, y)
-        # Label smoothing
         y = y * (1 - label_smoothing) + label_smoothing / 2
-        logits = model(x)
-        loss = F.binary_cross_entropy_with_logits(logits, y)
+        preds = model(x)
+        loss = _bce(preds, y, sed)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -269,13 +306,15 @@ def train_epoch(
 
 
 @torch.no_grad()
-def val_epoch(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
+def val_epoch(
+    model: nn.Module, loader: DataLoader, device: torch.device, sed: bool = False
+) -> float:
     model.eval()
     total_loss = 0.0
     for x, y in loader:
         x, y = x.to(device), y.to(device)
-        logits = model(x)
-        loss = F.binary_cross_entropy_with_logits(logits, y)
+        preds = model(x)
+        loss = _bce(preds, y, sed)
         total_loss += loss.item()
     return total_loss / len(loader)
 
@@ -299,6 +338,9 @@ def main():
     parser.add_argument(
         "--smoke", action="store_true", help="Smoke test: 2 epochs, 64 samples"
     )
+    parser.add_argument(
+        "--sed", action="store_true", help="Use SED head (attention pooling over time)"
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -308,7 +350,10 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device} | Backbone: {args.backbone} | Fold: {args.fold}")
+    head = "SED" if args.sed else "plain"
+    print(
+        f"Device: {device} | Backbone: {args.backbone} | Head: {head} | Fold: {args.fold}"
+    )
 
     # Load metadata — file is train.csv (not train_metadata.csv)
     meta = pd.read_csv(DATA / "train.csv")
@@ -355,7 +400,10 @@ def main():
         pin_memory=True,
     )
 
-    model = BirdModel(args.backbone, n_species).to(device)
+    if args.sed:
+        model = BirdModelSED(args.backbone, n_species).to(device)
+    else:
+        model = BirdModel(args.backbone, n_species).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -364,12 +412,13 @@ def main():
 
     OUT.mkdir(exist_ok=True)
     best_val_loss = float("inf")
-    best_path = OUT / f"{args.backbone}_fold{args.fold}.pt"
+    suffix = "_sed" if args.sed else ""
+    best_path = OUT / f"{args.backbone}{suffix}_fold{args.fold}.pt"
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-        train_loss = train_epoch(model, train_loader, optimizer, device)
-        val_loss = val_epoch(model, val_loader, device)
+        train_loss = train_epoch(model, train_loader, optimizer, device, sed=args.sed)
+        val_loss = val_epoch(model, val_loader, device, sed=args.sed)
         scheduler.step()
 
         elapsed = time.time() - t0
@@ -384,7 +433,13 @@ def main():
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(
-                {"epoch": epoch, "model": model.state_dict(), "val_loss": val_loss},
+                {
+                    "epoch": epoch,
+                    "model": model.state_dict(),
+                    "val_loss": val_loss,
+                    "sed": args.sed,
+                    "backbone": args.backbone,
+                },
                 best_path,
             )
 
