@@ -525,6 +525,11 @@ def main():
         action="store_true",
         help="Replicate public baseline: n_mels=224, n_fft=2048, GEMFreqPool+AttentionSEDHead, NoisyStudent backbone, minmax norm",
     )
+    parser.add_argument(
+        "--hard-labels",
+        action="store_true",
+        help="Treat secondary labels as hard positives (weight=1.0) instead of soft (0.5)",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -569,6 +574,7 @@ def main():
     print(
         f"SpecAugment: freq_mask={freq_mask}×{args.n_freq_masks}, time_mask={time_mask}×{args.n_time_masks}"
     )
+    print(f"Secondary labels: {'hard (1.0)' if args.hard_labels else 'soft (0.5)'}")
 
     # Load metadata — file is train.csv (not train_metadata.csv)
     meta = pd.read_csv(DATA / "train.csv")
@@ -596,6 +602,7 @@ def main():
         train_df = train_df.head(64)
         val_df = val_df.head(32)
 
+    secondary_weight = 1.0 if args.hard_labels else 0.5
     ds_kwargs = dict(
         cache_dir=cache_dir,
         n_mels=n_mels_cfg,
@@ -605,6 +612,7 @@ def main():
         time_mask=time_mask,
         n_freq_masks=args.n_freq_masks,
         n_time_masks=args.n_time_masks,
+        secondary_weight=secondary_weight,
     )
     train_ds = BirdDataset(
         train_df, species_to_idx, n_species, audio_dir, augment=True, **ds_kwargs
@@ -691,6 +699,7 @@ def main():
                     "n_mels": n_mels_cfg,
                     "n_fft": n_fft_cfg,
                     "minmax_norm": minmax_norm,
+                    "hard_labels": args.hard_labels,
                 },
                 best_path,
             )
