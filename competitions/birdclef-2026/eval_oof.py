@@ -48,9 +48,14 @@ from train import (
 OUT = Path(__file__).parent / "outputs"
 
 
-def load_model_from_ckpt(ckpt: dict, n_species: int, device: torch.device) -> nn.Module:
+def load_model_from_ckpt(
+    ckpt: dict,
+    n_species: int,
+    device: torch.device,
+    default_backbone: str = "efficientnet_b0",
+) -> nn.Module:
     """Instantiate and load the correct model class from checkpoint metadata."""
-    backbone = ckpt.get("backbone", "efficientnet_b0")
+    backbone = ckpt.get("backbone") or default_backbone
     baseline = ckpt.get("baseline", False)
     sed = ckpt.get("sed", False)
     if baseline:
@@ -261,7 +266,9 @@ def main() -> None:
             pin_memory=True,
         )
 
-        model = load_model_from_ckpt(ckpt, n_species, device)
+        model = load_model_from_ckpt(
+            ckpt, n_species, device, default_backbone=args.backbone
+        )
 
         preds, labels = run_inference(model, val_loader, device)
         all_preds[val_idx] = preds
@@ -335,7 +342,9 @@ def main() -> None:
             ckpt_path = OUT / f"{args.backbone}_fold{fold}.pt"
             if ckpt_path.exists():
                 ckpt = torch.load(ckpt_path, map_location=device)
-                model = load_model_from_ckpt(ckpt, n_species, device)
+                model = load_model_from_ckpt(
+                    ckpt, n_species, device, default_backbone=args.backbone
+                )
                 cfg = dataset_kwargs_from_ckpt(ckpt)
                 sc_models_cfg.append(
                     (model, cfg["n_mels"], cfg["n_fft"], cfg["minmax_norm"])
