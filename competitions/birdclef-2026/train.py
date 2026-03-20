@@ -341,7 +341,11 @@ class GEMFreqPool(nn.Module):
 
 
 class AttentionSEDHead(nn.Module):
-    """1D-conv attention head with tanh+softmax — matches public baseline."""
+    """1D-conv attention head with tanh+softmax — matches public baseline.
+
+    Returns (clip_probs, frame_logits) during training for dual loss.
+    Returns clip_probs only during inference.
+    """
 
     def __init__(self, feat_dim: int, num_classes: int, dropout: float = 0.1):
         super().__init__()
@@ -353,18 +357,22 @@ class AttentionSEDHead(nn.Module):
         self.att_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
         self.cls_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: (B, C, T)
+    def forward(self, x: torch.Tensor):  # x: (B, C, T)
         x = self.fc(x.permute(0, 2, 1)).permute(0, 2, 1)  # (B, C, T)
         att = F.softmax(torch.tanh(self.att_conv(x)), dim=-1)  # (B, n_classes, T)
-        cls = self.cls_conv(x)  # (B, n_classes, T)
-        return torch.sigmoid((att * cls).sum(dim=-1))  # (B, n_classes) probs
+        cls = self.cls_conv(x)  # (B, n_classes, T) — logits
+        clip_probs = torch.sigmoid((att * cls).sum(dim=-1))  # (B, n_classes)
+        if self.training:
+            return clip_probs, cls  # also return frame logits for dual loss
+        return clip_probs
 
 
 class BirdModelBaseline(nn.Module):
     """Replicates public SED baseline: GEMFreqPool + AttentionSEDHead.
 
     Default backbone: tf_efficientnet_b0.ns_jft_in1k (NoisyStudent JFT pretrained).
-    Returns probabilities — use F.binary_cross_entropy.
+    Training: returns (clip_probs, frame_logits) for dual clip+frame loss.
+    Inference: returns clip_probs only.
     """
 
     def __init__(
@@ -382,10 +390,10 @@ class BirdModelBaseline(nn.Module):
         self.gem_pool = GEMFreqPool(p_init=3.0)
         self.head = AttentionSEDHead(feat_dim, n_classes, dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor):
         feat = self.encoder(x)  # (B, C, H', T')
         feat = self.gem_pool(feat)  # (B, C, T')
-        return self.head(feat)  # (B, n_classes) probabilities
+        return self.head(feat)  # clip_probs or (clip_probs, frame_logits)
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +408,25 @@ def _bce(preds: torch.Tensor, targets: torch.Tensor, sed: bool) -> torch.Tensor:
     return F.binary_cross_entropy_with_logits(preds, targets)
 
 
+def _dual_loss(
+    out, targets: torch.Tensor, label_smoothing: float = 0.05
+) -> torch.Tensor:
+    """Dual clip+frame loss for BirdModelBaseline.
+
+    out: (clip_probs, frame_logits) where frame_logits is (B, n_classes, T).
+    Clip loss: BCE on attention-pooled probs.
+    Frame loss: BCE-with-logits averaged over time frames (each frame supervised
+    with the clip-level label, as in the public baseline).
+    """
+    clip_probs, frame_logits = out
+    targets_smooth = targets * (1 - label_smoothing) + label_smoothing / 2
+    clip_loss = F.binary_cross_entropy(clip_probs, targets_smooth)
+    # frame_logits: (B, n_classes, T) — expand targets to (B, n_classes, T)
+    frame_targets = targets_smooth.unsqueeze(-1).expand_as(frame_logits)
+    frame_loss = F.binary_cross_entropy_with_logits(frame_logits, frame_targets)
+    return 0.5 * clip_loss + 0.5 * frame_loss
+
+
 def train_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -408,6 +435,7 @@ def train_epoch(
     use_mixup: bool = True,
     label_smoothing: float = 0.05,
     sed: bool = False,
+    baseline: bool = False,
 ) -> float:
     model.train()
     total_loss = 0.0
@@ -415,9 +443,12 @@ def train_epoch(
         x, y = x.to(device), y.to(device)
         if use_mixup:
             x, y = mixup(x, y)
-        y = y * (1 - label_smoothing) + label_smoothing / 2
-        preds = model(x)
-        loss = _bce(preds, y, sed)
+        out = model(x)
+        if baseline:
+            loss = _dual_loss(out, y, label_smoothing)
+        else:
+            y_smooth = y * (1 - label_smoothing) + label_smoothing / 2
+            loss = _bce(out, y_smooth, sed)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -427,14 +458,22 @@ def train_epoch(
 
 @torch.no_grad()
 def val_epoch(
-    model: nn.Module, loader: DataLoader, device: torch.device, sed: bool = False
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    sed: bool = False,
+    baseline: bool = False,
 ) -> float:
     model.eval()
     total_loss = 0.0
     for x, y in loader:
         x, y = x.to(device), y.to(device)
-        preds = model(x)
-        loss = _bce(preds, y, sed)
+        out = model(x)
+        if baseline:
+            # val: model is in eval mode → returns clip_probs only
+            loss = F.binary_cross_entropy(out, y)
+        else:
+            loss = _bce(out, y, sed)
         total_loss += loss.item()
     return total_loss / len(loader)
 
@@ -501,9 +540,9 @@ def main():
         n_fft_cfg = N_FFT_BASELINE
         minmax_norm = True
         default_backbone = "tf_efficientnet_b0.ns_jft_in1k"
-        # Stronger SpecAugment defaults for 224-mel baseline (match public baseline)
-        freq_mask = args.freq_mask if args.freq_mask > 0 else 27
-        time_mask = args.time_mask if args.time_mask > 0 else 100
+        # SpecAugment defaults matching public baseline
+        freq_mask = args.freq_mask if args.freq_mask > 0 else 30
+        time_mask = args.time_mask if args.time_mask > 0 else 30
     else:
         cache_dir = CACHE_DIR
         n_mels_cfg = N_MELS
@@ -617,9 +656,16 @@ def main():
         t0 = time.time()
         is_prob_model = args.sed or args.baseline
         train_loss = train_epoch(
-            model, train_loader, optimizer, device, sed=is_prob_model
+            model,
+            train_loader,
+            optimizer,
+            device,
+            sed=is_prob_model,
+            baseline=args.baseline,
         )
-        val_loss = val_epoch(model, val_loader, device, sed=is_prob_model)
+        val_loss = val_epoch(
+            model, val_loader, device, sed=is_prob_model, baseline=args.baseline
+        )
         scheduler.step()
 
         elapsed = time.time() - t0
