@@ -30,16 +30,21 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB 0.782
 
-Gap to public SED baseline (0.862) = ~0.08. Most likely cause: augmentation (SpecAugment freq/time masking).
+Gap to public SED baseline (0.862) = ~0.08. Adding dual frame+clip loss + SpecAugment fix in progress.
 
 ### Results
 
-| Version | LB | Notes |
-|---|---|---|
-| EfficientNet-B0 plain, 30 epochs | 0.758 | 5-fold, precomputed spec cache |
-| EfficientNet-B3 plain, 50 epochs | 0.776 | 5-fold, val_loss=0.031 |
-| EfficientNet-B3 naive SED, 50 epochs | 0.750 | worse — too few temporal frames (~10) |
-| **B0 NoisyStudent + GEMFreqPool + AttentionSED, 50ep** | **0.782** | n_mels=224, specs_cache_224/, minmax norm |
+| Version | LB | Clip OOF cmAP | Soundscape cmAP | Notes |
+|---|---|---|---|---|
+| EfficientNet-B0 plain, 30 epochs | 0.758 | 0.4985 | 0.1503 | 5-fold, 128-mel |
+| EfficientNet-B3 plain, 50 epochs | 0.776 | 0.4851 | 0.1835 | 5-fold, 128-mel |
+| EfficientNet-B3 naive SED, 50 epochs | 0.750 | 0.6135 | 0.2994 | worse LB despite higher local — too few temporal frames |
+| **B0 NoisyStudent + GEMFreqPool + AttentionSED, 50ep** | **0.782** | — | — | 224-mel, minmax norm, time_mask=100 (wrong) |
+| B0 baseline + dual loss + time_mask=30 | pending | — | — | folds 0+1 done; 2-4 retraining overnight |
+
+### Local validation findings
+
+**Neither clip OOF nor soundscape cmAP reliably predicts LB ranking.** B3-SED has highest local scores but lowest LB (0.750). Root cause: the 66 train soundscapes only cover 75/234 species — not representative of test set. **Use LB submissions as ground truth; local metrics only useful as coarse sanity checks.**
 
 ### Architecture comparison vs public baseline
 
@@ -47,9 +52,10 @@ Gap to public SED baseline (0.862) = ~0.08. Most likely cause: augmentation (Spe
 |---|---|---|
 | Backbone | tf_efficientnet_b0.ns_jft_in1k | same |
 | Head | GEMFreqPool + AttentionSED | same |
-| **SpecAugment** | ❌ none | ✅ likely freq+time masking |
+| **Dual loss** | ✅ (folds 0+1) / ❌ (folds 2-4, retraining) | ✅ 0.5×clip + 0.5×frame |
+| **SpecAugment** | ✅ freq=30×2, time=30×2 | ✅ same |
 | Mixup | ✅ | ✅ |
-| Training epochs | ~30–50 (early stopping) | unknown |
+| Training | early stopping, patience=15 | unknown |
 
 ### Kaggle setup
 
@@ -79,18 +85,19 @@ kaggle competitions submit -c birdclef-2026 \
 - [x] `BirdModelBaseline`: GEMFreqPool + AttentionSED head, NoisyStudent backbone — LB **0.782**
 - [x] Early stopping (`--patience`, default 10) — models converge around epoch 25–50
 - [x] Dead end: naive SED head (0.750) — too few temporal frames; replaced by proper GEMFreqPool+AttentionSED
+- [x] Dual frame+clip loss: `0.5 * clip_BCE + 0.5 * frame_BCE` — key difference vs public baseline
+- [x] SpecAugment fix: time_mask=30 frames (was 100 — too aggressive, ~1.6s masked)
+- [ ] Retrain all 5 folds with dual loss consistently (folds 0+1 done, 2-4 overnight)
 
 ---
 
 ## Next steps (ordered by expected impact)
 
-### Step 1: SpecAugment — expected +0.03–0.05
+### Step 1: SpecAugment + Dual loss — IN PROGRESS
 
-Most likely cause of gap to public baseline (0.862). Add frequency masking + time masking to spectrogram during training:
-- `FreqMask`: zero out F consecutive mel bins (e.g. F=27, 2 masks)
-- `TimeMask`: zero out T consecutive time frames (e.g. T=100, 2 masks)
-- Apply after mel spec computation, before normalization
-- Standard in all top audio classification solutions
+✅ SpecAugment implemented: freq_mask=30×2, time_mask=30×2
+✅ Dual loss: `0.5 * clip_BCE + 0.5 * frame_BCE`
+⏳ Retraining all 5 folds overnight — submit when complete
 
 ### Step 2: Secondary label handling
 
@@ -155,7 +162,8 @@ CUDA_VISIBLE_DEVICES=1 uv run python competitions/birdclef-2026/train.py --fold 
 ## Dead ends / lessons learned
 
 - `enable_gpu: true` in kernel-metadata.json → silent scoring failure (competition GPU limit = 0 min)
-- OOF cmAP (clip-level) ≠ LB cmAP (soundscape-level) — expect a large gap; don't over-optimize OOF
+- OOF cmAP (clip-level) ≠ LB cmAP (soundscape-level) — large gap expected; don't optimize OOF
+- **Soundscape cmAP also unreliable as LB proxy**: 66 train soundscapes cover only 75/234 species → B3-SED scores highest locally (0.2994) but lowest LB (0.750). Use LB submissions as ground truth.
 - Plain classifier head underperforms SED head significantly for soundscape-level scoring
 - Naive SED head (mean freq pool + sigmoid attention): 0.750 — worse than plain B3 (0.776) due to only ~10 temporal frames after 32× backbone downsampling
 - Longer training beyond ~50 epochs doesn't help — val loss plateau is flat; early stopping with patience=15 is appropriate
