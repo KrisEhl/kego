@@ -1,6 +1,6 @@
 {
-  "id": "aldisued/birdclef-2026-efficientnet-b3-sed-inference",
-  "title": "BirdCLEF 2026 EfficientNet-B3 SED Inference",
+  "id": "aldisued/birdclef-2026-baseline-inference",
+  "title": "BirdCLEF 2026 Baseline Inference",
   "code_file": "kaggle_inference.ipynb",
   "language": "python",
   "kernel_type": "notebook",
@@ -8,7 +8,7 @@
   "enable_gpu": false,
   "enable_tpu": false,
   "enable_internet": false,
-  "dataset_sources": ["aldisued/birdclef2026-efficientnet-b3-sed"],
+  "dataset_sources": ["aldisued/birdclef2026-baseline"],
   "competition_sources": ["birdclef-2026"],
   "kernel_sources": []
 }
