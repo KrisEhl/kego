@@ -56,6 +56,13 @@ N_MELS_BASELINE = 224
 N_FFT_BASELINE = 2048
 CACHE_DIR_BASELINE = DATA / "specs_cache_224"
 
+# BirdSet config — EfficientNet-B1 pretrained on 9,736 Xeno-Canto species
+N_MELS_BIRDSET = 256
+N_FFT_BIRDSET = 2048
+HOP_LENGTH_BIRDSET = 256
+CACHE_DIR_BIRDSET = DATA / "specs_cache_256"
+CLIP_FRAMES_BIRDSET = CLIP_SAMPLES // HOP_LENGTH_BIRDSET  # 625 frames per 5s
+
 
 # ---------------------------------------------------------------------------
 # Audio utilities
@@ -122,6 +129,13 @@ def spec_to_tensor_minmax(spec: np.ndarray) -> torch.Tensor:
     return torch.from_numpy(img).float()
 
 
+def spec_to_tensor_birdset(spec: np.ndarray) -> torch.Tensor:
+    """1-channel per-sample min-max normalisation for BirdSet EfficientNet-B1."""
+    s_min, s_max = spec.min(), spec.max()
+    spec = (spec - s_min) / (s_max - s_min + 1e-7)
+    return torch.from_numpy(spec[np.newaxis]).float()  # (1, n_mels, time)
+
+
 # ---------------------------------------------------------------------------
 # Augmentation
 # ---------------------------------------------------------------------------
@@ -167,6 +181,7 @@ def load_spec_crop(
     cache_dir: Path = CACHE_DIR,
     n_mels: int = N_MELS,
     n_fft: int = N_FFT,
+    hop_length: int = HOP_LENGTH,
     freq_mask: int = 20,
     time_mask: int = 30,
     n_freq_masks: int = 1,
@@ -176,7 +191,7 @@ def load_spec_crop(
     stem = Path(filename).stem
     subdir = Path(filename).parent
     cache_path = cache_dir / subdir / f"{stem}.npy"
-    clip_frames = CLIP_SAMPLES // HOP_LENGTH
+    clip_frames = CLIP_SAMPLES // hop_length
 
     if cache_path.exists():
         spec = np.load(cache_path).astype(np.float32)  # (n_mels, T)
@@ -220,7 +235,9 @@ class BirdDataset(Dataset):
         cache_dir: Path = CACHE_DIR,
         n_mels: int = N_MELS,
         n_fft: int = N_FFT,
+        hop_length: int = HOP_LENGTH,
         minmax_norm: bool = False,
+        birdset_norm: bool = False,
         freq_mask: int = 20,
         time_mask: int = 30,
         n_freq_masks: int = 1,
@@ -235,7 +252,9 @@ class BirdDataset(Dataset):
         self.cache_dir = cache_dir
         self.n_mels = n_mels
         self.n_fft = n_fft
+        self.hop_length = hop_length
         self.minmax_norm = minmax_norm
+        self.birdset_norm = birdset_norm
         self.freq_mask = freq_mask
         self.time_mask = time_mask
         self.n_freq_masks = n_freq_masks
@@ -268,12 +287,18 @@ class BirdDataset(Dataset):
             cache_dir=self.cache_dir,
             n_mels=self.n_mels,
             n_fft=self.n_fft,
+            hop_length=self.hop_length,
             freq_mask=self.freq_mask,
             time_mask=self.time_mask,
             n_freq_masks=self.n_freq_masks,
             n_time_masks=self.n_time_masks,
         )
-        x = spec_to_tensor_minmax(spec) if self.minmax_norm else spec_to_tensor(spec)
+        if self.birdset_norm:
+            x = spec_to_tensor_birdset(spec)
+        elif self.minmax_norm:
+            x = spec_to_tensor_minmax(spec)
+        else:
+            x = spec_to_tensor(spec)
         label = self._make_label(row)
         return x, torch.from_numpy(label)
 
@@ -393,6 +418,35 @@ class BirdModelBaseline(nn.Module):
     def forward(self, x: torch.Tensor):
         feat = self.encoder(x)  # (B, C, H', T')
         feat = self.gem_pool(feat)  # (B, C, T')
+        return self.head(feat)  # clip_probs or (clip_probs, frame_logits)
+
+
+class BirdModelBirdSet(nn.Module):
+    """EfficientNet-B1 pretrained on BirdSet XCL (9,736 Xeno-Canto species).
+
+    HuggingFace backbone + GEMFreqPool + AttentionSEDHead.
+    Input: 1-channel mel spec (256 mels, hop=256).
+    Training: returns (clip_probs, frame_logits) for dual loss.
+    Inference: returns clip_probs only.
+    """
+
+    FEAT_DIM = 1280  # EfficientNet-B1 final feature channels
+
+    def __init__(self, n_classes: int, dropout: float = 0.1):
+        super().__init__()
+        from transformers import EfficientNetModel
+
+        self.encoder = EfficientNetModel.from_pretrained(
+            "DBD-research-group/EfficientNet-B1-BirdSet-XCL"
+        )
+        self.gem_pool = GEMFreqPool(p_init=3.0)
+        self.head = AttentionSEDHead(self.FEAT_DIM, n_classes, dropout)
+
+    def forward(self, x: torch.Tensor):
+        # x: (B, 1, H, W) — 1-channel mel spec
+        out = self.encoder(pixel_values=x)
+        feat = out.last_hidden_state  # (B, C, H', W')
+        feat = self.gem_pool(feat)  # (B, C, T') — pool over freq axis
         return self.head(feat)  # clip_probs or (clip_probs, frame_logits)
 
 
@@ -530,6 +584,11 @@ def main():
         action="store_true",
         help="Treat secondary labels as hard positives (weight=1.0) instead of soft (0.5)",
     )
+    parser.add_argument(
+        "--birdset",
+        action="store_true",
+        help="Use EfficientNet-B1 pretrained on BirdSet XCL (9,736 Xeno-Canto species)",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -539,7 +598,18 @@ def main():
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     # Mel / cache config
-    if args.baseline:
+    hop_length_cfg = HOP_LENGTH
+    birdset_norm = False
+    if args.birdset:
+        cache_dir = CACHE_DIR_BIRDSET
+        n_mels_cfg = N_MELS_BIRDSET
+        n_fft_cfg = N_FFT_BIRDSET
+        hop_length_cfg = HOP_LENGTH_BIRDSET
+        minmax_norm = False
+        birdset_norm = True
+        freq_mask = args.freq_mask if args.freq_mask > 0 else 30
+        time_mask = args.time_mask if args.time_mask > 0 else 30
+    elif args.baseline:
         cache_dir = CACHE_DIR_BASELINE
         n_mels_cfg = N_MELS_BASELINE
         n_fft_cfg = N_FFT_BASELINE
@@ -561,7 +631,9 @@ def main():
         args.backbone = default_backbone
 
     device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
-    if args.baseline:
+    if args.birdset:
+        head = "birdset"
+    elif args.baseline:
         head = "baseline"
     elif args.sed:
         head = "SED"
@@ -607,7 +679,9 @@ def main():
         cache_dir=cache_dir,
         n_mels=n_mels_cfg,
         n_fft=n_fft_cfg,
+        hop_length=hop_length_cfg,
         minmax_norm=minmax_norm,
+        birdset_norm=birdset_norm,
         freq_mask=freq_mask,
         time_mask=time_mask,
         n_freq_masks=args.n_freq_masks,
@@ -637,7 +711,9 @@ def main():
         pin_memory=True,
     )
 
-    if args.baseline:
+    if args.birdset:
+        model = BirdModelBirdSet(n_species).to(device)
+    elif args.baseline:
         model = BirdModelBaseline(args.backbone, n_species).to(device)
     elif args.sed:
         model = BirdModelSED(args.backbone, n_species).to(device)
@@ -652,27 +728,31 @@ def main():
     OUT.mkdir(exist_ok=True)
     best_val_loss = float("inf")
     epochs_no_improve = 0
-    if args.baseline:
+    if args.birdset:
+        suffix = "_birdset"
+    elif args.baseline:
         suffix = "_baseline"
     elif args.sed:
         suffix = "_sed"
     else:
         suffix = ""
-    best_path = OUT / f"{args.backbone}{suffix}_fold{args.fold}.pt"
+    ckpt_name = "efficientnet_b1_birdset" if args.birdset else args.backbone
+    best_path = OUT / f"{ckpt_name}{suffix}_fold{args.fold}.pt"
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-        is_prob_model = args.sed or args.baseline
+        is_prob_model = args.sed or args.baseline or args.birdset
+        use_dual_loss = args.baseline or args.birdset
         train_loss = train_epoch(
             model,
             train_loader,
             optimizer,
             device,
             sed=is_prob_model,
-            baseline=args.baseline,
+            baseline=use_dual_loss,
         )
         val_loss = val_epoch(
-            model, val_loader, device, sed=is_prob_model, baseline=args.baseline
+            model, val_loader, device, sed=is_prob_model, baseline=use_dual_loss
         )
         scheduler.step()
 
@@ -695,9 +775,11 @@ def main():
                     "val_loss": val_loss,
                     "sed": args.sed,
                     "baseline": args.baseline,
+                    "birdset": args.birdset,
                     "backbone": args.backbone,
                     "n_mels": n_mels_cfg,
                     "n_fft": n_fft_cfg,
+                    "hop_length": hop_length_cfg,
                     "minmax_norm": minmax_norm,
                     "hard_labels": args.hard_labels,
                 },
