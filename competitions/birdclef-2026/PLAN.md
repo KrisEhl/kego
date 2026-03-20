@@ -28,30 +28,42 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB 0.776
+### Current best: LB 0.782
 
-Gap to public SED baseline (0.862) = ~0.086. Bigger backbone alone is not enough — SED head is the key architectural change needed next.
+Gap to public SED baseline (0.862) = ~0.08. Most likely cause: augmentation (SpecAugment freq/time masking).
 
 ### Results
 
-| Version | LB | OOF cmAP | Notes |
-|---|---|---|---|
-| EfficientNet-B0, 30 epochs | 0.758 | 0.5003 | 5-fold, precomputed spec cache, CPU inference |
-| EfficientNet-B3, 50 epochs | **0.776** | pending | 5-fold, val_loss=0.0310, +0.018 vs B0 |
+| Version | LB | Notes |
+|---|---|---|
+| EfficientNet-B0 plain, 30 epochs | 0.758 | 5-fold, precomputed spec cache |
+| EfficientNet-B3 plain, 50 epochs | 0.776 | 5-fold, val_loss=0.031 |
+| EfficientNet-B3 naive SED, 50 epochs | 0.750 | worse — too few temporal frames (~10) |
+| **B0 NoisyStudent + GEMFreqPool + AttentionSED, 50ep** | **0.782** | n_mels=224, specs_cache_224/, minmax norm |
+
+### Architecture comparison vs public baseline
+
+| Factor | Us | Public baseline (0.862) |
+|---|---|---|
+| Backbone | tf_efficientnet_b0.ns_jft_in1k | same |
+| Head | GEMFreqPool + AttentionSED | same |
+| **SpecAugment** | ❌ none | ✅ likely freq+time masking |
+| Mixup | ✅ | ✅ |
+| Training epochs | ~30–50 (early stopping) | unknown |
 
 ### Kaggle setup
 
-- **Notebook**: `aldisued/birdclef-2026-efficientnet-b3-inference` (v1)
-- **Dataset**: `aldisued/birdclef2026-efficientnet-b3` (5× fold checkpoints, ~215MB)
+- **Notebook**: `aldisued/birdclef-2026-baseline-inference` (v1)
+- **Dataset**: `aldisued/birdclef2026-baseline` (5× fold checkpoints, ~125MB)
 - **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
 - Kaggle mounts data at `/kaggle/input/competitions/birdclef-2026/` and datasets at `/kaggle/input/datasets/{owner}/{slug}/`; notebook auto-detects both via glob
 
 ### Submit command
 ```bash
 cd competitions/birdclef-2026
-kaggle kernels push   # push new version
+kaggle kernels push
 kaggle competitions submit -c birdclef-2026 \
-  -k aldisued/birdclef-2026-efficientnet-b0-inference \
+  -k aldisued/birdclef-2026-baseline-inference \
   -f submission.csv -v <VERSION> -m "<description>"
 ```
 
@@ -60,46 +72,31 @@ kaggle competitions submit -c birdclef-2026 \
 ## What's done
 
 - [x] EDA + data setup (`analyze_data.py`, plots in `plots/`)
-- [x] Training pipeline (`train.py`): EfficientNet-B0, 5-fold, 30 epochs, SpecAugment, mixup, label smoothing
-- [x] Precomputed spec cache (`precompute_specs.py`): float16 .npy, 14× speedup, ~10.5GB
+- [x] Training pipeline (`train.py`): EfficientNet-B0/B3, 5-fold, early stopping, mixup, label smoothing
+- [x] Precomputed spec cache: 128-mel `specs_cache/` (~10.5GB) + 224-mel `specs_cache_224/`
 - [x] OOF evaluation (`eval_oof.py`): cmAP + ROC-AUC per fold
-- [x] Kaggle inference notebook with CPU-only sliding-window inference
-- [x] First LB score: **0.758**
+- [x] Kaggle inference notebook with CPU-only sliding-window inference, auto-detects model type from checkpoint
+- [x] `BirdModelBaseline`: GEMFreqPool + AttentionSED head, NoisyStudent backbone — LB **0.782**
+- [x] Early stopping (`--patience`, default 10) — models converge around epoch 25–50
+- [x] Dead end: naive SED head (0.750) — too few temporal frames; replaced by proper GEMFreqPool+AttentionSED
 
 ---
 
 ## Next steps (ordered by expected impact)
 
-### ~~Step 1: Bigger backbone — EfficientNet-B3~~ ✓ DONE — LB 0.776
+### Step 1: SpecAugment — expected +0.03–0.05
 
-B0→B3 gave +0.018 LB (less than expected +0.03–0.05). Plain classifier head is the bottleneck, not backbone size.
+Most likely cause of gap to public baseline (0.862). Add frequency masking + time masking to spectrogram during training:
+- `FreqMask`: zero out F consecutive mel bins (e.g. F=27, 2 masks)
+- `TimeMask`: zero out T consecutive time frames (e.g. T=100, 2 masks)
+- Apply after mel spec computation, before normalization
+- Standard in all top audio classification solutions
 
-### Step 2: Longer training + better augmentation
+### Step 2: Secondary label handling
 
-- 50–60 epochs (currently 30)
-- Increase SpecAugment strength (more time/freq masking)
-- Add CutMix on spectrograms
-- Mixup alpha 0.4 (currently may be lower)
+Currently secondary labels are soft (0.5). Try hard positives at 1.0 (simpler, often better).
 
-### Step 3: Secondary label handling
-
-Currently secondary labels are soft (0.5). Try:
-- Hard positives at 1.0 (simpler)
-- Focal loss to down-weight easy negatives
-
-### Step 4: SED (Sound Event Detection) head
-
-Top BirdCLEF solutions use a SED head (frame-level predictions + attention pooling) instead of global average pooling. This is likely the main reason the public baseline (0.862) outperforms our model despite both using EfficientNet-B0. The SED head enables the model to localize bird calls within the 5s clip.
-
-Architecture change in `train.py`:
-```python
-# Replace global avg pool + linear head with:
-# Conv → frame-level logits (T, n_classes) → attention-weighted pool
-```
-
-Expected gain: +0.05–0.08 over plain classifier.
-
-### Step 5: Pretrained audio backbone
+### Step 3: Pretrained audio backbone
 
 Use weights pretrained on bird/environmental audio rather than ImageNet. Options investigated:
 
@@ -123,7 +120,7 @@ Use weights pretrained on bird/environmental audio rather than ImageNet. Options
 
 **Decision rule**: Test inference speed on one soundscape file before choosing. If AST processes <2s/soundscape on CPU, it's viable. Otherwise, PANNs CNN14.
 
-### Step 6: Ensemble
+### Step 5: Ensemble
 
 Once multiple backbones/configs trained:
 - Average sigmoid outputs across folds and backbones
@@ -160,3 +157,6 @@ CUDA_VISIBLE_DEVICES=1 uv run python competitions/birdclef-2026/train.py --fold 
 - `enable_gpu: true` in kernel-metadata.json → silent scoring failure (competition GPU limit = 0 min)
 - OOF cmAP (clip-level) ≠ LB cmAP (soundscape-level) — expect a large gap; don't over-optimize OOF
 - Plain classifier head underperforms SED head significantly for soundscape-level scoring
+- Naive SED head (mean freq pool + sigmoid attention): 0.750 — worse than plain B3 (0.776) due to only ~10 temporal frames after 32× backbone downsampling
+- Longer training beyond ~50 epochs doesn't help — val loss plateau is flat; early stopping with patience=15 is appropriate
+- Our architecture matches public baseline exactly (same backbone, GEMFreqPool, AttentionSED) — gap (0.782 vs 0.862) is likely SpecAugment
