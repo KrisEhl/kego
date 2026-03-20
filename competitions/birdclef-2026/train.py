@@ -639,8 +639,9 @@ def main():
         head = "SED"
     else:
         head = "plain"
+    backbone_name = "EfficientNet-B1-BirdSet-XCL" if args.birdset else args.backbone
     print(
-        f"Device: {device} | Backbone: {args.backbone} | Head: {head} | Fold: {args.fold}"
+        f"Device: {device} | Backbone: {backbone_name} | Head: {head} | Fold: {args.fold}"
     )
     print(f"Mel: n_mels={n_mels_cfg}, n_fft={n_fft_cfg} | Cache: {cache_dir.name}")
     print(
@@ -736,7 +737,7 @@ def main():
         suffix = "_sed"
     else:
         suffix = ""
-    ckpt_name = "efficientnet_b1_birdset" if args.birdset else args.backbone
+    ckpt_name = "efficientnet_b1" if args.birdset else args.backbone
     best_path = OUT / f"{ckpt_name}{suffix}_fold{args.fold}.pt"
 
     for epoch in range(1, args.epochs + 1):
