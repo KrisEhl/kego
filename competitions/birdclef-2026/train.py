@@ -135,19 +135,24 @@ def mixup(x: torch.Tensor, y: torch.Tensor, alpha: float = 0.4):
 
 
 def specaugment(
-    spec: np.ndarray, freq_mask: int = 20, time_mask: int = 30
+    spec: np.ndarray,
+    freq_mask: int = 20,
+    time_mask: int = 30,
+    n_freq_masks: int = 1,
+    n_time_masks: int = 1,
 ) -> np.ndarray:
     """SpecAugment: random frequency and time masking."""
     spec = spec.copy()
     n_mels, t = spec.shape
-    # Frequency masking
-    f = np.random.randint(0, freq_mask)
-    f0 = np.random.randint(0, n_mels - f + 1)
-    spec[f0 : f0 + f, :] = spec.mean()
-    # Time masking
-    t_mask = np.random.randint(0, time_mask)
-    t0 = np.random.randint(0, t - t_mask + 1)
-    spec[:, t0 : t0 + t_mask] = spec.mean()
+    fill = spec.mean()
+    for _ in range(n_freq_masks):
+        f = np.random.randint(0, freq_mask + 1)
+        f0 = np.random.randint(0, max(n_mels - f, 1))
+        spec[f0 : f0 + f, :] = fill
+    for _ in range(n_time_masks):
+        t_mask = np.random.randint(0, time_mask + 1)
+        t0 = np.random.randint(0, max(t - t_mask, 1))
+        spec[:, t0 : t0 + t_mask] = fill
     return spec
 
 
@@ -162,6 +167,10 @@ def load_spec_crop(
     cache_dir: Path = CACHE_DIR,
     n_mels: int = N_MELS,
     n_fft: int = N_FFT,
+    freq_mask: int = 20,
+    time_mask: int = 30,
+    n_freq_masks: int = 1,
+    n_time_masks: int = 1,
 ) -> np.ndarray:
     """Load a 5s mel spec crop from cache (fast) or compute on-the-fly (slow fallback)."""
     stem = Path(filename).stem
@@ -184,7 +193,13 @@ def load_spec_crop(
         spec = make_melspec(y, n_mels=n_mels, n_fft=n_fft)
 
     if augment:
-        spec = specaugment(spec)
+        spec = specaugment(
+            spec,
+            freq_mask=freq_mask,
+            time_mask=time_mask,
+            n_freq_masks=n_freq_masks,
+            n_time_masks=n_time_masks,
+        )
     return spec
 
 
@@ -206,6 +221,10 @@ class BirdDataset(Dataset):
         n_mels: int = N_MELS,
         n_fft: int = N_FFT,
         minmax_norm: bool = False,
+        freq_mask: int = 20,
+        time_mask: int = 30,
+        n_freq_masks: int = 1,
+        n_time_masks: int = 1,
     ):
         self.df = df.reset_index(drop=True)
         self.species_to_idx = species_to_idx
@@ -217,6 +236,10 @@ class BirdDataset(Dataset):
         self.n_mels = n_mels
         self.n_fft = n_fft
         self.minmax_norm = minmax_norm
+        self.freq_mask = freq_mask
+        self.time_mask = time_mask
+        self.n_freq_masks = n_freq_masks
+        self.n_time_masks = n_time_masks
 
     def __len__(self) -> int:
         return len(self.df)
@@ -245,6 +268,10 @@ class BirdDataset(Dataset):
             cache_dir=self.cache_dir,
             n_mels=self.n_mels,
             n_fft=self.n_fft,
+            freq_mask=self.freq_mask,
+            time_mask=self.time_mask,
+            n_freq_masks=self.n_freq_masks,
+            n_time_masks=self.n_time_masks,
         )
         x = spec_to_tensor_minmax(spec) if self.minmax_norm else spec_to_tensor(spec)
         label = self._make_label(row)
@@ -430,6 +457,20 @@ def main():
     )
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument(
+        "--freq_mask",
+        type=int,
+        default=0,
+        help="SpecAugment max freq mask width (0=auto)",
+    )
+    parser.add_argument(
+        "--time_mask",
+        type=int,
+        default=0,
+        help="SpecAugment max time mask width (0=auto)",
+    )
+    parser.add_argument("--n_freq_masks", type=int, default=2)
+    parser.add_argument("--n_time_masks", type=int, default=2)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument("--workers", type=int, default=4)
@@ -460,12 +501,17 @@ def main():
         n_fft_cfg = N_FFT_BASELINE
         minmax_norm = True
         default_backbone = "tf_efficientnet_b0.ns_jft_in1k"
+        # Stronger SpecAugment defaults for 224-mel baseline (match public baseline)
+        freq_mask = args.freq_mask if args.freq_mask > 0 else 27
+        time_mask = args.time_mask if args.time_mask > 0 else 100
     else:
         cache_dir = CACHE_DIR
         n_mels_cfg = N_MELS
         n_fft_cfg = N_FFT
         minmax_norm = False
         default_backbone = "efficientnet_b0"
+        freq_mask = args.freq_mask if args.freq_mask > 0 else 20
+        time_mask = args.time_mask if args.time_mask > 0 else 30
 
     if args.backbone == "efficientnet_b0" and args.baseline:
         args.backbone = default_backbone
@@ -481,6 +527,9 @@ def main():
         f"Device: {device} | Backbone: {args.backbone} | Head: {head} | Fold: {args.fold}"
     )
     print(f"Mel: n_mels={n_mels_cfg}, n_fft={n_fft_cfg} | Cache: {cache_dir.name}")
+    print(
+        f"SpecAugment: freq_mask={freq_mask}×{args.n_freq_masks}, time_mask={time_mask}×{args.n_time_masks}"
+    )
 
     # Load metadata — file is train.csv (not train_metadata.csv)
     meta = pd.read_csv(DATA / "train.csv")
@@ -509,7 +558,14 @@ def main():
         val_df = val_df.head(32)
 
     ds_kwargs = dict(
-        cache_dir=cache_dir, n_mels=n_mels_cfg, n_fft=n_fft_cfg, minmax_norm=minmax_norm
+        cache_dir=cache_dir,
+        n_mels=n_mels_cfg,
+        n_fft=n_fft_cfg,
+        minmax_norm=minmax_norm,
+        freq_mask=freq_mask,
+        time_mask=time_mask,
+        n_freq_masks=args.n_freq_masks,
+        n_time_masks=args.n_time_masks,
     )
     train_ds = BirdDataset(
         train_df, species_to_idx, n_species, audio_dir, augment=True, **ds_kwargs
