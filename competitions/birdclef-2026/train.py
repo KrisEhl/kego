@@ -421,7 +421,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--backbone", default="efficientnet_b0")
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=10,
+        help="Early stopping patience (0 = disabled)",
+    )
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--gpu", type=int, default=0)
@@ -542,6 +548,7 @@ def main():
 
     OUT.mkdir(exist_ok=True)
     best_val_loss = float("inf")
+    epochs_no_improve = 0
     if args.baseline:
         suffix = "_baseline"
     elif args.sed:
@@ -570,6 +577,7 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            epochs_no_improve = 0
             torch.save(
                 {
                     "epoch": epoch,
@@ -584,6 +592,13 @@ def main():
                 },
                 best_path,
             )
+        else:
+            epochs_no_improve += 1
+            if args.patience > 0 and epochs_no_improve >= args.patience:
+                print(
+                    f"\nEarly stopping at epoch {epoch} (no improvement for {args.patience} epochs)"
+                )
+                break
 
     print(f"\nBest val loss: {best_val_loss:.4f} → {best_path}")
 
