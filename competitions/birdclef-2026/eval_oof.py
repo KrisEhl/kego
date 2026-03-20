@@ -28,10 +28,19 @@ from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from train import (
+    CACHE_DIR,
+    CACHE_DIR_BASELINE,
     CLIP_SAMPLES,
     DATA,
+    N_FFT,
+    N_FFT_BASELINE,
+    N_MELS,
+    N_MELS_BASELINE,
     SR,
     BirdDataset,
+    BirdModel,
+    BirdModelBaseline,
+    BirdModelSED,
     make_melspec,
     spec_to_tensor,
 )
@@ -39,17 +48,31 @@ from train import (
 OUT = Path(__file__).parent / "outputs"
 
 
-class BirdModel(nn.Module):
-    def __init__(self, backbone: str, n_classes: int):
-        import timm
+def load_model_from_ckpt(ckpt: dict, n_species: int, device: torch.device) -> nn.Module:
+    """Instantiate and load the correct model class from checkpoint metadata."""
+    backbone = ckpt.get("backbone", "efficientnet_b0")
+    baseline = ckpt.get("baseline", False)
+    sed = ckpt.get("sed", False)
+    if baseline:
+        m = BirdModelBaseline(backbone, n_species, pretrained=False)
+    elif sed:
+        m = BirdModelSED(backbone, n_species, pretrained=False)
+    else:
+        m = BirdModel(backbone, n_species, pretrained=False)
+    m.load_state_dict(ckpt["model"])
+    return m.to(device).eval()
 
-        super().__init__()
-        self.backbone = timm.create_model(
-            backbone, pretrained=False, num_classes=n_classes, in_chans=3
+
+def dataset_kwargs_from_ckpt(ckpt: dict) -> dict:
+    """Return BirdDataset kwargs matching the checkpoint's training config."""
+    if ckpt.get("baseline", False):
+        return dict(
+            cache_dir=CACHE_DIR_BASELINE,
+            n_mels=N_MELS_BASELINE,
+            n_fft=N_FFT_BASELINE,
+            minmax_norm=True,
         )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.backbone(x)
+    return dict(cache_dir=CACHE_DIR, n_mels=N_MELS, n_fft=N_FFT, minmax_norm=False)
 
 
 @torch.no_grad()
@@ -87,16 +110,19 @@ def compute_cmap(preds: np.ndarray, labels: np.ndarray) -> tuple[float, np.ndarr
 
 @torch.no_grad()
 def eval_soundscapes(
-    models: list[nn.Module],
+    models_cfg: list,
     species: list[str],
     species_to_idx: dict[str, int],
     device: torch.device,
 ) -> float:
     """Sliding-window inference on the 66 labeled train soundscapes.
 
-    Uses the full model ensemble (all fold checkpoints averaged).
+    models_cfg: list of (model, n_mels, n_fft, minmax_norm) — same format as
+    the inference notebook. Uses the full model ensemble averaged.
     Returns soundscape-level cmAP — much closer to LB than clip OOF.
     """
+    from train import spec_to_tensor_minmax
+
     sc_labels = pd.read_csv(DATA / "train_soundscapes_labels.csv")
     sc_dir = DATA / "train_soundscapes"
     n_species = len(species)
@@ -108,27 +134,35 @@ def eval_soundscapes(
         if not sc_path.exists():
             continue
 
-        # Load full soundscape
         y, _ = librosa.load(sc_path, sr=SR, mono=True)
 
-        # Slice into 5s non-overlapping chunks
-        chunks = []
-        pos = 0
-        while pos + CLIP_SAMPLES <= len(y):
-            chunk = y[pos : pos + CLIP_SAMPLES]
-            chunks.append(spec_to_tensor(make_melspec(chunk)))
-            pos += CLIP_SAMPLES
-        if not chunks:
-            continue
-
-        batch = torch.stack(chunks).to(device)  # (n_chunks, 3, n_mels, t)
-
-        # Ensemble: average sigmoid predictions across all models
+        # Ensemble: average predictions across all models
         fold_preds = []
-        for model in models:
-            model.eval()
-            logits = model(batch)
-            fold_preds.append(torch.sigmoid(logits).cpu().numpy())
+        for model, n_mels, n_fft, minmax_norm in models_cfg:
+            chunks = []
+            pos = 0
+            while pos + CLIP_SAMPLES <= len(y):
+                chunk = y[pos : pos + CLIP_SAMPLES]
+                spec = make_melspec(chunk, n_mels=n_mels, n_fft=n_fft)
+                tensor = (
+                    spec_to_tensor_minmax(spec) if minmax_norm else spec_to_tensor(spec)
+                )
+                chunks.append(tensor)
+                pos += CLIP_SAMPLES
+            if not chunks:
+                break
+            batch = torch.stack(chunks).to(device)
+            out = model(batch)
+            # baseline/SED models return probs; plain model returns logits
+            preds = (
+                out.cpu().numpy()
+                if out.max() <= 1.0
+                else torch.sigmoid(out).cpu().numpy()
+            )
+            fold_preds.append(preds)
+
+        if not fold_preds:
+            continue
         pred_chunks = np.mean(fold_preds, axis=0)  # (n_chunks, n_species)
 
         # Match labels: sc_labels has one row per 5s chunk
@@ -207,11 +241,17 @@ def main() -> None:
             print(f"[fold {fold}] checkpoint not found: {ckpt_path} — skipping")
             continue
 
+        ckpt = torch.load(ckpt_path, map_location=device)
         _, val_idx = splits[fold]
         val_df = meta.iloc[val_idx]
 
         val_ds = BirdDataset(
-            val_df, species_to_idx, n_species, DATA / "train_audio", augment=False
+            val_df,
+            species_to_idx,
+            n_species,
+            DATA / "train_audio",
+            augment=False,
+            **dataset_kwargs_from_ckpt(ckpt),
         )
         val_loader = DataLoader(
             val_ds,
@@ -221,9 +261,7 @@ def main() -> None:
             pin_memory=True,
         )
 
-        ckpt = torch.load(ckpt_path, map_location=device)
-        model = BirdModel(args.backbone, n_species).to(device)
-        model.load_state_dict(ckpt["model"])
+        model = load_model_from_ckpt(ckpt, n_species, device)
 
         preds, labels = run_inference(model, val_loader, device)
         all_preds[val_idx] = preds
@@ -292,16 +330,18 @@ def main() -> None:
         print("SOUNDSCAPE-LEVEL EVALUATION (LB proxy)")
         print("=" * 50)
         # Load all available fold checkpoints as an ensemble
-        sc_models = []
+        sc_models_cfg = []
         for fold in range(args.n_folds):
             ckpt_path = OUT / f"{args.backbone}_fold{fold}.pt"
             if ckpt_path.exists():
                 ckpt = torch.load(ckpt_path, map_location=device)
-                m = BirdModel(args.backbone, n_species).to(device)
-                m.load_state_dict(ckpt["model"])
-                sc_models.append(m)
-        print(f"Ensemble: {len(sc_models)} fold checkpoints")
-        sc_cmap = eval_soundscapes(sc_models, species, species_to_idx, device)
+                model = load_model_from_ckpt(ckpt, n_species, device)
+                cfg = dataset_kwargs_from_ckpt(ckpt)
+                sc_models_cfg.append(
+                    (model, cfg["n_mels"], cfg["n_fft"], cfg["minmax_norm"])
+                )
+        print(f"Ensemble: {len(sc_models_cfg)} fold checkpoints")
+        sc_cmap = eval_soundscapes(sc_models_cfg, species, species_to_idx, device)
         print("\nSummary:")
         print(f"  Clip OOF cmAP        : {oof_cmap:.4f}")
         print(f"  Soundscape cmAP      : {sc_cmap:.4f}  ← LB proxy")
