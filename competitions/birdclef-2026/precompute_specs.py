@@ -34,13 +34,15 @@ from train import (
     SR,
 )
 
-MAX_DURATION = 30.0  # seconds; longer files are truncated
+SOUNDSCAPE_CACHE_DIR = DATA / "specs_cache_soundscape_224"
+
+MAX_DURATION = 30.0  # seconds; longer XC clips are truncated (soundscapes: no cap)
 CACHE_DIR = DATA / "specs_cache"
 
 
 def compute_and_save(args: tuple) -> tuple[str, bool, str]:
     """Worker: load audio, compute mel spec, save as float16 npy."""
-    filename, audio_dir, cache_dir, n_mels, n_fft = args
+    filename, audio_dir, cache_dir, n_mels, n_fft, cap_duration = args
     src = audio_dir / filename
     stem = Path(filename).stem
     subdir = Path(filename).parent
@@ -52,8 +54,11 @@ def compute_and_save(args: tuple) -> tuple[str, bool, str]:
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
         info = sf.info(src)
-        max_frames = int(MAX_DURATION * info.samplerate)
-        frames_to_read = min(info.frames, max_frames)
+        if cap_duration is not None:
+            max_frames = int(cap_duration * info.samplerate)
+            frames_to_read = min(info.frames, max_frames)
+        else:
+            frames_to_read = info.frames
 
         y, file_sr = sf.read(
             src, frames=frames_to_read, dtype="float32", always_2d=False
@@ -90,24 +95,41 @@ def main() -> None:
         help="Compute 224-mel specs (n_fft=2048) into specs_cache_224/ for baseline model",
     )
     parser.add_argument(
+        "--soundscapes",
+        action="store_true",
+        help="Compute 224-mel specs for train_soundscapes/ into specs_cache_soundscape_224/. "
+        "Full 60s per file (no cap). Used by PerchDataset for fast stage-1 pretraining.",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Only report cache completeness, don't compute",
     )
     args = parser.parse_args()
 
-    if args.baseline:
+    if args.soundscapes:
+        cache_dir = SOUNDSCAPE_CACHE_DIR
+        n_mels = N_MELS_BASELINE
+        n_fft = N_FFT_BASELINE
+        audio_dir = DATA / "train_soundscapes"
+        filenames = [p.name for p in sorted(audio_dir.glob("*.ogg"))]
+        cap_duration = None  # soundscapes are full 60s — no cap
+    elif args.baseline:
         cache_dir = CACHE_DIR_BASELINE
         n_mels = N_MELS_BASELINE
         n_fft = N_FFT_BASELINE
+        audio_dir = DATA / "train_audio"
+        train = pd.read_csv(DATA / "train.csv")
+        filenames = train["filename"].tolist()
+        cap_duration = MAX_DURATION
     else:
         cache_dir = CACHE_DIR
         n_mels = N_MELS
         n_fft = N_FFT
-
-    train = pd.read_csv(DATA / "train.csv")
-    audio_dir = DATA / "train_audio"
-    filenames = train["filename"].tolist()
+        audio_dir = DATA / "train_audio"
+        train = pd.read_csv(DATA / "train.csv")
+        filenames = train["filename"].tolist()
+        cap_duration = MAX_DURATION
 
     if args.check:
         cached = sum(
@@ -126,7 +148,7 @@ def main() -> None:
         return
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    tasks = [(f, audio_dir, cache_dir, n_mels, n_fft) for f in filenames]
+    tasks = [(f, audio_dir, cache_dir, n_mels, n_fft, cap_duration) for f in filenames]
 
     print(f"Computing specs for {len(tasks)} files with {args.workers} workers...")
     print(f"n_mels={n_mels}, n_fft={n_fft}")

@@ -61,6 +61,7 @@ N_MELS_BIRDSET = 256
 N_FFT_BIRDSET = 2048
 HOP_LENGTH_BIRDSET = 256
 CACHE_DIR_BIRDSET = DATA / "specs_cache_256"
+SOUNDSCAPE_CACHE_DIR_BASELINE = DATA / "specs_cache_soundscape_224"
 CLIP_FRAMES_BIRDSET = CLIP_SAMPLES // HOP_LENGTH_BIRDSET  # 625 frames per 5s
 
 
@@ -420,7 +421,10 @@ class PerchDataset(Dataset):
     Reads perch_pseudo_labels_soft.npz (output of pseudo_label_perch.py).
     Labels are raw Perch sigmoid probabilities — used as soft BCE targets.
     Species are remapped from NPZ order to the sorted train.py species order.
-    Audio is loaded on-the-fly from soundscape files.
+
+    Fast path: if cache_dir is set, loads precomputed 60s mel specs from
+    specs_cache_soundscape_224/ (run precompute_specs.py --soundscapes first).
+    Slow path: loads audio on-the-fly via librosa (CPU bottleneck, not recommended).
     """
 
     def __init__(
@@ -438,6 +442,7 @@ class PerchDataset(Dataset):
         time_mask: int = 30,
         n_freq_masks: int = 1,
         n_time_masks: int = 1,
+        cache_dir: Path | None = None,
     ):
         data = np.load(npz_path, allow_pickle=True)
         self.labels = data["labels"].astype(np.float32)  # (N, 234) Perch probs
@@ -452,6 +457,7 @@ class PerchDataset(Dataset):
             self.entries.append((fname, int(start)))
 
         self.soundscape_dir = soundscape_dir
+        self.cache_dir = cache_dir
         self.n_species = n_species
         self.augment = augment
         self.n_mels = n_mels
@@ -462,26 +468,42 @@ class PerchDataset(Dataset):
         self.time_mask = time_mask
         self.n_freq_masks = n_freq_masks
         self.n_time_masks = n_time_masks
+        self.clip_frames = CLIP_SAMPLES // hop_length
 
     def __len__(self) -> int:
         return len(self.entries)
 
     def __getitem__(self, idx: int):
         fname, start_sec = self.entries[idx]
-        try:
-            y, _ = librosa.load(
-                self.soundscape_dir / fname,
-                sr=SR,
-                mono=True,
-                offset=float(start_sec),
-                duration=5.0,
+
+        if self.cache_dir is not None:
+            # Fast path: slice precomputed full-soundscape mel spec
+            cache_path = self.cache_dir / f"{Path(fname).stem}.npy"
+            if cache_path.exists():
+                full_spec = np.load(cache_path).astype(np.float32)  # (n_mels, T_full)
+                start_frame = int(start_sec * SR / self.hop_length)
+                spec = full_spec[:, start_frame : start_frame + self.clip_frames]
+                if spec.shape[1] < self.clip_frames:
+                    spec = np.pad(spec, ((0, 0), (0, self.clip_frames - spec.shape[1])))
+            else:
+                spec = np.zeros((self.n_mels, self.clip_frames), dtype=np.float32)
+        else:
+            # Slow path: on-the-fly audio loading
+            try:
+                y, _ = librosa.load(
+                    self.soundscape_dir / fname,
+                    sr=SR,
+                    mono=True,
+                    offset=float(start_sec),
+                    duration=5.0,
+                )
+            except Exception:
+                y = np.zeros(CLIP_SAMPLES, dtype=np.float32)
+            y = crop_or_pad(y)
+            spec = make_melspec(
+                y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length
             )
-        except Exception:
-            y = np.zeros(CLIP_SAMPLES, dtype=np.float32)
-        y = crop_or_pad(y)
-        spec = make_melspec(
-            y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length
-        )
+
         if self.augment:
             spec = specaugment(
                 spec,
@@ -1058,6 +1080,18 @@ def main():
     # ── Stage 1: Perch soft-label pretraining ──────────────────────────────────
     if args.perch_npz:
         soundscape_dir = DATA / "train_soundscapes"
+        perch_cache = (
+            SOUNDSCAPE_CACHE_DIR_BASELINE
+            if SOUNDSCAPE_CACHE_DIR_BASELINE.exists()
+            else None
+        )
+        if perch_cache:
+            print(f"Perch spec cache: {perch_cache}")
+        else:
+            print(
+                "WARNING: Soundscape spec cache not found — using slow on-the-fly loading."
+            )
+            print("  Run: python precompute_specs.py --soundscapes")
         perch_ds = PerchDataset(
             npz_path=Path(args.perch_npz),
             soundscape_dir=soundscape_dir,
@@ -1072,6 +1106,7 @@ def main():
             time_mask=time_mask,
             n_freq_masks=args.n_freq_masks,
             n_time_masks=args.n_time_masks,
+            cache_dir=perch_cache,
         )
         perch_loader = DataLoader(
             perch_ds,
