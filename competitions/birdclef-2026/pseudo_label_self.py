@@ -104,23 +104,44 @@ def predict_soundscape(
     device: torch.device,
     species_list: list[str],
 ) -> np.ndarray:
-    """Returns (n_windows, n_species) mean sigmoid predictions across all folds."""
+    """Returns (n_windows, n_species) mean predictions across all folds.
+
+    Optimised: mel specs are computed once per window (all folds share the
+    same n_mels/n_fft/hop_length), and all 12 windows are batched together.
+    """
     n_windows = len(y) // CLIP_SAMPLES
     if n_windows == 0:
         return np.zeros((0, len(species_list)), dtype=np.float32)
 
-    all_fold_preds = []
-    for model, meta in models:
-        fold_preds = []
-        for w in range(n_windows):
-            chunk = y[w * CLIP_SAMPLES : (w + 1) * CLIP_SAMPLES]
-            spec = _make_melspec(
-                chunk, meta["n_mels"], meta["n_fft"], meta["hop_length"]
+    # Assume all folds share the same spec params (true for our baseline checkpoints)
+    first_meta = models[0][1]
+    n_mels, n_fft, hop_length = (
+        first_meta["n_mels"],
+        first_meta["n_fft"],
+        first_meta["hop_length"],
+    )
+    minmax = first_meta["minmax_norm"]
+
+    # Compute mel specs once for all 12 windows → batch tensor (12, 3, n_mels, T)
+    batch = torch.stack(
+        [
+            _spec_to_tensor(
+                _make_melspec(
+                    y[w * CLIP_SAMPLES : (w + 1) * CLIP_SAMPLES],
+                    n_mels,
+                    n_fft,
+                    hop_length,
+                ),
+                minmax,
             )
-            x = _spec_to_tensor(spec, meta["minmax_norm"]).unsqueeze(0).to(device)
-            out = model(x)  # (1, n_species) — already sigmoid'd in eval mode
-            fold_preds.append(out.cpu().numpy()[0])
-        all_fold_preds.append(np.stack(fold_preds))  # (n_windows, n_species)
+            for w in range(n_windows)
+        ]
+    ).to(device)  # (n_windows, 3, n_mels, T)
+
+    all_fold_preds = []
+    for model, _ in models:
+        out = model(batch)  # (n_windows, n_species) — already sigmoid'd
+        all_fold_preds.append(out.cpu().numpy())
 
     return np.mean(all_fold_preds, axis=0)  # (n_windows, n_species)
 
