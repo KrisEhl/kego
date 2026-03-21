@@ -42,7 +42,7 @@ Gap to public SED baseline (0.862) = ~0.08. Investigating root cause — see "Pu
 | **B0 NoisyStudent + GEMFreqPool + AttentionSED, 50ep** | **0.782** | 224-mel, minmax norm, time_mask=100 |
 | B0 baseline, early stopping patience=15 | 0.783 | same arch, time_mask=100, no dual loss |
 | B0 baseline + dual loss + time_mask=30 (all 5 folds) | 0.765 | **REGRESSION** — see dead ends |
-| B0 baseline + dual loss + hard secondary labels | training | GPU0: fold0→2→4, GPU1: fold1→3 |
+| B0 baseline + dual loss + hard secondary labels | — | never fully trained or submitted |
 | EfficientNet-B1 BirdSet XCL pretrained (5-fold) | 0.782 | 256-mel, 1-channel, patience=10 — no gain over B0 NoisyStudent |
 
 ### Local validation findings
@@ -122,12 +122,7 @@ kaggle competitions submit -c birdclef-2026 \
 - **Dual loss + time_mask=30** → LB 0.765 (regression)
 - **BirdModelBirdSet** (EfficientNet-B1, BirdSet XCL) → LB 0.782 (no gain)
 - **Hard secondary labels** — dead end (never fully trained or submitted)
-
-### 🔄 IN PROGRESS (Mar 21)
-
-- **Soundscape spec precompute** — `precompute_specs.py --soundscapes`, ETA ~30 min. Check: `tail -1 competitions/birdclef-2026/precompute_soundscape.log`
-- **perch-v1 folds 0 & 1** — XC-only baseline run (safety net, ETA ~1h). Check: `tail -3 competitions/birdclef-2026/perch_v1_fold{0,1}.log`
-- **Next**: once both done, launch all 5 folds with `--perch-npz` (full two-stage Perch pipeline, ~2.5h)
+- **Perch pseudo-labeling on soundscapes** — dead end (see findings above)
 
 ---
 
@@ -272,8 +267,19 @@ The checkpoint was named `best_perch_fold0.pt` but Perch may have been used diff
 - Option B: Only high-confidence Perch windows kept (filtered dataset)
 - Option C: Much shorter pretraining (2–3 epochs, not 10)
 
-### Next attempt: perch-v2 (--perch-min-prob 0.1, --perch-epochs 5)
-Filter to 1,307 windows with max_prob > 0.1 — small but real signal. Fewer epochs to minimize drift.
+### perch-v1 results (all 127,896 windows, 10 epochs) — fold 0
+- Stage 2 val_loss **0.0452** vs baseline **0.0331** — clear regression, early stop at ep13
+- Fold 1 eventually recovered to **0.0336** after 65 epochs — Perch damage washes out slowly
+
+### perch-v2 results (filtered min_max_prob=0.1 → 1,307 windows, 5 epochs) — fold 0
+- Stage 1: 5 epochs, ~6s/epoch (1,307 windows tiny dataset), loss 0.205→0.130
+- Stage 2: val_loss converged to **0.0331** at ep30 — tied with XC-only baseline, no gain
+- **Verdict: Perch pseudo-labeling on soundscapes is neutral at best.** Even with filtering, the 1,307 windows don't add useful signal beyond what XC training already provides.
+
+### Conclusion
+Perch on unlabeled soundscapes does NOT explain the 0.862 gap. The 2024 winner likely used:
+- Perch on **labeled XC clips** as a label smoother/augmenter (not soundscapes), OR
+- AudioSet/large-scale audio pretraining of the backbone itself
 
 ---
 
@@ -287,5 +293,5 @@ Filter to 1,307 windows with max_prob > 0.1 — small but real signal. Fewer epo
 - Longer training beyond ~50 epochs doesn't help — val loss plateau is flat; early stopping with patience=15 is appropriate
 - **Dual loss + time_mask=30 regressed LB 0.783 → 0.765**: two changes happened at once (added dual loss, reduced time_mask 100→30). Unclear which caused it. Possible: time_mask=100 provided better regularization despite being "wrong"; or dual loss destabilizes training with patience=15. Not worth isolating — the architecture gap vs public baseline is from Perch pretraining, not these details.
 - **Public baseline gap explained**: the 0.862 model uses Perch pseudo-labels or AudioSet pretraining, NOT just architecture/augmentation changes.
-- **Perch on unlabeled soundscapes = mostly empty**: 99% of 127,896 windows have near-zero Perch predictions (median max prob = 0.003). Training on this teaches the model to output nothing → regression from 0.033 to 0.045 val loss. Filter to max_prob > 0.1 (1,307 windows) or use Perch on labeled XC clips instead. Checkpoint named `best_perch_fold0.pt` from `aidensong123/perch-fold`; single fold gets 0.862 vs our 5-fold ensemble at 0.783. Architecture is identical.
+- **Perch pseudo-labeling on soundscapes is a dead end**: 99% of 127,896 windows have near-zero Perch predictions (median max prob = 0.003). Unfiltered (perch-v1): val_loss 0.045 (regression). Filtered to 1,307 windows (perch-v2): val_loss 0.0331 (tied with baseline, no gain). The 0.862 gap is NOT from this approach. Checkpoint named `best_perch_fold0.pt` from `aidensong123/perch-fold`; single fold gets 0.862 vs our 5-fold ensemble at 0.783. Architecture is identical.
 - **BirdSet XCL pretraining** (9,736 Xeno-Canto species, EfficientNet-B1): LB 0.782 — no gain over B0 NoisyStudent (0.783). Bird-domain pretraining from a generic Xeno-Canto dataset does NOT help. The gap to 0.862 requires competition-specific pseudo-labeling (Perch) or AudioSet pretraining.
