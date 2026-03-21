@@ -25,12 +25,17 @@ Usage (on GPU server):
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 import librosa
 import numpy as np
 import torch
 import torch.nn as nn
+
+# Import model classes from train.py (same directory)
+sys.path.insert(0, str(Path(__file__).parent))
+from train import BirdModelBaseline, BirdModelBirdSet  # noqa: E402
 
 # ── paths ──────────────────────────────────────────────────────────────────────
 DATA = Path(os.getenv("KEGO_PATH_DATA", "data")) / "birdclef" / "birdclef-2026"
@@ -83,76 +88,10 @@ def _spec_to_tensor(spec: np.ndarray, minmax: bool) -> torch.Tensor:
 
 
 def _build_model(meta: dict, n_species: int, device: torch.device) -> nn.Module:
-    import timm
-
-    backbone = meta["backbone"]
-    in_ch = 1 if meta["birdset"] else 3
-    n_mels = meta["n_mels"]
-
-    class GEMFreqPool(nn.Module):
-        def __init__(self, p_init: float = 3.0):
-            super().__init__()
-            self.p = nn.Parameter(torch.ones(1) * p_init)
-
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            p = torch.clamp(self.p, 1.0, 10.0)
-            return (x.clamp(min=1e-6).pow(p).mean(dim=2)).pow(1.0 / p)
-
-    class AttentionSEDHead(nn.Module):
-        def __init__(self, feat_dim: int, n_cls: int, dropout: float = 0.1):
-            super().__init__()
-            self.att = nn.Linear(feat_dim, n_cls)
-            self.cls = nn.Linear(feat_dim, n_cls)
-            self.drop = nn.Dropout(dropout)
-
-        def forward(self, x: torch.Tensor):
-            att = torch.softmax(self.att(self.drop(x)), dim=1)
-            cls = self.cls(self.drop(x))
-            return (att * torch.sigmoid(cls)).sum(dim=1)
-
     if meta["birdset"]:
-        from transformers import EfficientNetConfig, EfficientNetModel
-
-        cfg_path = next(DATA.parent.parent.rglob("*birdset*config*.json"), None)
-        assert cfg_path, "BirdSet config JSON not found"
-        cfg = EfficientNetConfig.from_pretrained(str(cfg_path))
-        enc = EfficientNetModel(cfg)
-        feat_dim = 1280
-
-        class _BirdSet(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.encoder = enc
-                self.gem = GEMFreqPool()
-                self.head = AttentionSEDHead(feat_dim, n_species)
-
-            def forward(self, x):
-                out = self.encoder(pixel_values=x)
-                f = out.last_hidden_state
-                f = self.gem(f)
-                return self.head(f)
-
-        model = _BirdSet()
+        model = BirdModelBirdSet(n_species)
     else:
-        enc = timm.create_model(
-            backbone, pretrained=False, in_chans=in_ch, num_classes=0
-        )
-        feat_dim = enc.num_features
-
-        class _Baseline(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.encoder = enc
-                self.gem = GEMFreqPool()
-                self.head = AttentionSEDHead(feat_dim, n_species)
-
-            def forward(self, x):
-                f = self.encoder.forward_features(x)
-                f = self.gem(f)
-                return self.head(f)
-
-        model = _Baseline()
-
+        model = BirdModelBaseline(meta["backbone"], n_species)
     model.load_state_dict(meta["state_dict"])
     return model.eval().to(device)
 
@@ -179,8 +118,8 @@ def predict_soundscape(
                 chunk, meta["n_mels"], meta["n_fft"], meta["hop_length"]
             )
             x = _spec_to_tensor(spec, meta["minmax_norm"]).unsqueeze(0).to(device)
-            out = model(x)  # (1, n_species)
-            fold_preds.append(torch.sigmoid(out).cpu().numpy()[0])
+            out = model(x)  # (1, n_species) — already sigmoid'd in eval mode
+            fold_preds.append(out.cpu().numpy()[0])
         all_fold_preds.append(np.stack(fold_preds))  # (n_windows, n_species)
 
     return np.mean(all_fold_preds, axis=0)  # (n_windows, n_species)
