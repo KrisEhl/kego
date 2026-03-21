@@ -443,18 +443,28 @@ class PerchDataset(Dataset):
         n_freq_masks: int = 1,
         n_time_masks: int = 1,
         cache_dir: Path | None = None,
+        min_max_prob: float = 0.0,
     ):
         data = np.load(npz_path, allow_pickle=True)
-        self.labels = data["labels"].astype(np.float32)  # (N, 234) Perch probs
+        all_labels = data["labels"].astype(np.float32)  # (N, 234) Perch probs
         npz_species = list(data["species"])
         # Map NPZ species order → train.py sorted species order (-1 = absent)
         self.remap = np.array(
             [species_to_idx.get(sp, -1) for sp in npz_species], dtype=np.int32
         )
-        self.entries = []
+        all_entries = []
         for key in data["filenames"]:
             fname, start = str(key).rsplit(":", 1)
-            self.entries.append((fname, int(start)))
+            all_entries.append((fname, int(start)))
+
+        # Filter to windows with meaningful Perch signal
+        if min_max_prob > 0.0:
+            keep = all_labels.max(axis=1) >= min_max_prob
+            self.labels = all_labels[keep]
+            self.entries = [e for e, k in zip(all_entries, keep) if k]
+        else:
+            self.labels = all_labels
+            self.entries = all_entries
 
         self.soundscape_dir = soundscape_dir
         self.cache_dir = cache_dir
@@ -882,6 +892,13 @@ def main():
         default=10,
         help="Epochs for stage-1 Perch pretraining (default 10)",
     )
+    parser.add_argument(
+        "--perch-min-prob",
+        type=float,
+        default=0.0,
+        help="Only use Perch windows where max species prob >= this threshold (default 0 = all). "
+        "Recommended: 0.1 (keeps ~1%% of windows with real signal, drops empty noise windows).",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -1107,6 +1124,7 @@ def main():
             n_freq_masks=args.n_freq_masks,
             n_time_masks=args.n_time_masks,
             cache_dir=perch_cache,
+            min_max_prob=args.perch_min_prob,
         )
         perch_loader = DataLoader(
             perch_ds,
@@ -1199,6 +1217,7 @@ def main():
                     "bg_noise_p": args.bg_noise_p,
                     "perch_npz": args.perch_npz,
                     "perch_epochs": args.perch_epochs,
+                    "perch_min_prob": args.perch_min_prob,
                 },
                 best_path,
             )

@@ -253,6 +253,30 @@ for k, v in ck.items():
 
 ---
 
+## Perch Pseudo-Labeling — Findings (Mar 21)
+
+### Label distribution (critical insight)
+- `perch_pseudo_labels_soft.npz` (127,896 windows × 234 species): mean prob = **0.000107** — essentially zero
+- Median max-prob per window: **0.003** — 99% of windows have no meaningful Perch signal
+- Only **1.0%** of windows (1,307) have max prob > 0.1; only 0.2% have max prob > 0.5
+- **The unlabeled soundscapes are mostly silent/noise** — Perch finds almost nothing
+
+### perch-v1 result (all 127,896 windows, 10 epochs)
+- Stage 2 val_loss **0.0452** vs baseline **0.0331** — clear regression
+- Training on 99% empty windows teaches the model to output near-zero → wrong prior for XC classification
+- Stage 2 could not recover within patience=10 epochs
+
+### Hypothesis on 2024 winner's approach
+The checkpoint was named `best_perch_fold0.pt` but Perch may have been used differently:
+- Option A: Perch run on **labeled XC clips** as label smoother (not soundscapes)
+- Option B: Only high-confidence Perch windows kept (filtered dataset)
+- Option C: Much shorter pretraining (2–3 epochs, not 10)
+
+### Next attempt: perch-v2 (--perch-min-prob 0.1, --perch-epochs 5)
+Filter to 1,307 windows with max_prob > 0.1 — small but real signal. Fewer epochs to minimize drift.
+
+---
+
 ## Dead ends / lessons learned
 
 - `enable_gpu: true` in kernel-metadata.json → silent scoring failure (competition GPU limit = 0 min)
@@ -262,5 +286,6 @@ for k, v in ck.items():
 - Naive SED head (mean freq pool + sigmoid attention): 0.750 — worse than plain B3 (0.776) due to only ~10 temporal frames after 32× backbone downsampling
 - Longer training beyond ~50 epochs doesn't help — val loss plateau is flat; early stopping with patience=15 is appropriate
 - **Dual loss + time_mask=30 regressed LB 0.783 → 0.765**: two changes happened at once (added dual loss, reduced time_mask 100→30). Unclear which caused it. Possible: time_mask=100 provided better regularization despite being "wrong"; or dual loss destabilizes training with patience=15. Not worth isolating — the architecture gap vs public baseline is from Perch pretraining, not these details.
-- **Public baseline gap explained**: the 0.862 model uses Perch pseudo-labels or AudioSet pretraining, NOT just architecture/augmentation changes. Checkpoint named `best_perch_fold0.pt` from `aidensong123/perch-fold`; single fold gets 0.862 vs our 5-fold ensemble at 0.783. Architecture is identical.
+- **Public baseline gap explained**: the 0.862 model uses Perch pseudo-labels or AudioSet pretraining, NOT just architecture/augmentation changes.
+- **Perch on unlabeled soundscapes = mostly empty**: 99% of 127,896 windows have near-zero Perch predictions (median max prob = 0.003). Training on this teaches the model to output nothing → regression from 0.033 to 0.045 val loss. Filter to max_prob > 0.1 (1,307 windows) or use Perch on labeled XC clips instead. Checkpoint named `best_perch_fold0.pt` from `aidensong123/perch-fold`; single fold gets 0.862 vs our 5-fold ensemble at 0.783. Architecture is identical.
 - **BirdSet XCL pretraining** (9,736 Xeno-Canto species, EfficientNet-B1): LB 0.782 — no gain over B0 NoisyStudent (0.783). Bird-domain pretraining from a generic Xeno-Canto dataset does NOT help. The gap to 0.862 requires competition-specific pseudo-labeling (Perch) or AudioSet pretraining.
