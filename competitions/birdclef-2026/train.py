@@ -25,7 +25,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.model_selection import StratifiedKFold
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 # ---------------------------------------------------------------------------
 # Config
@@ -97,13 +97,17 @@ def crop_or_pad(y: np.ndarray, length: int = CLIP_SAMPLES) -> np.ndarray:
 
 
 def make_melspec(
-    y: np.ndarray, sr: int = SR, n_mels: int = N_MELS, n_fft: int = N_FFT
+    y: np.ndarray,
+    sr: int = SR,
+    n_mels: int = N_MELS,
+    n_fft: int = N_FFT,
+    hop_length: int = HOP_LENGTH,
 ) -> np.ndarray:
     mel = librosa.feature.melspectrogram(
         y=y,
         sr=sr,
         n_mels=n_mels,
-        hop_length=HOP_LENGTH,
+        hop_length=hop_length,
         n_fft=n_fft,
         fmin=FMIN,
         fmax=FMAX,
@@ -242,6 +246,8 @@ class BirdDataset(Dataset):
         time_mask: int = 30,
         n_freq_masks: int = 1,
         n_time_masks: int = 1,
+        bg_pool: list | None = None,
+        bg_noise_p: float = 0.0,
     ):
         self.df = df.reset_index(drop=True)
         self.species_to_idx = species_to_idx
@@ -259,6 +265,8 @@ class BirdDataset(Dataset):
         self.time_mask = time_mask
         self.n_freq_masks = n_freq_masks
         self.n_time_masks = n_time_masks
+        self.bg_pool = bg_pool or []
+        self.bg_noise_p = bg_noise_p
 
     def __len__(self) -> int:
         return len(self.df)
@@ -293,6 +301,14 @@ class BirdDataset(Dataset):
             n_freq_masks=self.n_freq_masks,
             n_time_masks=self.n_time_masks,
         )
+        if self.augment and self.bg_pool and np.random.random() < self.bg_noise_p:
+            spec = add_background_noise(
+                spec,
+                self.bg_pool,
+                n_mels=self.n_mels,
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+            )
         if self.birdset_norm:
             x = spec_to_tensor_birdset(spec)
         elif self.minmax_norm:
@@ -301,6 +317,138 @@ class BirdDataset(Dataset):
             x = spec_to_tensor(spec)
         label = self._make_label(row)
         return x, torch.from_numpy(label)
+
+
+# ---------------------------------------------------------------------------
+# Soundscape pseudo-label dataset
+# ---------------------------------------------------------------------------
+
+
+class SoundscapeDataset(Dataset):
+    """Dataset over pseudo-labeled soundscape 5s chunks.
+
+    Reads rows from soundscape_pseudo_labels.csv (produced by pseudo_label_self.py).
+    Each row is a (soundscape_file, start_sec) pair with a semicolon-separated
+    primary_label of predicted species.  Audio is loaded on-the-fly (no cache).
+
+    Optionally mixes in a random background noise segment from the soundscape
+    pool (background_noise_p > 0) to regularise XC-clip training.
+    """
+
+    def __init__(
+        self,
+        pseudo_csv: Path,
+        soundscape_dir: Path,
+        species_to_idx: dict[str, int],
+        n_species: int,
+        augment: bool = False,
+        label_weight: float = 0.5,  # treat pseudo-labels as soft (not 1.0)
+        n_mels: int = N_MELS,
+        n_fft: int = N_FFT,
+        hop_length: int = HOP_LENGTH,
+        minmax_norm: bool = False,
+        freq_mask: int = 20,
+        time_mask: int = 30,
+        n_freq_masks: int = 1,
+        n_time_masks: int = 1,
+    ):
+        import csv
+
+        self.soundscape_dir = soundscape_dir
+        self.species_to_idx = species_to_idx
+        self.n_species = n_species
+        self.augment = augment
+        self.label_weight = label_weight
+        self.n_mels = n_mels
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.minmax_norm = minmax_norm
+        self.freq_mask = freq_mask
+        self.time_mask = time_mask
+        self.n_freq_masks = n_freq_masks
+        self.n_time_masks = n_time_masks
+
+        with open(pseudo_csv) as f:
+            self.rows = list(csv.DictReader(f))
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def _make_label(self, primary_label: str) -> np.ndarray:
+        label = np.zeros(self.n_species, dtype=np.float32)
+        for sp in primary_label.split(";"):
+            sp = sp.strip()
+            if sp in self.species_to_idx:
+                label[self.species_to_idx[sp]] = self.label_weight
+        return label
+
+    def _load_chunk(self, filename: str, start_sec: int) -> np.ndarray:
+        path = self.soundscape_dir / filename
+        try:
+            y, _ = librosa.load(
+                path, sr=SR, mono=True, offset=float(start_sec), duration=5.0
+            )
+        except Exception:
+            return np.zeros(CLIP_SAMPLES, dtype=np.float32)
+        return crop_or_pad(y)
+
+    def __getitem__(self, idx: int):
+        row = self.rows[idx]
+        y = self._load_chunk(row["soundscape_filename"], int(row["start_sec"]))
+        spec = make_melspec(
+            y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length
+        )
+        if self.augment:
+            spec = specaugment(
+                spec,
+                freq_mask=self.freq_mask,
+                time_mask=self.time_mask,
+                n_freq_masks=self.n_freq_masks,
+                n_time_masks=self.n_time_masks,
+            )
+        if self.minmax_norm:
+            x = spec_to_tensor_minmax(spec)
+        else:
+            x = spec_to_tensor(spec)
+        label = self._make_label(row["primary_label"])
+        return x, torch.from_numpy(label)
+
+
+def load_background_pool(soundscape_dir: Path, max_files: int = 500) -> list[Path]:
+    """Return a list of soundscape paths to use as background noise sources."""
+    files = sorted(soundscape_dir.glob("*.ogg"))
+    if len(files) > max_files:
+        rng = np.random.default_rng(42)
+        files = list(rng.choice(files, max_files, replace=False))  # type: ignore[arg-type]
+    return files
+
+
+def add_background_noise(
+    spec: np.ndarray,
+    bg_pool: list[Path],
+    alpha: float = 0.3,
+    n_mels: int = N_MELS,
+    n_fft: int = N_FFT,
+    hop_length: int = HOP_LENGTH,
+) -> np.ndarray:
+    """Mix a random background noise segment into the spectrogram (in dB space)."""
+    if not bg_pool:
+        return spec
+    path = bg_pool[np.random.randint(len(bg_pool))]
+    try:
+        info = sf.info(path)
+        max_start = max(0, info.frames - int(5.0 * info.samplerate))
+        offset = (
+            np.random.randint(0, max_start + 1) / info.samplerate
+            if max_start > 0
+            else 0.0
+        )
+        y_bg, _ = librosa.load(path, sr=SR, mono=True, offset=offset, duration=5.0)
+        y_bg = crop_or_pad(y_bg)
+        spec_bg = make_melspec(y_bg, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length)
+        return spec + alpha * spec_bg
+    except Exception:
+        return spec
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +743,25 @@ def main():
         default="",
         help="Experiment tag included in checkpoint filename to prevent collisions (e.g. 'birdset-v1')",
     )
+    parser.add_argument(
+        "--pseudo-csv",
+        type=str,
+        default="",
+        help="Path to soundscape_pseudo_labels.csv (from pseudo_label_self.py). "
+        "Pseudo-labeled soundscape segments are concatenated with XC training data.",
+    )
+    parser.add_argument(
+        "--pseudo-weight",
+        type=float,
+        default=0.5,
+        help="Label weight for pseudo-labeled soundscape segments (default 0.5 = soft label)",
+    )
+    parser.add_argument(
+        "--bg-noise-p",
+        type=float,
+        default=0.0,
+        help="Probability of mixing a random soundscape segment as background noise (0=off)",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -695,12 +862,53 @@ def main():
         n_time_masks=args.n_time_masks,
         secondary_weight=secondary_weight,
     )
+    # Background noise pool (shared by BirdDataset and optionally SoundscapeDataset)
+    bg_pool: list = []
+    if args.bg_noise_p > 0:
+        soundscape_dir = DATA / "train_soundscapes"
+        bg_pool = load_background_pool(soundscape_dir)
+        print(
+            f"Background noise pool: {len(bg_pool)} soundscapes (p={args.bg_noise_p})"
+        )
+
     train_ds = BirdDataset(
-        train_df, species_to_idx, n_species, audio_dir, augment=True, **ds_kwargs
+        train_df,
+        species_to_idx,
+        n_species,
+        audio_dir,
+        augment=True,
+        bg_pool=bg_pool,
+        bg_noise_p=args.bg_noise_p,
+        **ds_kwargs,
     )
     val_ds = BirdDataset(
         val_df, species_to_idx, n_species, audio_dir, augment=False, **ds_kwargs
     )
+
+    # Pseudo-labeled soundscape segments
+    if args.pseudo_csv:
+        soundscape_dir = DATA / "train_soundscapes"
+        pseudo_ds = SoundscapeDataset(
+            pseudo_csv=Path(args.pseudo_csv),
+            soundscape_dir=soundscape_dir,
+            species_to_idx=species_to_idx,
+            n_species=n_species,
+            augment=True,
+            label_weight=args.pseudo_weight,
+            n_mels=n_mels_cfg,
+            n_fft=n_fft_cfg,
+            hop_length=hop_length_cfg,
+            minmax_norm=minmax_norm,
+            freq_mask=freq_mask,
+            time_mask=time_mask,
+            n_freq_masks=args.n_freq_masks,
+            n_time_masks=args.n_time_masks,
+        )
+        train_ds = ConcatDataset([train_ds, pseudo_ds])
+        print(
+            f"Pseudo-labels: {len(pseudo_ds)} segments added (weight={args.pseudo_weight})"
+        )
+        print(f"Combined train set: {len(train_ds)} samples")
 
     train_loader = DataLoader(
         train_ds,
@@ -803,6 +1011,8 @@ def main():
                     "seed": args.seed,
                     "fold": args.fold,
                     "n_folds": args.n_folds,
+                    "pseudo_csv": args.pseudo_csv,
+                    "bg_noise_p": args.bg_noise_p,
                 },
                 best_path,
             )
