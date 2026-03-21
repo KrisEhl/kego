@@ -105,8 +105,15 @@ kaggle competitions submit -c birdclef-2026 \
 - [x] CosineAnnealingLR fix: T_max was `epochs=200` (effectively disabled). Changed to `T_max=patience*3` + `eta_min=1e-5` for future runs.
 - [x] Patience default lowered to 10 (was 15)
 - [x] `pseudo_label_perch.py`, `pseudo_label_birdnet.py`, `pseudo_label_self.py` written. Pseudo-label + background noise wired into `train.py`.
-- [ ] **Perch pseudo-label generation** — RUNNING (Mar 21, ~14:00). Processing 10,658 train soundscapes in 5s windows on CPU (~6–14h). Script was initially wrong (ran on XC clips instead of soundscapes) — fixed and restarted. Output: `perch_pseudo_labels.csv` + `perch_pseudo_labels_soft.npz`.
-  - TF/TFHub not in uv venv by default — installed via `.venv/bin/pip`. Run script with `.venv/bin/python` not `uv run python`.
+- [ ] **Perch pseudo-label generation** — RUNNING (Mar 21, ~18:00). Processing 10,658 train soundscapes in 5s windows on GPU (~25 min). Output: `perch_pseudo_labels.csv` + `perch_pseudo_labels_soft.npz`.
+  - **TF GPU requires `LD_LIBRARY_PATH`** — the bundled nvidia-* CUDA wheels (from `tensorflow[and-cuda]`) are not auto-discovered. Must set manually before running:
+    ```bash
+    VENV=~/projects/kego/.venv
+    NV=$VENV/lib/python3.13/site-packages/nvidia
+    export LD_LIBRARY_PATH=$NV/cuda_runtime/lib:$NV/cudnn/lib:$NV/cublas/lib:$NV/cufft/lib:$NV/curand/lib:$NV/cusolver/lib:$NV/cusparse/lib:$NV/nvjitlink/lib:$NV/nccl/lib
+    KEGO_PATH_DATA=~/projects/kego/data .venv/bin/python competitions/birdclef-2026/pseudo_label_perch.py
+    ```
+  - `uv run python` does not work for TF scripts — use `.venv/bin/python` directly.
 
 ---
 
