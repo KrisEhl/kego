@@ -105,15 +105,11 @@ kaggle competitions submit -c birdclef-2026 \
 - [x] CosineAnnealingLR fix: T_max was `epochs=200` (effectively disabled). Changed to `T_max=patience*3` + `eta_min=1e-5` for future runs.
 - [x] Patience default lowered to 10 (was 15)
 - [x] `pseudo_label_perch.py`, `pseudo_label_birdnet.py`, `pseudo_label_self.py` written. Pseudo-label + background noise wired into `train.py`.
-- [ ] **Perch pseudo-label generation** — RUNNING (Mar 21, ~18:00). Processing 10,658 train soundscapes in 5s windows on GPU (~25 min). Output: `perch_pseudo_labels.csv` + `perch_pseudo_labels_soft.npz`.
-  - **TF GPU requires `LD_LIBRARY_PATH`** — the bundled nvidia-* CUDA wheels (from `tensorflow[and-cuda]`) are not auto-discovered. Must set manually before running:
-    ```bash
-    VENV=~/projects/kego/.venv
-    NV=$VENV/lib/python3.13/site-packages/nvidia
-    export LD_LIBRARY_PATH=$NV/cuda_runtime/lib:$NV/cudnn/lib:$NV/cublas/lib:$NV/cufft/lib:$NV/curand/lib:$NV/cusolver/lib:$NV/cusparse/lib:$NV/nvjitlink/lib:$NV/nccl/lib
-    KEGO_PATH_DATA=~/projects/kego/data .venv/bin/python competitions/birdclef-2026/pseudo_label_perch.py
-    ```
-  - `uv run python` does not work for TF scripts — use `.venv/bin/python` directly.
+- [x] **Perch pseudo-label generation** — DONE (Mar 21, 16.4 min on GPU). Output: `perch_pseudo_labels.csv` (20KB) + `perch_pseudo_labels_soft.npz` (137MB, shape 127896×234).
+  - **TF GPU requires `LD_LIBRARY_PATH`** pointing at bundled nvidia-* CUDA 12 wheels (`tensorflow[and-cuda]`). Use `.venv/bin/python`, not `uv run python`. See PLAN step 5 for full command.
+- [x] **Two-stage Perch training implemented** in `train.py`: `--perch-npz` triggers stage 1 on Perch soft labels, then stage 2 fine-tunes on XC hard labels.
+- [x] **Soundscape spec cache** (`precompute_specs.py --soundscapes`) — precomputes 224-mel specs for all 10,658 soundscapes into `specs_cache_soundscape_224/` so `PerchDataset` is GPU-bound, not CPU-bound. Running now (~30 min).
+- [ ] **perch-v1 training** — folds 0 & 1 running XC-only now as safety net (ETA ~1h). Once done + soundscape cache ready, relaunch all 5 folds with `--perch-npz` for full two-stage pipeline (ETA ~2.5h/fold, both GPUs parallel).
 
 ---
 
@@ -127,9 +123,11 @@ kaggle competitions submit -c birdclef-2026 \
 - **BirdModelBirdSet** (EfficientNet-B1, BirdSet XCL) → LB 0.782 (no gain)
 - **Hard secondary labels** — dead end (never fully trained or submitted)
 
-### 🔄 IN PROGRESS
+### 🔄 IN PROGRESS (Mar 21)
 
-- **Perch pseudo-label generation** (Step 5 prerequisite) — running on `omarchyd` since Mar 21 ~14:00. ETA 6–14h on CPU. Check: `ssh kristian@omarchyd "tail -5 ~/projects/kego/competitions/birdclef-2026/perch_pseudo_label.log"`
+- **Soundscape spec precompute** — `precompute_specs.py --soundscapes`, ETA ~30 min. Check: `tail -1 competitions/birdclef-2026/precompute_soundscape.log`
+- **perch-v1 folds 0 & 1** — XC-only baseline run (safety net, ETA ~1h). Check: `tail -3 competitions/birdclef-2026/perch_v1_fold{0,1}.log`
+- **Next**: once both done, launch all 5 folds with `--perch-npz` (full two-stage Perch pipeline, ~2.5h)
 
 ---
 
