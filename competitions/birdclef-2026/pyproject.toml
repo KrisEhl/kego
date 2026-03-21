@@ -16,6 +16,9 @@ dependencies = [
     "scikit-learn",
     "audiomentations",
     "wandb",
+    "tensorflow",
+    "tensorflow-hub",
+    "birdnetlib",
 ]
 
 [tool.uv.sources]
