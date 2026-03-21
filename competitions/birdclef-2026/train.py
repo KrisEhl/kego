@@ -414,6 +414,91 @@ class SoundscapeDataset(Dataset):
         return x, torch.from_numpy(label)
 
 
+class PerchDataset(Dataset):
+    """Soundscape windows with Perch soft labels for stage-1 pretraining.
+
+    Reads perch_pseudo_labels_soft.npz (output of pseudo_label_perch.py).
+    Labels are raw Perch sigmoid probabilities — used as soft BCE targets.
+    Species are remapped from NPZ order to the sorted train.py species order.
+    Audio is loaded on-the-fly from soundscape files.
+    """
+
+    def __init__(
+        self,
+        npz_path: Path,
+        soundscape_dir: Path,
+        species_to_idx: dict[str, int],
+        n_species: int,
+        augment: bool = False,
+        n_mels: int = N_MELS,
+        n_fft: int = N_FFT,
+        hop_length: int = HOP_LENGTH,
+        minmax_norm: bool = False,
+        freq_mask: int = 20,
+        time_mask: int = 30,
+        n_freq_masks: int = 1,
+        n_time_masks: int = 1,
+    ):
+        data = np.load(npz_path, allow_pickle=True)
+        self.labels = data["labels"].astype(np.float32)  # (N, 234) Perch probs
+        npz_species = list(data["species"])
+        # Map NPZ species order → train.py sorted species order (-1 = absent)
+        self.remap = np.array(
+            [species_to_idx.get(sp, -1) for sp in npz_species], dtype=np.int32
+        )
+        self.entries = []
+        for key in data["filenames"]:
+            fname, start = str(key).rsplit(":", 1)
+            self.entries.append((fname, int(start)))
+
+        self.soundscape_dir = soundscape_dir
+        self.n_species = n_species
+        self.augment = augment
+        self.n_mels = n_mels
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.minmax_norm = minmax_norm
+        self.freq_mask = freq_mask
+        self.time_mask = time_mask
+        self.n_freq_masks = n_freq_masks
+        self.n_time_masks = n_time_masks
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def __getitem__(self, idx: int):
+        fname, start_sec = self.entries[idx]
+        try:
+            y, _ = librosa.load(
+                self.soundscape_dir / fname,
+                sr=SR,
+                mono=True,
+                offset=float(start_sec),
+                duration=5.0,
+            )
+        except Exception:
+            y = np.zeros(CLIP_SAMPLES, dtype=np.float32)
+        y = crop_or_pad(y)
+        spec = make_melspec(
+            y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length
+        )
+        if self.augment:
+            spec = specaugment(
+                spec,
+                freq_mask=self.freq_mask,
+                time_mask=self.time_mask,
+                n_freq_masks=self.n_freq_masks,
+                n_time_masks=self.n_time_masks,
+            )
+        x = spec_to_tensor_minmax(spec) if self.minmax_norm else spec_to_tensor(spec)
+        # Remap Perch probs from NPZ species order → train sorted species order
+        raw_probs = self.labels[idx]
+        label = np.zeros(self.n_species, dtype=np.float32)
+        valid = self.remap >= 0
+        label[self.remap[valid]] = raw_probs[valid]
+        return x, torch.from_numpy(label)
+
+
 def load_background_pool(soundscape_dir: Path, max_files: int = 500) -> list[Path]:
     """Return a list of soundscape paths to use as background noise sources."""
     files = sorted(soundscape_dir.glob("*.ogg"))
@@ -762,6 +847,19 @@ def main():
         default=0.0,
         help="Probability of mixing a random soundscape segment as background noise (0=off)",
     )
+    parser.add_argument(
+        "--perch-npz",
+        type=str,
+        default="",
+        help="Path to perch_pseudo_labels_soft.npz. If set, run stage-1 pretraining on "
+        "Perch soft labels before fine-tuning on XC hard labels.",
+    )
+    parser.add_argument(
+        "--perch-epochs",
+        type=int,
+        default=10,
+        help="Epochs for stage-1 Perch pretraining (default 10)",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -957,6 +1055,57 @@ def main():
         ckpt_name = "efficientnet_b1" if args.birdset else args.backbone
         best_path = OUT / f"{ckpt_name}{suffix}_fold{args.fold}.pt"
 
+    # ── Stage 1: Perch soft-label pretraining ──────────────────────────────────
+    if args.perch_npz:
+        soundscape_dir = DATA / "train_soundscapes"
+        perch_ds = PerchDataset(
+            npz_path=Path(args.perch_npz),
+            soundscape_dir=soundscape_dir,
+            species_to_idx=species_to_idx,
+            n_species=n_species,
+            augment=True,
+            n_mels=n_mels_cfg,
+            n_fft=n_fft_cfg,
+            hop_length=hop_length_cfg,
+            minmax_norm=minmax_norm,
+            freq_mask=freq_mask,
+            time_mask=time_mask,
+            n_freq_masks=args.n_freq_masks,
+            n_time_masks=args.n_time_masks,
+        )
+        perch_loader = DataLoader(
+            perch_ds,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.workers,
+            pin_memory=True,
+            drop_last=True,
+        )
+        print(
+            f"\n── Stage 1: Perch pretraining — {len(perch_ds)} windows, "
+            f"{args.perch_epochs} epochs ──"
+        )
+        is_prob_model = args.sed or args.baseline or args.birdset
+        use_dual_loss = args.baseline or args.birdset
+        for epoch in range(1, args.perch_epochs + 1):
+            t0 = time.time()
+            train_loss = train_epoch(
+                model,
+                perch_loader,
+                optimizer,
+                device,
+                sed=is_prob_model,
+                baseline=use_dual_loss,
+            )
+            scheduler.step()
+            print(
+                f"  [Perch] Epoch {epoch:02d}/{args.perch_epochs} | "
+                f"train={train_loss:.4f} | {time.time() - t0:.0f}s",
+                flush=True,
+            )
+        print("── Stage 1 done. Starting stage 2 (XC fine-tuning) ──\n")
+
+    # ── Stage 2: XC hard-label fine-tuning (with early stopping) ───────────────
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
         is_prob_model = args.sed or args.baseline or args.birdset
@@ -1013,6 +1162,8 @@ def main():
                     "n_folds": args.n_folds,
                     "pseudo_csv": args.pseudo_csv,
                     "bg_noise_p": args.bg_noise_p,
+                    "perch_npz": args.perch_npz,
+                    "perch_epochs": args.perch_epochs,
                 },
                 best_path,
             )
