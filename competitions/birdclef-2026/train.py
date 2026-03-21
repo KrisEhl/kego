@@ -589,6 +589,12 @@ def main():
         action="store_true",
         help="Use EfficientNet-B1 pretrained on BirdSet XCL (9,736 Xeno-Canto species)",
     )
+    parser.add_argument(
+        "--tag",
+        type=str,
+        default="",
+        help="Experiment tag included in checkpoint filename to prevent collisions (e.g. 'birdset-v1')",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -723,22 +729,25 @@ def main():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs, eta_min=1e-6
+        optimizer, T_max=args.patience * 3, eta_min=1e-5
     )
 
     OUT.mkdir(exist_ok=True)
     best_val_loss = float("inf")
     epochs_no_improve = 0
-    if args.birdset:
-        suffix = "_birdset"
-    elif args.baseline:
-        suffix = "_baseline"
-    elif args.sed:
-        suffix = "_sed"
+    if args.tag:
+        best_path = OUT / f"{args.tag}_fold{args.fold}.pt"
     else:
-        suffix = ""
-    ckpt_name = "efficientnet_b1" if args.birdset else args.backbone
-    best_path = OUT / f"{ckpt_name}{suffix}_fold{args.fold}.pt"
+        if args.birdset:
+            suffix = "_birdset"
+        elif args.baseline:
+            suffix = "_baseline"
+        elif args.sed:
+            suffix = "_sed"
+        else:
+            suffix = ""
+        ckpt_name = "efficientnet_b1" if args.birdset else args.backbone
+        best_path = OUT / f"{ckpt_name}{suffix}_fold{args.fold}.pt"
 
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
@@ -783,6 +792,17 @@ def main():
                     "hop_length": hop_length_cfg,
                     "minmax_norm": minmax_norm,
                     "hard_labels": args.hard_labels,
+                    "tag": args.tag,
+                    "dual_loss": use_dual_loss,
+                    "freq_mask": freq_mask,
+                    "time_mask": time_mask,
+                    "n_freq_masks": args.n_freq_masks,
+                    "n_time_masks": args.n_time_masks,
+                    "patience": args.patience,
+                    "lr": args.lr,
+                    "seed": args.seed,
+                    "fold": args.fold,
+                    "n_folds": args.n_folds,
                 },
                 best_path,
             )

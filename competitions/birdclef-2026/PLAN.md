@@ -28,34 +28,45 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB 0.782
+### Current best: LB 0.783
 
-Gap to public SED baseline (0.862) = ~0.08. Adding dual frame+clip loss + SpecAugment fix in progress.
+Gap to public SED baseline (0.862) = ~0.08. Investigating root cause — see "Public baseline analysis" below.
 
 ### Results
 
-| Version | LB | Clip OOF cmAP | Soundscape cmAP | Notes |
-|---|---|---|---|---|
-| EfficientNet-B0 plain, 30 epochs | 0.758 | 0.4985 | 0.1503 | 5-fold, 128-mel |
-| EfficientNet-B3 plain, 50 epochs | 0.776 | 0.4851 | 0.1835 | 5-fold, 128-mel |
-| EfficientNet-B3 naive SED, 50 epochs | 0.750 | 0.6135 | 0.2994 | worse LB despite higher local — too few temporal frames |
-| **B0 NoisyStudent + GEMFreqPool + AttentionSED, 50ep** | **0.782** | — | — | 224-mel, minmax norm, time_mask=100 (wrong) |
-| B0 baseline + dual loss + time_mask=30 | pending | — | — | folds 0+1 done; 2-4 retraining overnight |
+| Version | LB | Notes |
+|---|---|---|
+| EfficientNet-B0 plain, 30 epochs | 0.758 | 5-fold, 128-mel |
+| EfficientNet-B3 naive SED, 50 epochs | 0.750 | too few temporal frames |
+| EfficientNet-B3 plain, 50 epochs | 0.776 | 5-fold, 128-mel |
+| **B0 NoisyStudent + GEMFreqPool + AttentionSED, 50ep** | **0.782** | 224-mel, minmax norm, time_mask=100 |
+| B0 baseline, early stopping patience=15 | 0.783 | same arch, time_mask=100, no dual loss |
+| B0 baseline + dual loss + time_mask=30 (all 5 folds) | 0.765 | **REGRESSION** — see dead ends |
+| B0 baseline + dual loss + hard secondary labels | training | GPU0: fold0→2→4, GPU1: fold1→3 |
+| **EfficientNet-B1 BirdSet XCL pretrained (5-fold)** | **pending** | 256-mel, 1-channel, patience=10, minmax norm |
 
 ### Local validation findings
 
 **Neither clip OOF nor soundscape cmAP reliably predicts LB ranking.** B3-SED has highest local scores but lowest LB (0.750). Root cause: the 66 train soundscapes only cover 75/234 species — not representative of test set. **Use LB submissions as ground truth; local metrics only useful as coarse sanity checks.**
 
-### Architecture comparison vs public baseline
+### Public baseline analysis (LB 0.862)
+
+Pulled `aidensong123/birdclef-2026-sed-baseline-lb-0-862` to inspect the inference notebook. Key findings:
+
+- **Architecture is identical** to ours: tf_efficientnet_b0.ns_jft_in1k + GEMFreqPool + AttentionSED
+- **Only 1 fold checkpoint** — 0.862 comes from a single-fold model, not a 5-fold ensemble
+- **Checkpoint named `best_perch_fold0.pt`** from dataset `aidensong123/perch-fold` — strongly suggests **Perch-based pretraining or pseudo-labeling** (Google's AudioSet bird classifier)
+- Checkpoint has a `stage` field (checked via `ckpt.get("stage", "supervised")`), indicating a multi-stage training pipeline
+- **The gap (0.862 vs 0.783) is almost certainly from Perch pretraining, not architecture**
 
 | Factor | Us | Public baseline (0.862) |
 |---|---|---|
 | Backbone | tf_efficientnet_b0.ns_jft_in1k | same |
 | Head | GEMFreqPool + AttentionSED | same |
-| **Dual loss** | ✅ (folds 0+1) / ❌ (folds 2-4, retraining) | ✅ 0.5×clip + 0.5×frame |
-| **SpecAugment** | ✅ freq=30×2, time=30×2 | ✅ same |
-| Mixup | ✅ | ✅ |
-| Training | early stopping, patience=15 | unknown |
+| Dual loss | ✅ | likely ✅ |
+| SpecAugment | freq=30×2, time=30×2 | likely same |
+| Folds submitted | 5-fold ensemble | **1 fold only** |
+| **Pretraining** | ImageNet only | **Perch / AudioSet pseudo-labels** |
 
 ### Kaggle setup
 
@@ -85,68 +96,117 @@ kaggle competitions submit -c birdclef-2026 \
 - [x] `BirdModelBaseline`: GEMFreqPool + AttentionSED head, NoisyStudent backbone — LB **0.782**
 - [x] Early stopping (`--patience`, default 10) — models converge around epoch 25–50
 - [x] Dead end: naive SED head (0.750) — too few temporal frames; replaced by proper GEMFreqPool+AttentionSED
-- [x] Dual frame+clip loss: `0.5 * clip_BCE + 0.5 * frame_BCE` — key difference vs public baseline
-- [x] SpecAugment fix: time_mask=30 frames (was 100 — too aggressive, ~1.6s masked)
-- [ ] Retrain all 5 folds with dual loss consistently (folds 0+1 done, 2-4 overnight)
+- [x] Dual frame+clip loss: `0.5 * clip_BCE + 0.5 * frame_BCE`
+- [x] SpecAugment fix: time_mask=30 frames (was 100)
+- [x] Retrain all 5 folds with dual loss + time_mask=30 → LB **0.765** (regression vs 0.783)
+- [x] Analyzed public baseline — gap explained by Perch pretraining, not architecture
+- [ ] Hard secondary labels (all 5 folds, training now)
+- [x] **BirdModelBirdSet**: EfficientNet-B1 pretrained on BirdSet XCL (9,736 species via HuggingFace). All 5 folds trained: best val losses 0.0316–0.0324, stopped ep20–55. Checkpoints at `aldisued/birdclef2026-birdset`. Notebook v6 submitted — LB pending.
+- [x] CosineAnnealingLR fix: T_max was `epochs=200` (effectively disabled). Changed to `T_max=patience*3` + `eta_min=1e-5` for future runs.
+- [x] Patience default lowered to 10 (was 15)
 
 ---
 
 ## Next steps (ordered by expected impact)
 
-### Step 1: SpecAugment + Dual loss — IN PROGRESS
+### Step 1: SpecAugment + Dual loss — DONE (0.765, REGRESSION)
 
-✅ SpecAugment implemented: freq_mask=30×2, time_mask=30×2
-✅ Dual loss: `0.5 * clip_BCE + 0.5 * frame_BCE`
-⏳ Retraining all 5 folds overnight — submit when complete
+✅ Implemented, all 5 folds retrained → **LB 0.765** (down from 0.783). See dead ends.
 
-### Step 2: Secondary label handling
+### Step 2: Hard secondary labels — IN PROGRESS
 
-Currently secondary labels are soft (0.5). Try hard positives at 1.0 (simpler, often better).
+`--hard-labels` flag: secondary weight 0.5 → 1.0. Training all 5 folds on 2× RTX 3090.
+Will submit when complete to get LB signal before moving on.
 
-### Step 3: Pretrained audio backbone
+### Step 3: BirdModelBirdSet — SUBMITTED (LB pending)
 
-Use weights pretrained on bird/environmental audio rather than ImageNet. Options investigated:
+EfficientNet-B1 pretrained on BirdSet XCL (9,736 Xeno-Canto species). All 5 folds trained:
 
-**Option A — PANNs CNN14 (recommended first try)**
+| Fold | Best val loss | Epoch stopped |
+|---|---|---|
+| 0 | 0.0319 | 49 |
+| 1 | 0.0320 | 49 |
+| 2 | 0.0316 | 21 |
+| 3 | 0.0324 | 20 |
+| 4 | 0.0319 | 55 |
+
+Key details: 256-mel, 1-channel input, hop=256, n_fft=2048, SR=32000, minmax norm, patience=10.
+Checkpoints at `aldisued/birdclef2026-birdset`. Notebook `aldisued/birdclef-2026-baseline-inference` v6 submitted.
+
+**Expected outcome**: If BirdSet pretraining on Xeno-Canto bird audio helps (likely yes), we may close part of the 0.079 gap vs public baseline. BirdSet is domain-specific (bird calls) so it should outperform ImageNet-only pretraining.
+
+### Step 4: Ensemble BirdSet + Baseline
+
+If BirdSet gives LB improvement:
+- Average outputs from BirdModelBirdSet (5 folds) + BirdModelBaseline (5 folds)
+- Inference notebook already supports both model types via `birdset` flag detection
+
+### Step 5: Pretrained audio backbone (HIGH IMPACT if BirdSet insufficient)
+
+The public baseline's 0.079 LB lead almost certainly comes from **Perch-based pseudo-labeling or AudioSet pretraining**.
+
+**Option A — PANNs CNN14**
 - Pretrained on Google AudioSet (2M clips, 527 classes incl. many bird/nature sounds)
 - CNN architecture → fast CPU inference (critical for Kaggle scoring)
-- Same mel spectrogram interface as current pipeline; spec cache needs recompute (different mel params)
-- Used by BirdCLEF 2025 winner (ConvNeXt + AudioSet pretraining)
-- Install: `pip install panns-inference` or load via timm
+- Weights: `panns-data` repo on GitHub; finetune with our pipeline
 
-**Option B — DBD-research-group/AST-BirdSet-XCM (HuggingFace)**
-- AST (Audio Spectrogram Transformer) fine-tuned on BirdSet (large Xeno-Canto subset — same source as our data)
-- 86M params, HuggingFace Transformers compatible
-- **Risk**: Transformer CPU inference is 5–10× slower than CNN → may blow 90-min Kaggle scoring limit
-- Worth benchmarking inference speed before committing
+**Option B — Perch pseudo-labels**
+- Run Google's Perch model on training data to get soft pseudo-labels
+- Pretrain our EfficientNet on those, then finetune on labeled data
+- Closest to what public baseline likely does; most complex
 
-**Option C — BirdNET-Analyzer**
-- Cornell Lab classifier trained on ~6000 bird species
-- Harder to integrate (different SR/mel params, proprietary training data)
-- Lower priority
+### Step 6: Per-species threshold calibration
 
-**Decision rule**: Test inference speed on one soundscape file before choosing. If AST processes <2s/soundscape on CPU, it's viable. Otherwise, PANNs CNN14.
-
-### Step 5: Ensemble
-
-Once multiple backbones/configs trained:
-- Average sigmoid outputs across folds and backbones
-- Greedy ensemble selection on OOF cmAP
+After getting a strong single model:
+- Grid search sigmoid threshold per class on OOF predictions
+- Can lift cmAP 1-3% without any retraining
 
 ---
 
-## Hardware
+## Hardware & Training Convention
 
 Training on **2× RTX 3090** at `kristian@omarchyd` (Tailscale) / `kristian@omarchyd.fritz.box` (LAN).
 Spec cache at `data/birdclef/birdclef-2026/specs_cache/` (~10.5GB, precomputed).
+
+### Checkpoint naming — always use `--tag`
+
+Checkpoints are saved to `competitions/birdclef-2026/outputs/{tag}_fold{N}.pt`.
+**Always pass `--tag <experiment-name>` to prevent overwriting previous runs.**
 
 ```bash
 ssh kristian@omarchyd
 cd ~/projects/kego
 git pull
-CUDA_VISIBLE_DEVICES=0 uv run python competitions/birdclef-2026/train.py --fold 0 &
-CUDA_VISIBLE_DEVICES=1 uv run python competitions/birdclef-2026/train.py --fold 1 &
+
+# Example: BirdSet v2 run
+CUDA_VISIBLE_DEVICES=0 ~/.local/bin/uv run python competitions/birdclef-2026/train.py \
+  --birdset --fold 0 --tag birdset-v2 &
+CUDA_VISIBLE_DEVICES=1 ~/.local/bin/uv run python competitions/birdclef-2026/train.py \
+  --birdset --fold 1 --tag birdset-v2 &
 ```
+
+The checkpoint stores all hyperparams: `epoch`, `val_loss`, `backbone`, `n_mels`, `n_fft`, `hop_length`,
+`hard_labels`, `dual_loss`, `freq_mask`, `time_mask`, `patience`, `lr`, `seed`, `fold`, `tag`.
+
+### Inspect a checkpoint
+
+```bash
+cd ~/projects/kego
+~/.local/bin/uv run python3 -c "
+import torch, sys
+ck = torch.load(sys.argv[1], map_location='cpu')
+for k, v in ck.items():
+    if k != 'model': print(f'  {k}: {v}')
+" competitions/birdclef-2026/outputs/mytag_fold0.pt
+```
+
+### Experiment log
+
+| Tag | Args | Folds | LB | Notes |
+|---|---|---|---|---|
+| *(legacy, no tag)* | `--baseline`, patience=15, time_mask=100 | 0–4 | 0.783 | Current best |
+| *(legacy, no tag)* | `--baseline --hard-labels`, patience=10 | 0–1 only | — | Mixed; never submitted |
+| `birdset-v1` (uploaded as `birdclef2026-birdset`) | `--birdset`, patience=10 | 0–4 | pending | BirdSet XCL pretrained |
 
 ---
 
@@ -167,4 +227,5 @@ CUDA_VISIBLE_DEVICES=1 uv run python competitions/birdclef-2026/train.py --fold 
 - Plain classifier head underperforms SED head significantly for soundscape-level scoring
 - Naive SED head (mean freq pool + sigmoid attention): 0.750 — worse than plain B3 (0.776) due to only ~10 temporal frames after 32× backbone downsampling
 - Longer training beyond ~50 epochs doesn't help — val loss plateau is flat; early stopping with patience=15 is appropriate
-- Our architecture matches public baseline exactly (same backbone, GEMFreqPool, AttentionSED) — gap (0.782 vs 0.862) is likely SpecAugment
+- **Dual loss + time_mask=30 regressed LB 0.783 → 0.765**: two changes happened at once (added dual loss, reduced time_mask 100→30). Unclear which caused it. Possible: time_mask=100 provided better regularization despite being "wrong"; or dual loss destabilizes training with patience=15. Not worth isolating — the architecture gap vs public baseline is from Perch pretraining, not these details.
+- **Public baseline gap explained**: the 0.862 model uses Perch pseudo-labels or AudioSet pretraining, NOT just architecture/augmentation changes. Checkpoint named `best_perch_fold0.pt` from `aidensong123/perch-fold`; single fold gets 0.862 vs our 5-fold ensemble at 0.783. Architecture is identical.
