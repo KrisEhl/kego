@@ -14,9 +14,16 @@ Perch v4 covers 10,932 species. Of our 234 competition species, 158 are bird
 species with matching eBird codes; the remaining 76 (frogs, insects, mammals)
 are not in Perch's label set and will have no pseudo-labels.
 
-Usage (on GPU server):
+Usage (on GPU server — use .venv/bin/python with LD_LIBRARY_PATH for TF GPU):
+    # Single GPU
     KEGO_PATH_DATA=/home/kristian/projects/kego/data \\
-        uv run python competitions/birdclef-2026/pseudo_label_perch.py
+        .venv/bin/python competitions/birdclef-2026/pseudo_label_perch.py
+
+    # Parallel: split across both 3090s (halves runtime)
+    CUDA_VISIBLE_DEVICES=0 KEGO_PATH_DATA=... .venv/bin/python ... --start-idx 0 --end-idx 5329 &
+    CUDA_VISIBLE_DEVICES=1 KEGO_PATH_DATA=... .venv/bin/python ... --start-idx 5329 &
+    # Outputs: perch_pseudo_labels_0_5329.csv + perch_pseudo_labels_5329_10658.csv
+    # Merge with: python -c "import pandas as pd; pd.concat([pd.read_csv('..._0_5329.csv'), pd.read_csv('..._5329_10658.csv')]).to_csv('perch_pseudo_labels.csv', index=False)"
 
 Outputs:
     data/birdclef/birdclef-2026/perch_pseudo_labels.csv
@@ -30,6 +37,7 @@ Outputs:
         - species: str array (234,) species in label order
 """
 
+import argparse
 import csv
 import os
 import time
@@ -56,6 +64,12 @@ SR = 32_000
 CLIP_SAMPLES = SR * 5  # 5-second window
 LOGIT_THRESHOLD = 0.0  # sigmoid(0) = 0.5 — only high-confidence predictions
 
+# ── args ───────────────────────────────────────────────────────────────────────
+parser = argparse.ArgumentParser()
+parser.add_argument("--start-idx", type=int, default=0)
+parser.add_argument("--end-idx", type=int, default=None)
+args = parser.parse_args()
+
 # ── load competition species list ──────────────────────────────────────────────
 with open(TAXONOMY_CSV) as f:
     taxonomy = list(csv.DictReader(f))
@@ -77,7 +91,12 @@ print(f"Perch coverage: {n_covered}/{n_species} competition species")
 
 # ── find soundscape files ──────────────────────────────────────────────────────
 soundscape_files = sorted(SOUNDSCAPE_DIR.glob("*.ogg"))
-print(f"Train soundscapes: {len(soundscape_files)}")
+end_idx = args.end_idx if args.end_idx is not None else len(soundscape_files)
+soundscape_files = soundscape_files[args.start_idx : end_idx]
+suffix = f"_{args.start_idx}_{end_idx}" if args.start_idx or args.end_idx else ""
+OUT_CSV = DATA / f"perch_pseudo_labels{suffix}.csv"
+OUT_SOFT = DATA / f"perch_pseudo_labels_soft{suffix}.npz"
+print(f"Train soundscapes: {len(soundscape_files)} (idx {args.start_idx}–{end_idx})")
 
 # ── load Perch model ───────────────────────────────────────────────────────────
 print("\nLoading Perch model...")
