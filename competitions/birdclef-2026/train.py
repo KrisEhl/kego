@@ -415,6 +415,112 @@ class SoundscapeDataset(Dataset):
         return x, torch.from_numpy(label)
 
 
+class SoundscapeLabelsDataset(Dataset):
+    """Labeled soundscape segments from train_soundscapes_labels.csv.
+
+    These are real, human-annotated labels on in-domain passive recordings —
+    same distribution as the test set. Adding them to training is the single
+    most impactful change to close the gap to the public baseline (LB 0.862).
+
+    Fast path: slices precomputed 60s specs from specs_cache_soundscape_224/.
+    Slow path: loads audio on-the-fly with librosa.
+
+    CSV columns: filename, start (HH:MM:SS), end (HH:MM:SS), primary_label (;-sep)
+    """
+
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        soundscape_dir: Path,
+        species_to_idx: dict[str, int],
+        n_species: int,
+        augment: bool = False,
+        n_mels: int = N_MELS_BASELINE,
+        n_fft: int = N_FFT_BASELINE,
+        hop_length: int = HOP_LENGTH,
+        minmax_norm: bool = True,
+        freq_mask: int = 30,
+        time_mask: int = 30,
+        n_freq_masks: int = 2,
+        n_time_masks: int = 2,
+        cache_dir: Path | None = None,
+    ):
+        self.df = df.reset_index(drop=True)
+        self.soundscape_dir = soundscape_dir
+        self.species_to_idx = species_to_idx
+        self.n_species = n_species
+        self.augment = augment
+        self.n_mels = n_mels
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.minmax_norm = minmax_norm
+        self.freq_mask = freq_mask
+        self.time_mask = time_mask
+        self.n_freq_masks = n_freq_masks
+        self.n_time_masks = n_time_masks
+        self.cache_dir = cache_dir
+        self.clip_frames = CLIP_SAMPLES // hop_length
+
+    def __len__(self) -> int:
+        return len(self.df)
+
+    @staticmethod
+    def _parse_seconds(t: str) -> int:
+        """Parse HH:MM:SS → total seconds."""
+        h, m, s = t.split(":")
+        return int(h) * 3600 + int(m) * 60 + int(s)
+
+    def _make_label(self, primary_label: str) -> np.ndarray:
+        label = np.zeros(self.n_species, dtype=np.float32)
+        for sp in str(primary_label).split(";"):
+            sp = sp.strip()
+            if sp in self.species_to_idx:
+                label[self.species_to_idx[sp]] = 1.0
+        return label
+
+    def __getitem__(self, idx: int):
+        row = self.df.iloc[idx]
+        start_sec = self._parse_seconds(str(row["start"]))
+
+        if self.cache_dir is not None:
+            stem = Path(str(row["filename"])).stem
+            cache_path = self.cache_dir / f"{stem}.npy"
+            if cache_path.exists():
+                full_spec = np.load(cache_path).astype(np.float32)
+                start_frame = int(start_sec * SR / self.hop_length)
+                spec = full_spec[:, start_frame : start_frame + self.clip_frames]
+                if spec.shape[1] < self.clip_frames:
+                    spec = np.pad(spec, ((0, 0), (0, self.clip_frames - spec.shape[1])))
+            else:
+                spec = self._load_from_audio(row["filename"], start_sec)
+        else:
+            spec = self._load_from_audio(row["filename"], start_sec)
+
+        if self.augment:
+            spec = specaugment(
+                spec,
+                freq_mask=self.freq_mask,
+                time_mask=self.time_mask,
+                n_freq_masks=self.n_freq_masks,
+                n_time_masks=self.n_time_masks,
+            )
+        x = spec_to_tensor_minmax(spec) if self.minmax_norm else spec_to_tensor(spec)
+        return x, torch.from_numpy(self._make_label(row["primary_label"]))
+
+    def _load_from_audio(self, filename: str, start_sec: int) -> np.ndarray:
+        path = self.soundscape_dir / filename
+        try:
+            y, _ = librosa.load(
+                path, sr=SR, mono=True, offset=float(start_sec), duration=5.0
+            )
+        except Exception:
+            return np.zeros((self.n_mels, self.clip_frames), dtype=np.float32)
+        y = crop_or_pad(y)
+        return make_melspec(
+            y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length
+        )
+
+
 class PerchDataset(Dataset):
     """Soundscape windows with Perch soft labels for stage-1 pretraining.
 
@@ -899,6 +1005,19 @@ def main():
         help="Only use Perch windows where max species prob >= this threshold (default 0 = all). "
         "Recommended: 0.1 (keeps ~1%% of windows with real signal, drops empty noise windows).",
     )
+    parser.add_argument(
+        "--soundscape-labels",
+        action="store_true",
+        help="Include train_soundscapes_labels.csv in training. A fraction of soundscapes "
+        "is held out for validation (see --soundscape-val-frac). When set, early stopping "
+        "uses soundscape val loss instead of XC val loss — much closer to LB metric.",
+    )
+    parser.add_argument(
+        "--soundscape-val-frac",
+        type=float,
+        default=0.2,
+        help="Fraction of the 66 labeled soundscapes held out for validation (default 0.2 ≈ 13 soundscapes).",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -1021,6 +1140,62 @@ def main():
     val_ds = BirdDataset(
         val_df, species_to_idx, n_species, audio_dir, augment=False, **ds_kwargs
     )
+
+    # Labeled soundscape segments (train_soundscapes_labels.csv)
+    if args.soundscape_labels:
+        sc_labels_path = DATA / "train_soundscapes_labels.csv"
+        sc_labels = pd.read_csv(sc_labels_path)
+        soundscape_dir = DATA / "train_soundscapes"
+        sc_cache = (
+            SOUNDSCAPE_CACHE_DIR_BASELINE
+            if SOUNDSCAPE_CACHE_DIR_BASELINE.exists()
+            else None
+        )
+
+        # Split soundscapes into train/val by file (seeded, reproducible)
+        sc_files = sorted(sc_labels["filename"].unique())
+        rng = np.random.default_rng(args.seed)
+        n_val = max(1, int(len(sc_files) * args.soundscape_val_frac))
+        val_files = set(rng.choice(sc_files, n_val, replace=False))
+        train_files = set(sc_files) - val_files
+
+        sc_train_df = sc_labels[sc_labels["filename"].isin(train_files)]
+        sc_val_df = sc_labels[sc_labels["filename"].isin(val_files)]
+
+        sc_ds_kwargs = dict(
+            soundscape_dir=soundscape_dir,
+            species_to_idx=species_to_idx,
+            n_species=n_species,
+            n_mels=n_mels_cfg,
+            n_fft=n_fft_cfg,
+            hop_length=hop_length_cfg,
+            minmax_norm=minmax_norm,
+            freq_mask=freq_mask,
+            time_mask=time_mask,
+            n_freq_masks=args.n_freq_masks,
+            n_time_masks=args.n_time_masks,
+            cache_dir=sc_cache,
+        )
+        sc_train_ds = SoundscapeLabelsDataset(sc_train_df, augment=True, **sc_ds_kwargs)
+        sc_val_ds = SoundscapeLabelsDataset(sc_val_df, augment=False, **sc_ds_kwargs)
+
+        train_ds = ConcatDataset([train_ds, sc_train_ds])
+        # Replace XC val with soundscape val — much closer to LB metric
+        val_ds = sc_val_ds
+        print(
+            f"Soundscape labels: {len(sc_train_ds)} train segs ({len(train_files)} soundscapes) "
+            f"| {len(sc_val_ds)} val segs ({len(val_files)} soundscapes)"
+        )
+        print(
+            f"Combined train set: {len(train_ds)} samples | Val: soundscape segments (in-domain)"
+        )
+        if sc_cache:
+            print(f"  Using spec cache: {sc_cache.name}")
+        else:
+            print(
+                "  WARNING: soundscape spec cache not found — slow on-the-fly loading"
+            )
+            print("  Run: python precompute_specs.py --soundscapes")
 
     # Pseudo-labeled soundscape segments
     if args.pseudo_csv:
@@ -1218,6 +1393,7 @@ def main():
                     "perch_npz": args.perch_npz,
                     "perch_epochs": args.perch_epochs,
                     "perch_min_prob": args.perch_min_prob,
+                    "soundscape_labels": args.soundscape_labels,
                 },
                 best_path,
             )
