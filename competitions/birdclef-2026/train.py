@@ -1012,12 +1012,6 @@ def main():
         "is held out for validation (see --soundscape-val-frac). When set, early stopping "
         "uses soundscape val loss instead of XC val loss — much closer to LB metric.",
     )
-    parser.add_argument(
-        "--soundscape-val-frac",
-        type=float,
-        default=0.2,
-        help="Fraction of the 66 labeled soundscapes held out for validation (default 0.2 ≈ 13 soundscapes).",
-    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -1152,20 +1146,12 @@ def main():
             else None
         )
 
-        # Split soundscapes into train/val by file (seeded, reproducible)
-        sc_files = sorted(sc_labels["filename"].unique())
-        rng = np.random.default_rng(args.seed)
-        n_val = max(1, int(len(sc_files) * args.soundscape_val_frac))
-        val_files = set(rng.choice(sc_files, n_val, replace=False))
-        train_files = set(sc_files) - val_files
-
-        sc_train_df = sc_labels[sc_labels["filename"].isin(train_files)]
-        sc_val_df = sc_labels[sc_labels["filename"].isin(val_files)]
-
-        sc_ds_kwargs = dict(
+        sc_ds = SoundscapeLabelsDataset(
+            sc_labels,
             soundscape_dir=soundscape_dir,
             species_to_idx=species_to_idx,
             n_species=n_species,
+            augment=True,
             n_mels=n_mels_cfg,
             n_fft=n_fft_cfg,
             hop_length=hop_length_cfg,
@@ -1176,19 +1162,13 @@ def main():
             n_time_masks=args.n_time_masks,
             cache_dir=sc_cache,
         )
-        sc_train_ds = SoundscapeLabelsDataset(sc_train_df, augment=True, **sc_ds_kwargs)
-        sc_val_ds = SoundscapeLabelsDataset(sc_val_df, augment=False, **sc_ds_kwargs)
-
-        train_ds = ConcatDataset([train_ds, sc_train_ds])
-        # Replace XC val with soundscape val — much closer to LB metric
-        val_ds = sc_val_ds
+        train_ds = ConcatDataset([train_ds, sc_ds])
+        # Val stays as XC OOF fold — all 66 soundscapes used for training
+        n_sc_files = sc_labels["filename"].nunique()
         print(
-            f"Soundscape labels: {len(sc_train_ds)} train segs ({len(train_files)} soundscapes) "
-            f"| {len(sc_val_ds)} val segs ({len(val_files)} soundscapes)"
+            f"Soundscape labels: {len(sc_ds)} segments ({n_sc_files} soundscapes) added to train"
         )
-        print(
-            f"Combined train set: {len(train_ds)} samples | Val: soundscape segments (in-domain)"
-        )
+        print(f"Combined train set: {len(train_ds)} samples | Val: XC OOF fold")
         if sc_cache:
             print(f"  Using spec cache: {sc_cache.name}")
         else:
