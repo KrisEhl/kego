@@ -56,6 +56,11 @@ N_MELS_BASELINE = 224
 N_FFT_BASELINE = 2048
 CACHE_DIR_BASELINE = DATA / "specs_cache_224"
 
+# HTK mel config — fmin=0, htk=True (public baseline exact match)
+FMIN_HTK = 0
+CACHE_DIR_BASELINE_HTK = DATA / "specs_cache_224_htk"
+SOUNDSCAPE_CACHE_DIR_BASELINE_HTK = DATA / "specs_cache_soundscape_224_htk"
+
 # BirdSet config — EfficientNet-B1 pretrained on 9,736 Xeno-Canto species
 N_MELS_BIRDSET = 256
 N_FFT_BIRDSET = 2048
@@ -103,6 +108,8 @@ def make_melspec(
     n_mels: int = N_MELS,
     n_fft: int = N_FFT,
     hop_length: int = HOP_LENGTH,
+    fmin: int = FMIN,
+    htk: bool = False,
 ) -> np.ndarray:
     mel = librosa.feature.melspectrogram(
         y=y,
@@ -110,8 +117,9 @@ def make_melspec(
         n_mels=n_mels,
         hop_length=hop_length,
         n_fft=n_fft,
-        fmin=FMIN,
+        fmin=fmin,
         fmax=FMAX,
+        htk=htk,
     )
     return librosa.power_to_db(mel, ref=np.max).astype(np.float32)
 
@@ -175,6 +183,12 @@ def specaugment(
     return spec
 
 
+def gain_augment(spec: np.ndarray, max_db: float = 12.0) -> np.ndarray:
+    """Apply random gain shift ±max_db dB to the spectrogram (log-mel space)."""
+    gain = np.random.uniform(-max_db, max_db)
+    return spec + gain
+
+
 # ---------------------------------------------------------------------------
 # Spec cache helpers
 # ---------------------------------------------------------------------------
@@ -191,6 +205,10 @@ def load_spec_crop(
     time_mask: int = 30,
     n_freq_masks: int = 1,
     n_time_masks: int = 1,
+    fmin: int = FMIN,
+    htk: bool = False,
+    gain_aug: bool = False,
+    gain_db: float = 12.0,
 ) -> np.ndarray:
     """Load a 5s mel spec crop from cache (fast) or compute on-the-fly (slow fallback)."""
     stem = Path(filename).stem
@@ -210,9 +228,11 @@ def load_spec_crop(
         path = DATA / "train_audio" / filename
         y = load_audio(path)
         y = crop_or_pad(y)
-        spec = make_melspec(y, n_mels=n_mels, n_fft=n_fft)
+        spec = make_melspec(y, n_mels=n_mels, n_fft=n_fft, fmin=fmin, htk=htk)
 
     if augment:
+        if gain_aug:
+            spec = gain_augment(spec, max_db=gain_db)
         spec = specaugment(
             spec,
             freq_mask=freq_mask,
@@ -249,6 +269,10 @@ class BirdDataset(Dataset):
         n_time_masks: int = 1,
         bg_pool: list | None = None,
         bg_noise_p: float = 0.0,
+        fmin: int = FMIN,
+        htk: bool = False,
+        gain_aug: bool = False,
+        gain_db: float = 12.0,
     ):
         self.df = df.reset_index(drop=True)
         self.species_to_idx = species_to_idx
@@ -268,6 +292,10 @@ class BirdDataset(Dataset):
         self.n_time_masks = n_time_masks
         self.bg_pool = bg_pool or []
         self.bg_noise_p = bg_noise_p
+        self.fmin = fmin
+        self.htk = htk
+        self.gain_aug = gain_aug
+        self.gain_db = gain_db
 
     def __len__(self) -> int:
         return len(self.df)
@@ -301,6 +329,10 @@ class BirdDataset(Dataset):
             time_mask=self.time_mask,
             n_freq_masks=self.n_freq_masks,
             n_time_masks=self.n_time_masks,
+            fmin=self.fmin,
+            htk=self.htk,
+            gain_aug=self.gain_aug,
+            gain_db=self.gain_db,
         )
         if self.augment and self.bg_pool and np.random.random() < self.bg_noise_p:
             spec = add_background_noise(
@@ -309,6 +341,8 @@ class BirdDataset(Dataset):
                 n_mels=self.n_mels,
                 n_fft=self.n_fft,
                 hop_length=self.hop_length,
+                fmin=self.fmin,
+                htk=self.htk,
             )
         if self.birdset_norm:
             x = spec_to_tensor_birdset(spec)
@@ -444,6 +478,10 @@ class SoundscapeLabelsDataset(Dataset):
         n_freq_masks: int = 2,
         n_time_masks: int = 2,
         cache_dir: Path | None = None,
+        fmin: int = FMIN,
+        htk: bool = False,
+        gain_aug: bool = False,
+        gain_db: float = 12.0,
     ):
         self.df = df.reset_index(drop=True)
         self.soundscape_dir = soundscape_dir
@@ -460,6 +498,10 @@ class SoundscapeLabelsDataset(Dataset):
         self.n_time_masks = n_time_masks
         self.cache_dir = cache_dir
         self.clip_frames = CLIP_SAMPLES // hop_length
+        self.fmin = fmin
+        self.htk = htk
+        self.gain_aug = gain_aug
+        self.gain_db = gain_db
 
     def __len__(self) -> int:
         return len(self.df)
@@ -497,6 +539,8 @@ class SoundscapeLabelsDataset(Dataset):
             spec = self._load_from_audio(row["filename"], start_sec)
 
         if self.augment:
+            if self.gain_aug:
+                spec = gain_augment(spec, max_db=self.gain_db)
             spec = specaugment(
                 spec,
                 freq_mask=self.freq_mask,
@@ -517,7 +561,12 @@ class SoundscapeLabelsDataset(Dataset):
             return np.zeros((self.n_mels, self.clip_frames), dtype=np.float32)
         y = crop_or_pad(y)
         return make_melspec(
-            y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length
+            y,
+            n_mels=self.n_mels,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            fmin=self.fmin,
+            htk=self.htk,
         )
 
 
@@ -653,6 +702,8 @@ def add_background_noise(
     n_mels: int = N_MELS,
     n_fft: int = N_FFT,
     hop_length: int = HOP_LENGTH,
+    fmin: int = FMIN,
+    htk: bool = False,
 ) -> np.ndarray:
     """Mix a random background noise segment into the spectrogram (in dB space)."""
     if not bg_pool:
@@ -668,7 +719,9 @@ def add_background_noise(
         )
         y_bg, _ = librosa.load(path, sr=SR, mono=True, offset=offset, duration=5.0)
         y_bg = crop_or_pad(y_bg)
-        spec_bg = make_melspec(y_bg, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length)
+        spec_bg = make_melspec(
+            y_bg, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
+        )
         return spec + alpha * spec_bg
     except Exception:
         return spec
@@ -1012,6 +1065,35 @@ def main():
         "is held out for validation (see --soundscape-val-frac). When set, early stopping "
         "uses soundscape val loss instead of XC val loss — much closer to LB metric.",
     )
+    parser.add_argument(
+        "--htk",
+        action="store_true",
+        help="Use HTK mel scale (fmin=0, htk=True) — matches public baseline config. "
+        "Requires separate spec cache (specs_cache_224_htk/). Run precompute_specs.py --baseline --htk first.",
+    )
+    parser.add_argument(
+        "--warm-restarts",
+        action="store_true",
+        help="Use CosineAnnealingWarmRestarts(T_0=5) instead of CosineAnnealingLR. "
+        "Matches public baseline scheduler.",
+    )
+    parser.add_argument(
+        "--warm-restarts-t0",
+        type=int,
+        default=5,
+        help="T_0 for CosineAnnealingWarmRestarts (default 5)",
+    )
+    parser.add_argument(
+        "--gain-aug",
+        action="store_true",
+        help="Apply random gain augmentation ±12dB to training specs.",
+    )
+    parser.add_argument(
+        "--gain-db",
+        type=float,
+        default=12.0,
+        help="Max gain in dB for gain augmentation (default 12.0)",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -1023,6 +1105,8 @@ def main():
     # Mel / cache config
     hop_length_cfg = HOP_LENGTH
     birdset_norm = False
+    htk_cfg = args.htk
+    fmin_cfg = FMIN_HTK if args.htk else FMIN
     if args.birdset:
         cache_dir = CACHE_DIR_BIRDSET
         n_mels_cfg = N_MELS_BIRDSET
@@ -1033,7 +1117,10 @@ def main():
         freq_mask = args.freq_mask if args.freq_mask > 0 else 30
         time_mask = args.time_mask if args.time_mask > 0 else 30
     elif args.baseline:
-        cache_dir = CACHE_DIR_BASELINE
+        if args.htk:
+            cache_dir = CACHE_DIR_BASELINE_HTK
+        else:
+            cache_dir = CACHE_DIR_BASELINE
         n_mels_cfg = N_MELS_BASELINE
         n_fft_cfg = N_FFT_BASELINE
         minmax_norm = True
@@ -1071,6 +1158,10 @@ def main():
         f"SpecAugment: freq_mask={freq_mask}×{args.n_freq_masks}, time_mask={time_mask}×{args.n_time_masks}"
     )
     print(f"Secondary labels: {'hard (1.0)' if args.hard_labels else 'soft (0.5)'}")
+    print(
+        f"HTK mel: {args.htk} (fmin={fmin_cfg}) | Gain aug: {args.gain_aug} (±{args.gain_db}dB) | "
+        f"Scheduler: {'WarmRestarts T_0=' + str(args.warm_restarts_t0) if args.warm_restarts else 'CosineAnnealingLR'}"
+    )
 
     # Load metadata — file is train.csv (not train_metadata.csv)
     meta = pd.read_csv(DATA / "train.csv")
@@ -1111,6 +1202,8 @@ def main():
         n_freq_masks=args.n_freq_masks,
         n_time_masks=args.n_time_masks,
         secondary_weight=secondary_weight,
+        fmin=fmin_cfg,
+        htk=htk_cfg,
     )
     # Background noise pool (shared by BirdDataset and optionally SoundscapeDataset)
     bg_pool: list = []
@@ -1129,6 +1222,8 @@ def main():
         augment=True,
         bg_pool=bg_pool,
         bg_noise_p=args.bg_noise_p,
+        gain_aug=args.gain_aug,
+        gain_db=args.gain_db,
         **ds_kwargs,
     )
     val_ds = BirdDataset(
@@ -1140,11 +1235,12 @@ def main():
         sc_labels_path = DATA / "train_soundscapes_labels.csv"
         sc_labels = pd.read_csv(sc_labels_path)
         soundscape_dir = DATA / "train_soundscapes"
-        sc_cache = (
-            SOUNDSCAPE_CACHE_DIR_BASELINE
-            if SOUNDSCAPE_CACHE_DIR_BASELINE.exists()
-            else None
-        )
+        # Select HTK or standard soundscape cache
+        if args.htk:
+            sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
+        else:
+            sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE
+        sc_cache = sc_cache_candidate if sc_cache_candidate.exists() else None
 
         sc_ds = SoundscapeLabelsDataset(
             sc_labels,
@@ -1161,6 +1257,10 @@ def main():
             n_freq_masks=args.n_freq_masks,
             n_time_masks=args.n_time_masks,
             cache_dir=sc_cache,
+            fmin=fmin_cfg,
+            htk=htk_cfg,
+            gain_aug=args.gain_aug,
+            gain_db=args.gain_db,
         )
         train_ds = ConcatDataset([train_ds, sc_ds])
         # Val stays as XC OOF fold — all 66 soundscapes used for training
@@ -1228,9 +1328,14 @@ def main():
         model = BirdModel(args.backbone, n_species).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.patience * 3, eta_min=1e-5
-    )
+    if args.warm_restarts:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=args.warm_restarts_t0, eta_min=1e-5
+        )
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.patience * 3, eta_min=1e-5
+        )
 
     OUT.mkdir(exist_ok=True)
     best_val_loss = float("inf")
@@ -1374,6 +1479,11 @@ def main():
                     "perch_epochs": args.perch_epochs,
                     "perch_min_prob": args.perch_min_prob,
                     "soundscape_labels": args.soundscape_labels,
+                    "htk": args.htk,
+                    "fmin": fmin_cfg,
+                    "warm_restarts": args.warm_restarts,
+                    "gain_aug": args.gain_aug,
+                    "gain_db": args.gain_db,
                 },
                 best_path,
             )

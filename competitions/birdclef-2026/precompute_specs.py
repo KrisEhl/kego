@@ -23,14 +23,17 @@ import soundfile as sf
 from tqdm import tqdm
 from train import (
     CACHE_DIR_BASELINE,
+    CACHE_DIR_BASELINE_HTK,
     DATA,
     FMAX,
     FMIN,
+    FMIN_HTK,
     HOP_LENGTH,
     N_FFT,
     N_FFT_BASELINE,
     N_MELS,
     N_MELS_BASELINE,
+    SOUNDSCAPE_CACHE_DIR_BASELINE_HTK,
     SR,
 )
 
@@ -42,7 +45,7 @@ CACHE_DIR = DATA / "specs_cache"
 
 def compute_and_save(args: tuple) -> tuple[str, bool, str]:
     """Worker: load audio, compute mel spec, save as float16 npy."""
-    filename, audio_dir, cache_dir, n_mels, n_fft, cap_duration = args
+    filename, audio_dir, cache_dir, n_mels, n_fft, cap_duration, fmin, htk = args
     src = audio_dir / filename
     stem = Path(filename).stem
     subdir = Path(filename).parent
@@ -76,8 +79,9 @@ def compute_and_save(args: tuple) -> tuple[str, bool, str]:
             n_mels=n_mels,
             hop_length=HOP_LENGTH,
             n_fft=n_fft,
-            fmin=FMIN,
+            fmin=fmin,
             fmax=FMAX,
+            htk=htk,
         )
         log_mel = librosa.power_to_db(mel, ref=np.max).astype(np.float16)
         np.save(dst, log_mel)
@@ -101,21 +105,33 @@ def main() -> None:
         "Full 60s per file (no cap). Used by PerchDataset for fast stage-1 pretraining.",
     )
     parser.add_argument(
+        "--htk",
+        action="store_true",
+        help="Use HTK mel scale (fmin=0, htk=True). Only valid with --baseline or --soundscapes. "
+        "Saves to specs_cache_224_htk/ or specs_cache_soundscape_224_htk/.",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Only report cache completeness, don't compute",
     )
     args = parser.parse_args()
 
+    fmin = FMIN_HTK if args.htk else FMIN
+    htk = args.htk
+
     if args.soundscapes:
-        cache_dir = SOUNDSCAPE_CACHE_DIR
+        if args.htk:
+            cache_dir = SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
+        else:
+            cache_dir = SOUNDSCAPE_CACHE_DIR
         n_mels = N_MELS_BASELINE
         n_fft = N_FFT_BASELINE
         audio_dir = DATA / "train_soundscapes"
         filenames = [p.name for p in sorted(audio_dir.glob("*.ogg"))]
         cap_duration = None  # soundscapes are full 60s — no cap
     elif args.baseline:
-        cache_dir = CACHE_DIR_BASELINE
+        cache_dir = CACHE_DIR_BASELINE_HTK if args.htk else CACHE_DIR_BASELINE
         n_mels = N_MELS_BASELINE
         n_fft = N_FFT_BASELINE
         audio_dir = DATA / "train_audio"
@@ -148,10 +164,13 @@ def main() -> None:
         return
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    tasks = [(f, audio_dir, cache_dir, n_mels, n_fft, cap_duration) for f in filenames]
+    tasks = [
+        (f, audio_dir, cache_dir, n_mels, n_fft, cap_duration, fmin, htk)
+        for f in filenames
+    ]
 
     print(f"Computing specs for {len(tasks)} files with {args.workers} workers...")
-    print(f"n_mels={n_mels}, n_fft={n_fft}")
+    print(f"n_mels={n_mels}, n_fft={n_fft}, fmin={fmin}, htk={htk}")
     print(f"Output: {cache_dir}")
 
     ok = skipped = errors = 0
