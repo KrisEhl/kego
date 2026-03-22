@@ -887,21 +887,28 @@ def _bce(preds: torch.Tensor, targets: torch.Tensor, sed: bool) -> torch.Tensor:
 
 
 def _dual_loss(
-    out, targets: torch.Tensor, label_smoothing: float = 0.05
+    out, targets: torch.Tensor, label_smoothing: float = 0.05, ce_loss: bool = False
 ) -> torch.Tensor:
     """Dual clip+frame loss for BirdModelBaseline.
 
     out: (clip_probs, frame_logits) where frame_logits is (B, n_classes, T).
-    Clip loss: BCE on attention-pooled probs.
-    Frame loss: BCE-with-logits averaged over time frames (each frame supervised
-    with the clip-level label, as in the public baseline).
+    When ce_loss=True: cross-entropy on frame logits (soft targets, dim=1).
+    When ce_loss=False: BCE on attention-pooled probs + BCE-with-logits on frames.
     """
     clip_probs, frame_logits = out
-    targets_smooth = targets * (1 - label_smoothing) + label_smoothing / 2
-    clip_loss = F.binary_cross_entropy(clip_probs, targets_smooth)
-    # frame_logits: (B, n_classes, T) — expand targets to (B, n_classes, T)
-    frame_targets = targets_smooth.unsqueeze(-1).expand_as(frame_logits)
-    frame_loss = F.binary_cross_entropy_with_logits(frame_logits, frame_targets)
+    n_classes = targets.shape[-1]
+    if ce_loss:
+        targets_smooth = targets * (1 - label_smoothing) + label_smoothing / n_classes
+        # Clip loss: CE on time-averaged frame logits
+        clip_loss = F.cross_entropy(frame_logits.mean(dim=-1), targets_smooth)
+        # Frame loss: CE on per-frame logits, targets broadcast over time
+        frame_targets = targets_smooth.unsqueeze(-1).expand_as(frame_logits)
+        frame_loss = F.cross_entropy(frame_logits, frame_targets)
+    else:
+        targets_smooth = targets * (1 - label_smoothing) + label_smoothing / 2
+        clip_loss = F.binary_cross_entropy(clip_probs, targets_smooth)
+        frame_targets = targets_smooth.unsqueeze(-1).expand_as(frame_logits)
+        frame_loss = F.binary_cross_entropy_with_logits(frame_logits, frame_targets)
     return 0.5 * clip_loss + 0.5 * frame_loss
 
 
@@ -914,6 +921,7 @@ def train_epoch(
     label_smoothing: float = 0.05,
     sed: bool = False,
     baseline: bool = False,
+    ce_loss: bool = False,
 ) -> float:
     model.train()
     total_loss = 0.0
@@ -923,7 +931,7 @@ def train_epoch(
             x, y = mixup(x, y)
         out = model(x)
         if baseline:
-            loss = _dual_loss(out, y, label_smoothing)
+            loss = _dual_loss(out, y, label_smoothing, ce_loss=ce_loss)
         else:
             y_smooth = y * (1 - label_smoothing) + label_smoothing / 2
             loss = _bce(out, y_smooth, sed)
@@ -941,6 +949,7 @@ def val_epoch(
     device: torch.device,
     sed: bool = False,
     baseline: bool = False,
+    ce_loss: bool = False,
 ) -> float:
     model.eval()
     total_loss = 0.0
@@ -948,7 +957,8 @@ def val_epoch(
         x, y = x.to(device), y.to(device)
         out = model(x)
         if baseline:
-            # val: model is in eval mode → returns clip_probs only
+            # val: model is in eval mode → returns clip_probs only (sigmoid output)
+            # Always use BCE for val loss regardless of training loss, for comparability
             loss = F.binary_cross_entropy(out, y)
         else:
             loss = _bce(out, y, sed)
@@ -1093,6 +1103,12 @@ def main():
         type=float,
         default=12.0,
         help="Max gain in dB for gain augmentation (default 12.0)",
+    )
+    parser.add_argument(
+        "--ce-loss",
+        action="store_true",
+        help="Use cross-entropy loss instead of BCE. Applies softmax over classes "
+        "on frame logits (matches public baseline loss_type=CE).",
     )
     args = parser.parse_args()
     if args.smoke:
@@ -1430,9 +1446,15 @@ def main():
             device,
             sed=is_prob_model,
             baseline=use_dual_loss,
+            ce_loss=args.ce_loss,
         )
         val_loss = val_epoch(
-            model, val_loader, device, sed=is_prob_model, baseline=use_dual_loss
+            model,
+            val_loader,
+            device,
+            sed=is_prob_model,
+            baseline=use_dual_loss,
+            ce_loss=args.ce_loss,
         )
         scheduler.step()
 
@@ -1484,6 +1506,7 @@ def main():
                     "warm_restarts": args.warm_restarts,
                     "gain_aug": args.gain_aug,
                     "gain_db": args.gain_db,
+                    "ce_loss": args.ce_loss,
                 },
                 best_path,
             )
