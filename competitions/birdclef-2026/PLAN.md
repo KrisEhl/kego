@@ -107,70 +107,121 @@ Same B0 NoisyStudent backbone, but with inference improvements:
 - Per-clip min-max normalization to [0, 1]
 
 ### What 0.920–0.937 teams are likely doing (not yet public)
-Perch + fine-tuned CNN ensemble, or larger pretrained models with stronger soundscape fine-tuning.
+
+The literature and competition pattern point to: **calibrated Perch + fine-tuned CNN ensemble, with per-class threshold learning and site/time priors**. The jump from 0.912 to 0.937 is most likely per-class calibration + co-occurrence priors + a stronger CNN (B3/B4 or EfficientNetV2) — not just a bigger backbone.
+
+Key insights from field literature (see `research-lit.md`):
+- The biggest jump is **not** a larger CNN. It is a calibrated ensemble of Perch + CNN + structured priors.
+- Per-class calibration (Platt scaling / temperature per class) on the 66 labeled soundscapes is high-value, zero training cost.
+- Temporal post-processing is **not a hack** — it reflects genuine biological structure. More acoustic archetypes (transient/repetitive/chorus/continuous/rare) outperform a binary texture/event split.
+- PCEN as a second input channel alongside log-mel is a consistent literature recommendation for noisy field recordings.
+- Co-occurrence priors (species PMI from training soundscapes) can fix borderline detections.
+- Pseudo-labeling only helps when the teacher has confident positives — confirmed by our own 0.746 result.
 
 ---
 
 ## Next steps (ordered by expected impact)
 
-### ✅ Step 1 — Inference notebook improvements (kernel v15, submitted Mar 23)
+### ✅ Step 1 — Inference notebook improvements (kernel v15, LB 0.876)
 
-**Implemented (no retraining):**
-- 50% stride overlapping windows (2.5s stride, averaged back to 5s slots)
-- Class-type-aware smoothing: texture (Amphibia/Insecta) avg-neighbour α=0.35; event (Aves) local-max α=0.15
-- File-max prior: `preds += 0.05 × per-species max` per soundscape
-- Taxonomy split from `taxonomy.csv` column `class_name`
-
-**Score: 0.876** (+0.012 vs 0.864 baseline)
-
-Not yet done (lower priority, add if score disappoints):
-- Circular TTA 1.25s shift
-- Temperature scaling T=1.10
+- 50% stride overlapping windows, class-type-aware smoothing, file-max prior
+- **Score: 0.876** (+0.012 vs 0.864 baseline)
 
 ---
 
-### 🔄 Step 2 — Larger backbone B1 NoisyStudent (soundscape-v6-b1, kernel v16 pending)
+### 🔄 Step 2 — B1 NoisyStudent backbone (soundscape-v6-b1, kernel v16)
 
-**Expected: +0.005–0.015 LB over v15 | Risk: CPU inference time**
+**Expected: +0.005–0.015 LB | Risk: CPU inference time**
 
-Tag: `soundscape-v6-b1`. Backbone: `tf_efficientnet_b1.ns_jft_in1k`. Same config as v5 + inference tricks.
-- All 4 folds done: val losses 0.0337, 0.0324, 0.0332, 0.0328 (slightly better than B0 v5)
-- Dataset: `aldisued/birdclef2026-soundscape-v6-b1` uploaded Mar 23
-- Kernel v16 submitted Mar 23 — **score pending**
+- All 4 folds done: val losses 0.0337/0.0324/0.0332/0.0328
+- Dataset: `aldisued/birdclef2026-soundscape-v6-b1` | Kernel v16 submitted Mar 23 — **score pending**
 
 ---
 
-### 🎯 Step 3 — Perch v4 pipeline (new approach)
+### 🔄 Step 3 — Perch v4 Track A (kernel perch-v8)
 
-**Expected: +0.03–0.05 LB → target ~0.90+ | Effort: high | Medium risk**
+**Expected: +0.03–0.05 LB → ~0.90+ | Using Perch v4 (10,932 species, 1280-dim)**
 
-**Using Perch v4** (10,932 species, 1280-dim embeddings) uploaded as `aldisued/perch-v4-model` Kaggle dataset.
+- [x] Cache: `perch_labeled_cache.npz` (792 × 1280 emb, 792 × 10932 logits)
+- [x] Probes: 53 LogReg probes, mean AP 0.059 → 0.096 (+0.037 OOF)
+- [x] Kernel `aldisued/birdclef-2026-perch-v4-inference` v8 COMPLETE — **ready to submit**
+- [ ] Submit and record LB score
 
-**Progress:**
-- [x] `perch_cache_soundscapes.py` written and run — saved `perch_labeled_cache.npz` (792 windows × 66 soundscapes, embeddings shape (792, 1280), logits (792, 10932))
-- [x] `train_perch_probes.py` written and run — 53 probes trained (≥8 pos windows), mean AP 0.059 → 0.096 (+0.037); saved `perch_probes.pkl`
-- [x] Genus-level proxy built in inference notebook (eBird code prefix matching for unmapped Amphibia/Insecta)
-- [x] `kaggle_perch_inference.ipynb` built — Perch v4 + probes blend (40/60) + class-type smooth + file-max prior
-- [x] Uploaded `aldisued/perch-v4-model` (84MB) + `aldisued/birdclef2026-perch-v4-artifacts` (35MB) to Kaggle
-- [x] Kernel `aldisued/birdclef-2026-perch-v4-inference` v8 — COMPLETE, **ready to submit** (blocked by daily limit Mar 23)
-- [ ] Submit kernel v8 and record LB score
-
-**Submit command:**
 ```bash
 kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-perch-v4-inference -v 8 -f "submission.csv" -m "Perch v4 Track A: frozen embeddings + LogReg probes (40/60 blend) + genus proxy + class-type smooth + file-max prior"
 ```
 
-**Option B — Perch + CNN ensemble:** after Option A LB is known, blend Perch logits + fine-tuned CNN preds.
+**Note on Perch v4 vs v2**: Public notebooks use Perch v2 (14,795 species, 1536-dim, natively on Kaggle). We use v4 (10,932 species, 1280-dim) uploaded as a dataset. Probes are v4-trained — incompatible with v2.
 
-**Note on Perch v4 vs v2**: Public notebooks use v2 (14,795 species, 1536-dim, available natively on Kaggle). We use v4 (10,932 species, 1280-dim) uploaded as a dataset. Our probes were trained on v4 embeddings — incompatible with v2.
+**Perch v4 assets note**: `genus.csv` (2,333 bird genera) and `family.csv` (249 families) are separate label vocabularies for hierarchical outputs, not per-label mappings. `infer_tf` returns only species logits (10,932 dims). For unmapped non-bird species (76 classes: Amphibia, Insecta, Mammalia, Reptilia), Perch has no genus-level coverage — these remain best served by the rough eBird prefix proxy or direct fine-tuned CNN scores.
 
 ---
 
-### Step 5 — Multi-year BirdCLEF data pretraining
+### 🎯 Step 4 — Perch + CNN ensemble blend
+
+**Expected: +0.01–0.03 LB on top of best individual | No retraining required | High priority**
+
+After Perch LB score is known, blend Perch Track A predictions + soundscape CNN predictions.
+
+Plan:
+1. Run both models on the 66 labeled soundscapes (OOF for CNN; direct for Perch cache)
+2. Grid-search blend weight α: `α × perch + (1-α) × cnn` for α ∈ [0.1, 0.2, ..., 0.9]
+3. Evaluate on soundscape cmAP — pick best α, then submit to LB
+4. Implement as a new inference notebook that loads both models and blends slot-level predictions
+
+Literature support: Perch embeddings capture global bioacoustic patterns well; fine-tuned CNN captures Pantanal-specific distribution shifts. These are genuinely complementary. Public 0.912 notebooks already use this blend.
+
+---
+
+### 🎯 Step 5 — Per-class calibration + site×hour prior (post-processing only)
+
+**Expected: +0.005–0.020 LB | No retraining | Medium-high priority**
+
+Two orthogonal improvements, both using the 66 labeled soundscapes as calibration set:
+
+**A. Per-class temperature scaling**
+Learn a per-class temperature T_c such that `sigmoid(logit / T_c)` maximizes AP on OOF predictions. Currently using global T=1.0. Literature shows per-class calibration is consistently valuable in long-tail multilabel ecology.
+- Implementation: after getting predictions on 66 soundscapes (OOF), optimize T_c per class with Brent's method or grid search
+- Especially useful for the 76 zero-shot / weak-shot non-bird species
+
+**B. Site×hour Bayesian prior**
+Build `P(species | site, hour)` from `train_soundscapes_labels.csv`:
+- Extract site code (e.g., `SN01`) and hour from filename timestamp
+- Count species occurrences per (site, hour) bin → normalize
+- Apply as additive prior: `preds += β × prior(site, hour)` (β ≈ 0.05–0.15)
+- This is the "Bayesian site×hour prior" used by public 0.9+ notebooks
+
+**C. Ablation to run first: raw embeddings without PCA**
+Literature notes PCA can hurt rare classes. Try `LogReg` directly on standardized 1280-dim embeddings (no PCA reduction) for the per-class probes. If better on OOF AP, retrain probes and update artifacts.
+
+---
+
+### Step 6 — Co-occurrence prior (medium priority)
+
+**Expected: +0.003–0.010 LB | No retraining**
+
+Build species-species conditional probability from labeled training soundscapes and training clips:
+- `P(species_j present | species_i high-confidence)` from `train_soundscapes_labels.csv`
+- Apply small correction: if species_i score > 0.5, boost correlated species_j slightly
+- Condition on habitat/site to avoid spurious co-occurrences
+
+---
+
+### Step 7 — PCEN + log-mel 2-channel input (medium priority)
+
+**Expected: +0.005–0.015 LB | Requires retraining**
+
+Add a second input channel: PCEN (Per-Channel Energy Normalization) alongside log-mel. PCEN is specifically designed for PAM recordings with variable background noise — suppresses stationary noise, enhances transient events. Consistent recommendation in ecoacoustics literature.
+
+Implementation: `torchaudio.transforms.PCEN` applied to the same mel filterbank, concatenated with log-mel as channel dim → 2-channel input to EfficientNet.
+
+---
+
+### Step 8 — Multi-year BirdCLEF data pretraining (lower priority)
 
 **Expected: +0.02–0.05 LB | Training: ~8–12h | Medium risk**
 
-BirdCLEF 2021/2022/2023/2024 datasets (~117K clips, all public on Kaggle). Pretrain → fine-tune on 2026. Large effort; defer until Perch approach is validated.
+BirdCLEF 2021/2022/2023/2024 datasets (~117K clips, all public on Kaggle). Pretrain → fine-tune on 2026. Large effort; defer until Perch ensemble approach is validated. Note: BirdSet XCL pretraining already failed (LB 0.782), suggesting label mismatch with Pantanal is the bottleneck, not data volume. Multi-year BirdCLEF is more geographically aligned and worth testing.
 
 ---
 
