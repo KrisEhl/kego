@@ -32,7 +32,9 @@ recordings in the Pantanal wetlands, South America.
 
 Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches exist — see research section.
 
-**Pending**: kernel v16 (B1 backbone + inference tricks) pushed Mar 23.
+**Pending (both submitted Mar 23, awaiting scores):**
+- kernel v16: B1 NoisyStudent 4-fold + inference tricks
+- Perch v4 Track A kernel v8: frozen Perch + LogReg probes — ready to submit once daily slot frees up
 
 ### Results
 
@@ -53,6 +55,8 @@ Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches 
 | **soundscape-v3 + temporal smoothing (kernel v13)** | **0.864** | +0.006 |
 | **soundscape-v5 (+ bg noise p=0.3, kernel v14)** | **0.864** | bg noise = neutral |
 | **v5 + inference tricks (kernel v15)** | **0.876** | +0.012 — 50% stride + class-type smooth + file-max prior |
+| **soundscape-v6-b1 + inference tricks (kernel v16)** | **pending** | B1 NoisyStudent 4-fold, val losses 0.0324–0.0337 |
+| **Perch v4 Track A (kernel perch-v8)** | **pending** | frozen Perch + LogReg probes (40/60) + genus proxy + smooth |
 
 ### Local validation findings
 
@@ -132,7 +136,7 @@ Not yet done (lower priority, add if score disappoints):
 Tag: `soundscape-v6-b1`. Backbone: `tf_efficientnet_b1.ns_jft_in1k`. Same config as v5 + inference tricks.
 - All 4 folds done: val losses 0.0337, 0.0324, 0.0332, 0.0328 (slightly better than B0 v5)
 - Dataset: `aldisued/birdclef2026-soundscape-v6-b1` uploaded Mar 23
-- Kernel v16 pushed, **score pending**
+- Kernel v16 submitted Mar 23 — **score pending**
 
 ---
 
@@ -148,11 +152,17 @@ Tag: `soundscape-v6-b1`. Backbone: `tf_efficientnet_b1.ns_jft_in1k`. Same config
 - [x] Genus-level proxy built in inference notebook (eBird code prefix matching for unmapped Amphibia/Insecta)
 - [x] `kaggle_perch_inference.ipynb` built — Perch v4 + probes blend (40/60) + class-type smooth + file-max prior
 - [x] Uploaded `aldisued/perch-v4-model` (84MB) + `aldisued/birdclef2026-perch-v4-artifacts` (35MB) to Kaggle
-- [x] Kernel `aldisued/birdclef-2026-perch-v4-inference` pushed (v1) — **score pending**
+- [x] Kernel `aldisued/birdclef-2026-perch-v4-inference` v8 — COMPLETE, **ready to submit** (blocked by daily limit Mar 23)
+- [ ] Submit kernel v8 and record LB score
 
-**Option B — Perch + CNN ensemble:** after Option A LB is known, blend Perch + our fine-tuned CNN.
+**Submit command:**
+```bash
+kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-perch-v4-inference -v 8 -f "submission.csv" -m "Perch v4 Track A: frozen embeddings + LogReg probes (40/60 blend) + genus proxy + class-type smooth + file-max prior"
+```
 
-**Note on Perch v4 vs v2**: Public notebooks use v2 (14,795 species, 1536-dim, available natively on Kaggle). We use v4 (10,932 species, 1280-dim) uploaded as a dataset. Our probes were trained on v4 embeddings. Embedding dims and label space differ → incompatible with v2.
+**Option B — Perch + CNN ensemble:** after Option A LB is known, blend Perch logits + fine-tuned CNN preds.
+
+**Note on Perch v4 vs v2**: Public notebooks use v2 (14,795 species, 1536-dim, available natively on Kaggle). We use v4 (10,932 species, 1280-dim) uploaded as a dataset. Our probes were trained on v4 embeddings — incompatible with v2.
 
 ---
 
