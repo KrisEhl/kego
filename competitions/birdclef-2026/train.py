@@ -269,6 +269,7 @@ class BirdDataset(Dataset):
         n_time_masks: int = 1,
         bg_pool: list | None = None,
         bg_noise_p: float = 0.0,
+        bg_cache_dir: Path | None = None,
         fmin: int = FMIN,
         htk: bool = False,
         gain_aug: bool = False,
@@ -292,6 +293,7 @@ class BirdDataset(Dataset):
         self.n_time_masks = n_time_masks
         self.bg_pool = bg_pool or []
         self.bg_noise_p = bg_noise_p
+        self.bg_cache_dir = bg_cache_dir
         self.fmin = fmin
         self.htk = htk
         self.gain_aug = gain_aug
@@ -343,6 +345,7 @@ class BirdDataset(Dataset):
                 hop_length=self.hop_length,
                 fmin=self.fmin,
                 htk=self.htk,
+                bg_cache_dir=self.bg_cache_dir,
             )
         if self.birdset_norm:
             x = spec_to_tensor_birdset(spec)
@@ -704,12 +707,33 @@ def add_background_noise(
     hop_length: int = HOP_LENGTH,
     fmin: int = FMIN,
     htk: bool = False,
+    bg_cache_dir: Path | None = None,
 ) -> np.ndarray:
-    """Mix a random background noise segment into the spectrogram (in dB space)."""
+    """Mix a random background noise segment into the spectrogram (in dB space).
+
+    If bg_cache_dir is provided, loads precomputed full-soundscape specs (.npy)
+    and slices a random 5s window — avoids decoding raw .ogg on every sample.
+    Falls back to librosa.load if cache file is missing.
+    """
     if not bg_pool:
         return spec
     path = bg_pool[np.random.randint(len(bg_pool))]
     try:
+        if bg_cache_dir is not None:
+            cache_path = bg_cache_dir / (path.stem + ".npy")
+            if cache_path.exists():
+                full_spec = np.load(cache_path).astype(np.float32)  # (n_mels, T_full)
+                clip_frames = spec.shape[1]
+                max_start = max(0, full_spec.shape[1] - clip_frames)
+                start = np.random.randint(0, max_start + 1) if max_start > 0 else 0
+                spec_bg = full_spec[:, start : start + clip_frames]
+                # Pad if edge slice is short
+                if spec_bg.shape[1] < clip_frames:
+                    spec_bg = np.pad(
+                        spec_bg, ((0, 0), (0, clip_frames - spec_bg.shape[1]))
+                    )
+                return spec + alpha * spec_bg
+        # Fallback: decode raw audio
         info = sf.info(path)
         max_start = max(0, info.frames - int(5.0 * info.samplerate))
         offset = (
@@ -1235,12 +1259,27 @@ def main():
     )
     # Background noise pool (shared by BirdDataset and optionally SoundscapeDataset)
     bg_pool: list = []
+    bg_cache_dir: Path | None = None
     if args.bg_noise_p > 0:
         soundscape_dir = DATA / "train_soundscapes"
         bg_pool = load_background_pool(soundscape_dir)
-        print(
-            f"Background noise pool: {len(bg_pool)} soundscapes (p={args.bg_noise_p})"
+        # Use precomputed spec cache for bg noise to avoid slow .ogg decoding per sample
+        sc_cache_candidate = (
+            SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
+            if args.htk
+            else SOUNDSCAPE_CACHE_DIR_BASELINE
         )
+        if sc_cache_candidate.exists():
+            bg_cache_dir = sc_cache_candidate
+            print(
+                f"Background noise pool: {len(bg_pool)} soundscapes (p={args.bg_noise_p})"
+                f" — using spec cache: {bg_cache_dir.name}"
+            )
+        else:
+            print(
+                f"Background noise pool: {len(bg_pool)} soundscapes (p={args.bg_noise_p})"
+                f" — WARNING: spec cache not found, falling back to slow .ogg decoding"
+            )
 
     train_ds = BirdDataset(
         train_df,
@@ -1250,6 +1289,7 @@ def main():
         augment=True,
         bg_pool=bg_pool,
         bg_noise_p=args.bg_noise_p,
+        bg_cache_dir=bg_cache_dir,
         gain_aug=args.gain_aug,
         gain_db=args.gain_db,
         **ds_kwargs,
