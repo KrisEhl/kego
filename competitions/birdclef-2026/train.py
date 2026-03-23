@@ -1519,7 +1519,7 @@ def main():
             f"{elapsed:.0f}s{marker}",
             flush=True,
         )
-        if ml_above < 0.5 or ml_top2 < 0.02:
+        if epoch >= 5 and (ml_above < 0.5 or ml_top2 < 0.02):
             print(
                 f"  ⚠ MULTILABEL COLLAPSE: ml_above={ml_above:.2f} top2={ml_top2:.4f} — "
                 "model predicts near-zero for co-occurring species. "
