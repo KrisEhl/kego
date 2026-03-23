@@ -950,20 +950,32 @@ def val_epoch(
     sed: bool = False,
     baseline: bool = False,
     ce_loss: bool = False,
-) -> float:
+) -> tuple[float, float, float]:
+    """Returns (val_loss, mean_preds_above_thresh, mean_top2_score).
+
+    mean_preds_above_thresh: avg number of classes > 0.3 per sample.
+      BCE-trained models: ~2–5. CE-trained models: ~0 (multilabel collapse).
+    mean_top2_score: avg sigmoid score of the 2nd-highest class per sample.
+      BCE: meaningful (>0.1). CE collapse: near-zero.
+    """
     model.eval()
     total_loss = 0.0
+    all_preds: list[torch.Tensor] = []
     for x, y in loader:
         x, y = x.to(device), y.to(device)
         out = model(x)
         if baseline:
-            # val: model is in eval mode → returns clip_probs only (sigmoid output)
-            # Always use BCE for val loss regardless of training loss, for comparability
             loss = F.binary_cross_entropy(out, y)
+            all_preds.append(out.cpu())
         else:
             loss = _bce(out, y, sed)
+            preds = torch.sigmoid(out) if not sed else out
+            all_preds.append(preds.cpu())
         total_loss += loss.item()
-    return total_loss / len(loader)
+    preds_cat = torch.cat(all_preds, dim=0)  # (N, C)
+    mean_above = (preds_cat > 0.3).float().sum(dim=1).mean().item()
+    top2 = preds_cat.topk(2, dim=1).values[:, 1].mean().item()
+    return total_loss / len(loader), mean_above, top2
 
 
 # ---------------------------------------------------------------------------
@@ -1448,7 +1460,7 @@ def main():
             baseline=use_dual_loss,
             ce_loss=args.ce_loss,
         )
-        val_loss = val_epoch(
+        val_loss, ml_above, ml_top2 = val_epoch(
             model,
             val_loader,
             device,
@@ -1463,9 +1475,17 @@ def main():
         print(
             f"Epoch {epoch:03d}/{args.epochs} | "
             f"train={train_loss:.4f} val={val_loss:.4f} | "
+            f"ml_above={ml_above:.1f} top2={ml_top2:.3f} | "
             f"{elapsed:.0f}s{marker}",
             flush=True,
         )
+        if ml_above < 0.5 or ml_top2 < 0.02:
+            print(
+                f"  ⚠ MULTILABEL COLLAPSE: ml_above={ml_above:.2f} top2={ml_top2:.4f} — "
+                "model predicts near-zero for co-occurring species. "
+                "Check loss function (CE loss incompatible with multilabel).",
+                flush=True,
+            )
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
