@@ -1,0 +1,17 @@
+{
+  "id": "aldisued/birdclef-2026-perch-v4-inference",
+  "title": "BirdCLEF 2026 Perch v4 Inference",
+  "code_file": "kaggle_perch_inference.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "aldisued/perch-v4-model",
+    "aldisued/birdclef2026-perch-v4-artifacts"
+  ],
+  "competition_sources": ["birdclef-2026"],
+  "kernel_sources": []
+}

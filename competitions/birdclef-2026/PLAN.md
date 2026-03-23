@@ -28,9 +28,11 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB 0.783
+### Current best: LB 0.876 (v5 checkpoints + inference tricks, kernel v15)
 
-Gap to public SED baseline (0.862) = ~0.08. Investigating root cause — see "Public baseline analysis" below.
+Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches exist — see research section.
+
+**Pending**: kernel v16 (B1 backbone + inference tricks) pushed Mar 23.
 
 ### Results
 
@@ -39,259 +41,183 @@ Gap to public SED baseline (0.862) = ~0.08. Investigating root cause — see "Pu
 | EfficientNet-B0 plain, 30 epochs | 0.758 | 5-fold, 128-mel |
 | EfficientNet-B3 naive SED, 50 epochs | 0.750 | too few temporal frames |
 | EfficientNet-B3 plain, 50 epochs | 0.776 | 5-fold, 128-mel |
-| **B0 NoisyStudent + GEMFreqPool + AttentionSED, 50ep** | **0.782** | 224-mel, minmax norm, time_mask=100 |
+| B0 NoisyStudent + GEMFreqPool + AttentionSED, 50ep | 0.782 | 224-mel, minmax norm, time_mask=100 |
 | B0 baseline, early stopping patience=15 | 0.783 | same arch, time_mask=100, no dual loss |
-| B0 baseline + dual loss + time_mask=30 (all 5 folds) | 0.765 | **REGRESSION** — see dead ends |
-| B0 baseline + dual loss + hard secondary labels | — | never fully trained or submitted |
-| EfficientNet-B1 BirdSet XCL pretrained (5-fold) | 0.782 | 256-mel, 1-channel, patience=10 — no gain over B0 NoisyStudent |
+| B0 baseline + dual loss + time_mask=30 (all 5 folds) | 0.765 | **REGRESSION** |
+| EfficientNet-B1 BirdSet XCL pretrained (5-fold) | 0.782 | 256-mel, 1-channel — no gain |
+| perch-v2 fold0 only (Perch stage-1 5ep, min_prob=0.1) | 0.746 | single fold |
+| soundscape-v1 (53/66 soundscapes, soundscape OOF val, 4-fold) | 0.827 | +0.044 — soundscape labels are key |
+| soundscape-v2 (all 66 soundscapes, XC OOF val, 4-fold) | 0.854 | +0.027 vs v1 |
+| soundscape-v3 (HTK mel + warm restarts + gain aug, 4-fold) | 0.858 | +0.004 vs v2 |
+| soundscape-v4 (+ CE loss) | 0.723 | **REGRESSION** — CE loss incompatible with multilabel |
+| **soundscape-v3 + temporal smoothing (kernel v13)** | **0.864** | +0.006 |
+| **soundscape-v5 (+ bg noise p=0.3, kernel v14)** | **0.864** | bg noise = neutral |
+| **v5 + inference tricks (kernel v15)** | **0.876** | +0.012 — 50% stride + class-type smooth + file-max prior |
 
 ### Local validation findings
 
-**Neither clip OOF nor soundscape cmAP reliably predicts LB ranking.** B3-SED has highest local scores but lowest LB (0.750). Root cause: the 66 train soundscapes only cover 75/234 species — not representative of test set. **Use LB submissions as ground truth; local metrics only useful as coarse sanity checks.**
-
-### Public baseline analysis (LB 0.862)
-
-Pulled `aidensong123/birdclef-2026-sed-baseline-lb-0-862` to inspect the inference notebook. Key findings:
-
-- **Architecture is identical** to ours: tf_efficientnet_b0.ns_jft_in1k + GEMFreqPool + AttentionSED
-- **Only 1 fold checkpoint** — 0.862 comes from a single-fold model, not a 5-fold ensemble
-- **Checkpoint named `best_perch_fold0.pt`** from dataset `aidensong123/perch-fold` — strongly suggests **Perch-based pretraining or pseudo-labeling** (Google's AudioSet bird classifier)
-- Checkpoint has a `stage` field (checked via `ckpt.get("stage", "supervised")`), indicating a multi-stage training pipeline
-- **The gap (0.862 vs 0.783) is almost certainly from Perch pretraining, not architecture**
-
-| Factor | Us | Public baseline (0.862) |
-|---|---|---|
-| Backbone | tf_efficientnet_b0.ns_jft_in1k | same |
-| Head | GEMFreqPool + AttentionSED | same |
-| Dual loss | ✅ | likely ✅ |
-| SpecAugment | freq=30×2, time=30×2 | likely same |
-| Folds submitted | 5-fold ensemble | **1 fold only** |
-| **Pretraining** | ImageNet only | **Perch / AudioSet pseudo-labels** |
-
-### Kaggle setup
-
-- **Notebook**: `aldisued/birdclef-2026-baseline-inference` (v1)
-- **Dataset**: `aldisued/birdclef2026-baseline` (5× fold checkpoints, ~125MB)
-- **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
-- Kaggle mounts data at `/kaggle/input/competitions/birdclef-2026/` and datasets at `/kaggle/input/datasets/{owner}/{slug}/`; notebook auto-detects both via glob
-
-### Submit command
-```bash
-cd competitions/birdclef-2026
-kaggle kernels push
-kaggle competitions submit -c birdclef-2026 \
-  -k aldisued/birdclef-2026-baseline-inference \
-  -f submission.csv -v <VERSION> -m "<description>"
-```
+**Neither clip OOF nor soundscape cmAP reliably predicts LB ranking.** Use LB submissions as ground truth; local metrics only useful as coarse sanity checks.
 
 ---
 
-## What's done
+## Public notebook research (Mar 23) — how they score 0.90+
 
-- [x] EDA + data setup (`analyze_data.py`, plots in `plots/`)
-- [x] Training pipeline (`train.py`): EfficientNet-B0/B3, 5-fold, early stopping, mixup, label smoothing
-- [x] Precomputed spec cache: 128-mel `specs_cache/` (~10.5GB) + 224-mel `specs_cache_224/`
-- [x] OOF evaluation (`eval_oof.py`): cmAP + ROC-AUC per fold
-- [x] Kaggle inference notebook with CPU-only sliding-window inference, auto-detects model type from checkpoint
-- [x] `BirdModelBaseline`: GEMFreqPool + AttentionSED head, NoisyStudent backbone — LB **0.782**
-- [x] Early stopping (`--patience`, default 10) — models converge around epoch 25–50
-- [x] Dead end: naive SED head (0.750) — too few temporal frames; replaced by proper GEMFreqPool+AttentionSED
-- [x] Dual frame+clip loss: `0.5 * clip_BCE + 0.5 * frame_BCE`
-- [x] SpecAugment fix: time_mask=30 frames (was 100)
-- [x] Retrain all 5 folds with dual loss + time_mask=30 → LB **0.765** (regression vs 0.783)
-- [x] Analyzed public baseline — gap explained by Perch pretraining, not architecture
-- [~] Hard secondary labels — incomplete (folds 0–1 only), never submitted. Dead end.
-- [x] **BirdModelBirdSet**: EfficientNet-B1 pretrained on BirdSet XCL (9,736 species via HuggingFace). All 5 folds trained: best val losses 0.0316–0.0324, stopped ep20–55. Checkpoints at `aldisued/birdclef2026-birdset`. LB **0.782** (no gain over B0 NoisyStudent).
-- [x] CosineAnnealingLR fix: T_max was `epochs=200` (effectively disabled). Changed to `T_max=patience*3` + `eta_min=1e-5` for future runs.
-- [x] Patience default lowered to 10 (was 15)
-- [x] `pseudo_label_perch.py`, `pseudo_label_birdnet.py`, `pseudo_label_self.py` written. Pseudo-label + background noise wired into `train.py`.
-- [x] **Perch pseudo-label generation** — DONE (Mar 21, 16.4 min on GPU). Output: `perch_pseudo_labels.csv` (20KB) + `perch_pseudo_labels_soft.npz` (137MB, shape 127896×234).
-  - **TF GPU requires `LD_LIBRARY_PATH`** pointing at bundled nvidia-* CUDA 12 wheels (`tensorflow[and-cuda]`). Use `.venv/bin/python`, not `uv run python`. See PLAN step 5 for full command.
-- [x] **Two-stage Perch training implemented** in `train.py`: `--perch-npz` triggers stage 1 on Perch soft labels, then stage 2 fine-tunes on XC hard labels.
-- [x] **Soundscape spec cache** (`precompute_specs.py --soundscapes`) — precomputes 224-mel specs for all 10,658 soundscapes into `specs_cache_soundscape_224/` so `PerchDataset` is GPU-bound, not CPU-bound. Running now (~30 min).
-- [ ] **perch-v1 training** — folds 0 & 1 running XC-only now as safety net (ETA ~1h). Once done + soundscape cache ready, relaunch all 5 folds with `--perch-npz` for full two-stage pipeline (ETA ~2.5h/fold, both GPUs parallel).
+### Two distinct approaches
+
+**Track A: Perch v2 frozen feature extractor — 0.892–0.912**
+
+Google's `google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1` (14,795 species, TF SavedModel) as a frozen embedding extractor. CPU-only, <90 min. No fine-tuning.
+
+Pipeline:
+1. Audio → 12 × 5s windows → Perch v2 → 1536-dim embeddings + raw logits (14,795 classes)
+2. Species mapping: `taxonomy.scientific_name` → Perch label vocab → BC_INDICES for 234 target classes
+3. **Unmapped species** (Amphibia/Insecta with no direct Perch class) → genus-level proxy: `max` logit over all Perch classes sharing the same genus
+4. **Class-type-aware temporal smoothing** (critical — this alone gets to 0.908):
+   - Texture classes (Amphibia, Insecta — continuous callers): average-neighbor α=0.35
+   - Event classes (Aves — discrete calls): **local-max propagation** α=0.15: `(1-α)*x + α*max(x, prev, next)`
+5. **Per-class LogReg probes**: PCA 32-64dim of 1536-dim embeddings; GroupKFold by site on 59 fully-labeled soundscapes; blend 60/40 (Perch logits / probe)
+6. **Bayesian site×hour prior** from `train_soundscapes_labels.csv` occurrence statistics
+7. Temperature scaling: divide logits by T=1.10–1.15 before sigmoid
+
+Score evolution: raw Perch ~0.87 → +texture smooth → ~0.90 → +event local-max → 0.908 → +genus proxies → **0.912**
+
+**Key insight**: Perch knows 14,795 species; we just need to correctly map them to our 234. Genus-level proxies handle the non-Aves classes with no direct Perch class.
+
+**Perch cache workflow**: pre-compute embeddings/logits on all soundscapes, save as parquet+npz, attach as Kaggle dataset. Inference notebook loads cache, never re-runs Perch.
+
+**Track B: Fine-tuned CNN + inference tricks — 0.858–0.892**
+
+Same B0 NoisyStudent backbone, but with inference improvements:
+1. **50% stride overlapping windows** (2.5s stride, `2*n_chunks - 1` windows per file, averaged back to 5s slots) — biggest single inference improvement
+2. **Circular TTA**: time-shift by 1.25s (CHUNK//4), average with original
+3. **File-max prior**: `probs += 0.05 × file_max_per_file` (adds global species prior per soundscape)
+4. **Temperature scaling** T=1.10–1.15
+5. **Sharpened temporal smoothing**: `[0.10, 0.20, 0.40, 0.20, 0.10]` weights then `probs^(1/SHARPEN_POWER)`
+6. **Class-type-aware smoothing** (same as Track A)
+7. **Model blend**: 0.8 × fine-tuned + 0.2 × base → 0.892
+
+**HGNetV2-B0** (`hgnetv2_b0.ssld_stage2_ft_in1k`): 256 mel, MixUp (alpha=1.0), OpenVINO for fast CPU inference.
+
+### Key mel config (universal across all high-scorers)
+- 224 mel, n_fft=2048, hop=512, fmin=0, fmax=16k, **HTK mel scale**, **slaney norm**, top_db=80
+- Per-clip min-max normalization to [0, 1]
+
+### What 0.920–0.937 teams are likely doing (not yet public)
+Perch + fine-tuned CNN ensemble, or larger pretrained models with stronger soundscape fine-tuning.
 
 ---
 
 ## Next steps (ordered by expected impact)
 
-> Full literature review in `research.md`. The 0.079 gap to public baseline is almost entirely from Perch pseudo-labeling. Transformer models (BEATs, AudioMAE, AST) are infeasible for CPU-only inference.
+### ✅ Step 1 — Inference notebook improvements (kernel v15, submitted Mar 23)
 
-### ✅ DONE
+**Implemented (no retraining):**
+- 50% stride overlapping windows (2.5s stride, averaged back to 5s slots)
+- Class-type-aware smoothing: texture (Amphibia/Insecta) avg-neighbour α=0.35; event (Aves) local-max α=0.15
+- File-max prior: `preds += 0.05 × per-species max` per soundscape
+- Taxonomy split from `taxonomy.csv` column `class_name`
 
-- **Dual loss + time_mask=30** → LB 0.765 (regression)
-- **BirdModelBirdSet** (EfficientNet-B1, BirdSet XCL) → LB 0.782 (no gain)
-- **Hard secondary labels** — dead end (never fully trained or submitted)
-- **Perch pseudo-labeling on soundscapes** — dead end (see findings above)
+**Score: 0.876** (+0.012 vs 0.864 baseline)
 
----
-
-### Step 4 — P1: Per-species threshold calibration (free gain, do now)
-
-Expected: **+0.005–0.015 LB**. Grid search sigmoid threshold per class on OOF predictions.
-Zero retraining cost. Should be done before and after every model improvement.
+Not yet done (lower priority, add if score disappoints):
+- Circular TTA 1.25s shift
+- Temperature scaling T=1.10
 
 ---
 
-### Step 5 — P0: Perch Pseudo-Labeling Pipeline (highest impact)
+### 🔄 Step 2 — Larger backbone B1 NoisyStudent (soundscape-v6-b1, kernel v16 pending)
 
-Expected: **+0.05–0.08 LB**. This is what the public baseline (0.862) does.
+**Expected: +0.005–0.015 LB over v15 | Risk: CPU inference time**
 
-**Pipeline** (BirdCLEF 2024 1st place, `arpoyda`):
-1. Run `google/bird-vocalization-classifier` v4 on all 35,549 training clips → soft labels (n_clips × 234)
-2. Map Perch's 10,000+ species to our 234 via eBird codes / taxonomy
-3. Pretraining stage: EfficientNet-B0 on Perch soft labels, 5–10 epochs
-4. Fine-tuning stage: ground-truth hard labels, 20–30 epochs
-5. All 5 folds → submit
-
-**Resources**:
-- Kaggle Models: `google/bird-vocalization-classifier/tensorFlow2/bird-vocalization-classifier/4`
-- GitHub: https://github.com/google-research/perch
-- Reference: https://github.com/arpoyda/BirdCLEF_2024
-- Perch 2.0 (arXiv:2512.03219): 14,597 species incl. Pantanal birds + 28 zero-shot species
-
-**CPU inference**: Perch uses EfficientNet backbone → TFLite gives ~10x speedup; runs ~16 min on Kaggle CPU (confirmed in BirdCLEF 2025 paper arXiv:2507.08236).
+Tag: `soundscape-v6-b1`. Backbone: `tf_efficientnet_b1.ns_jft_in1k`. Same config as v5 + inference tricks.
+- All 4 folds done: val losses 0.0337, 0.0324, 0.0332, 0.0328 (slightly better than B0 v5)
+- Dataset: `aldisued/birdclef2026-soundscape-v6-b1` uploaded Mar 23
+- Kernel v16 pushed, **score pending**
 
 ---
 
-### Step 6 — P1: Multi-year BirdCLEF data pretraining
+### 🎯 Step 3 — Perch v4 pipeline (new approach)
 
-Expected: **+0.01–0.025 LB**. BirdCLEF 2021/2022/2023/2024 datasets on Kaggle (all public).
-Pretrain on all available bird audio → fine-tune on BirdCLEF 2026. Used by multiple top-4 solutions.
+**Expected: +0.03–0.05 LB → target ~0.90+ | Effort: high | Medium risk**
 
----
+**Using Perch v4** (10,932 species, 1280-dim embeddings) uploaded as `aldisued/perch-v4-model` Kaggle dataset.
 
-### Step 7 — P1: PANNs CNN14 (AudioSet pretrained)
+**Progress:**
+- [x] `perch_cache_soundscapes.py` written and run — saved `perch_labeled_cache.npz` (792 windows × 66 soundscapes, embeddings shape (792, 1280), logits (792, 10932))
+- [x] `train_perch_probes.py` written and run — 53 probes trained (≥8 pos windows), mean AP 0.059 → 0.096 (+0.037); saved `perch_probes.pkl`
+- [x] Genus-level proxy built in inference notebook (eBird code prefix matching for unmapped Amphibia/Insecta)
+- [x] `kaggle_perch_inference.ipynb` built — Perch v4 + probes blend (40/60) + class-type smooth + file-max prior
+- [x] Uploaded `aldisued/perch-v4-model` (84MB) + `aldisued/birdclef2026-perch-v4-artifacts` (35MB) to Kaggle
+- [x] Kernel `aldisued/birdclef-2026-perch-v4-inference` pushed (v1) — **score pending**
 
-Expected: **+0.015–0.03 LB**. Easier alternative/complement to Perch.
-- Weights: `Cnn14_mAP=0.431.pth` from Zenodo record 3960586
-- GitHub: https://github.com/qiuqiangkong/audioset_tagging_cnn
-- CNN-based → fast CPU inference. Replace output layer (527→234), fine-tune.
+**Option B — Perch + CNN ensemble:** after Option A LB is known, blend Perch + our fine-tuned CNN.
 
----
-
-### Step 8 — P2: Background noise augmentation
-
-Expected: **+0.005–0.015 LB**. Mix "no-call" segments from competition soundscapes (p=0.3–0.5).
-Helps domain adaptation from XC clips to passive soundscapes. Used by BirdCLEF 2023 1st place.
+**Note on Perch v4 vs v2**: Public notebooks use v2 (14,795 species, 1536-dim, available natively on Kaggle). We use v4 (10,932 species, 1280-dim) uploaded as a dataset. Our probes were trained on v4 embeddings. Embedding dims and label space differ → incompatible with v2.
 
 ---
 
-### Step 9 — P2: BirdNET for zero-shot species + ensemble
+### Step 5 — Multi-year BirdCLEF data pretraining
 
-- 28 zero-shot species currently output 0 → drag on cmAP
-- BirdNET covers 6,512 species (`pip install birdnet-analyzer`); likely covers all 28
-- Ensemble: Perch-pretrained B0 + original baseline B0 + CNN14 for diversity
+**Expected: +0.02–0.05 LB | Training: ~8–12h | Medium risk**
+
+BirdCLEF 2021/2022/2023/2024 datasets (~117K clips, all public on Kaggle). Pretrain → fine-tune on 2026. Large effort; defer until Perch approach is validated.
 
 ---
 
-### Step 10 — P3: Temporal smoothing + SoftAUCLoss (if plateauing ≥0.84)
+## Kaggle setup
 
-- Adjacent segment smoothing: `0.85 * current + 0.15 * avg(neighbors)` (BirdCLEF 2025 4th place)
-- SoftAUCLoss: directly optimizes cmAP gradient (reference: `dylanliu2` BirdCLEF 2025)
+- **Notebook**: `aldisued/birdclef-2026-baseline-inference`
+- **Current dataset**: `aldisued/birdclef2026-soundscape-v6-b1` (kernel v16 pending) | v15 LB **0.876**
+- **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
+- Submit: `kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-baseline-inference -v <int> -f "submission.csv" -m "..."`
 
 ---
 
 ## Hardware & Training Convention
 
-Training on **2× RTX 3090** at `kristian@omarchyd` (Tailscale) / `kristian@omarchyd.fritz.box` (LAN).
-Spec cache at `data/birdclef/birdclef-2026/specs_cache/` (~10.5GB, precomputed).
+Training on **2× RTX 3090** at `kristian@omarchyd` (Tailscale).
 
-### Checkpoint naming — always use `--tag`
+**Standard: 4 folds (`--n_folds 4`)**. Fits 2 GPUs in exactly 2 clean rounds (2+2).
 
-Checkpoints are saved to `competitions/birdclef-2026/outputs/{tag}_fold{N}.pt`.
-**Always pass `--tag <experiment-name>` to prevent overwriting previous runs.**
-
+Launch pattern (use subshell per fold to ensure `cd` applies; use `>>` to not overwrite logs):
 ```bash
-ssh kristian@omarchyd
-cd ~/projects/kego
-git pull
-
-# Example: BirdSet v2 run
-CUDA_VISIBLE_DEVICES=0 ~/.local/bin/uv run python competitions/birdclef-2026/train.py \
-  --birdset --fold 0 --tag birdset-v2 &
-CUDA_VISIBLE_DEVICES=1 ~/.local/bin/uv run python competitions/birdclef-2026/train.py \
-  --birdset --fold 1 --tag birdset-v2 &
+ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=0 KEGO_PATH_DATA=/home/kristian/projects/kego/data nohup ~/.local/bin/uv run python competitions/birdclef-2026/train.py --baseline --soundscape-labels --htk --warm-restarts --gain-aug --fold 0 --n_folds 4 --tag <tag> >> /tmp/<tag>_fold0.log 2>&1) &"
+ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=1 KEGO_PATH_DATA=/home/kristian/projects/kego/data nohup ~/.local/bin/uv run python competitions/birdclef-2026/train.py --baseline --soundscape-labels --htk --warm-restarts --gain-aug --fold 1 --n_folds 4 --tag <tag> >> /tmp/<tag>_fold1.log 2>&1) &"
 ```
 
-The checkpoint stores all hyperparams: `epoch`, `val_loss`, `backbone`, `n_mels`, `n_fft`, `hop_length`,
-`hard_labels`, `dual_loss`, `freq_mask`, `time_mask`, `patience`, `lr`, `seed`, `fold`, `tag`.
-
-### Inspect a checkpoint
-
-```bash
-cd ~/projects/kego
-~/.local/bin/uv run python3 -c "
-import torch, sys
-ck = torch.load(sys.argv[1], map_location='cpu')
-for k, v in ck.items():
-    if k != 'model': print(f'  {k}: {v}')
-" competitions/birdclef-2026/outputs/mytag_fold0.pt
-```
+**Checkpoint naming**: always `--tag <experiment-name>`. Saves to `outputs/{tag}_fold{N}.pt`.
 
 ### Experiment log
 
-| Tag | Args | Folds | LB | Notes |
+| Tag | Key args | Folds | LB | Notes |
 |---|---|---|---|---|
-| *(legacy, no tag)* | `--baseline`, patience=15, time_mask=100 | 0–4 | **0.783** | **Current best** |
-| *(legacy, no tag)* | `--baseline --hard-labels`, patience=10 | 0–1 only | — | Mixed/incomplete; never submitted |
-| `birdset-v1` | `--birdset`, patience=10 | 0–4 | 0.782 | BirdSet XCL pretrained; no gain |
-
----
-
-## Key references
-
-- [SED Baseline LB 0.862](https://www.kaggle.com/code/aidensong123/birdclef-2026-sed-baseline-lb-0-862)
-- [PyTorch Baseline Inference](https://www.kaggle.com/code/antoinemasq/birdclef-2026-pytorch-baseline-inference)
-- [BirdCLEF 2025 1st place](https://www.kaggle.com/competitions/birdclef-2025/discussion) — ConvNeXt + AudioSet pretraining
-- [BirdNET](https://github.com/kahst/BirdNET-Analyzer)
-
----
-
-## Perch Pseudo-Labeling — Findings (Mar 21)
-
-### Label distribution (critical insight)
-- `perch_pseudo_labels_soft.npz` (127,896 windows × 234 species): mean prob = **0.000107** — essentially zero
-- Median max-prob per window: **0.003** — 99% of windows have no meaningful Perch signal
-- Only **1.0%** of windows (1,307) have max prob > 0.1; only 0.2% have max prob > 0.5
-- **The unlabeled soundscapes are mostly silent/noise** — Perch finds almost nothing
-
-### perch-v1 result (all 127,896 windows, 10 epochs)
-- Stage 2 val_loss **0.0452** vs baseline **0.0331** — clear regression
-- Training on 99% empty windows teaches the model to output near-zero → wrong prior for XC classification
-- Stage 2 could not recover within patience=10 epochs
-
-### Hypothesis on 2024 winner's approach
-The checkpoint was named `best_perch_fold0.pt` but Perch may have been used differently:
-- Option A: Perch run on **labeled XC clips** as label smoother (not soundscapes)
-- Option B: Only high-confidence Perch windows kept (filtered dataset)
-- Option C: Much shorter pretraining (2–3 epochs, not 10)
-
-### perch-v1 results (all 127,896 windows, 10 epochs) — fold 0
-- Stage 2 val_loss **0.0452** vs baseline **0.0331** — clear regression, early stop at ep13
-- Fold 1 eventually recovered to **0.0336** after 65 epochs — Perch damage washes out slowly
-
-### perch-v2 results (filtered min_max_prob=0.1 → 1,307 windows, 5 epochs) — fold 0
-- Stage 1: 5 epochs, ~6s/epoch (1,307 windows tiny dataset), loss 0.205→0.130
-- Stage 2: val_loss converged to **0.0331** at ep30 — tied with XC-only baseline, no gain
-- **Verdict: Perch pseudo-labeling on soundscapes is neutral at best.** Even with filtering, the 1,307 windows don't add useful signal beyond what XC training already provides.
-
-### Conclusion
-Perch on unlabeled soundscapes does NOT explain the 0.862 gap. The 2024 winner likely used:
-- Perch on **labeled XC clips** as a label smoother/augmenter (not soundscapes), OR
-- AudioSet/large-scale audio pretraining of the backbone itself
+| *(legacy)* | `--baseline`, patience=15, time_mask=100 | 0–4 | 0.783 | |
+| `birdset-v1` | `--birdset`, patience=10 | 0–4 | 0.782 | BirdSet XCL — no gain |
+| `soundscape-v1` | `--baseline --soundscape-labels`, 53 soundscapes | 0–3 | 0.827 | |
+| `soundscape-v2` | `--baseline --soundscape-labels`, all 66 soundscapes | 0–3 | 0.854 | |
+| `soundscape-v3` | `--baseline --soundscape-labels --htk --warm-restarts --gain-aug` | 0–3 | 0.858 | |
+| `soundscape-v4` | + CE loss | 0–3 | 0.723 | **DEAD END** |
+| `soundscape-v5` | + `--bg-noise-p 0.3` | 0–3 | 0.864 | bg noise = neutral; temporal smoothing was the gain |
+| `soundscape-v6-b1` | `--backbone tf_efficientnet_b1.ns_jft_in1k` + bg noise | 0–3 | pending | val losses 0.0337/0.0324/0.0332/0.0328 — kernel v16 |
 
 ---
 
 ## Dead ends / lessons learned
 
-- `enable_gpu: true` in kernel-metadata.json → silent scoring failure (competition GPU limit = 0 min)
-- OOF cmAP (clip-level) ≠ LB cmAP (soundscape-level) — large gap expected; don't optimize OOF
-- **Soundscape cmAP also unreliable as LB proxy**: 66 train soundscapes cover only 75/234 species → B3-SED scores highest locally (0.2994) but lowest LB (0.750). Use LB submissions as ground truth.
-- Plain classifier head underperforms SED head significantly for soundscape-level scoring
-- Naive SED head (mean freq pool + sigmoid attention): 0.750 — worse than plain B3 (0.776) due to only ~10 temporal frames after 32× backbone downsampling
-- Longer training beyond ~50 epochs doesn't help — val loss plateau is flat; early stopping with patience=15 is appropriate
-- **Dual loss + time_mask=30 regressed LB 0.783 → 0.765**: two changes happened at once (added dual loss, reduced time_mask 100→30). Unclear which caused it. Possible: time_mask=100 provided better regularization despite being "wrong"; or dual loss destabilizes training with patience=15. Not worth isolating — the architecture gap vs public baseline is from Perch pretraining, not these details.
-- **Public baseline gap explained**: the 0.862 model uses Perch pseudo-labels or AudioSet pretraining, NOT just architecture/augmentation changes.
-- **Perch pseudo-labeling on soundscapes is a dead end**: 99% of 127,896 windows have near-zero Perch predictions (median max prob = 0.003). Unfiltered (perch-v1): val_loss 0.045 (regression). Filtered to 1,307 windows (perch-v2): val_loss 0.0331 (tied with baseline, no gain). The 0.862 gap is NOT from this approach. Checkpoint named `best_perch_fold0.pt` from `aidensong123/perch-fold`; single fold gets 0.862 vs our 5-fold ensemble at 0.783. Architecture is identical.
-- **BirdSet XCL pretraining** (9,736 Xeno-Canto species, EfficientNet-B1): LB 0.782 — no gain over B0 NoisyStudent (0.783). Bird-domain pretraining from a generic Xeno-Canto dataset does NOT help. The gap to 0.862 requires competition-specific pseudo-labeling (Perch) or AudioSet pretraining.
+- `enable_gpu: true` → silent scoring failure
+- OOF cmAP (clip-level) ≠ LB cmAP; 66 soundscapes cover only 75/234 species → local metrics unreliable
+- **Dual loss + time_mask=30**: LB 0.783 → 0.765 (regression)
+- **BirdSet XCL pretraining** (B1): LB 0.782 — bird-domain pretraining from generic XC data doesn't help
+- **CE loss**: LB 0.723 — `F.cross_entropy` applies softmax, trains model to suppress co-occurring species, destroys multilabel recall. BCE is mandatory.
+- **Perch pseudo-labeling on soundscapes**: 99% of 127,896 windows have near-zero signal. Neutral at best (tied 0.0331 val_loss), LB 0.746 for single fold.
+- **Background noise (soundscape-v5)**: LB 0.864 = neutral vs v3+temporal smoothing. Label contamination from unlabeled bird calls in bg noise likely cancels any domain benefit.
+- **Naive SED head**: 0.750 (worse than plain B3 0.776) — too few temporal frames after 32× downsampling
+- **B3 backbone**: 0.776 — bigger not better here; B0 is the sweet spot for CPU inference budget
+
+---
+
+## Perch Pseudo-Labeling — Findings (Mar 21)
+
+Perch on **unlabeled soundscapes** does NOT help (mean prob = 0.000107, 99% windows near-zero). The 0.862 baseline gap was from `train_soundscapes_labels.csv`, not Perch.
+
+**Perch as frozen feature extractor** (Track A above) is different — it uses Perch's own logits/embeddings directly, not as pseudo-labels for CNN training.
