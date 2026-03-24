@@ -55,7 +55,8 @@ Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches 
 | **soundscape-v3 + temporal smoothing (kernel v13)** | **0.864** | +0.006 |
 | **soundscape-v5 (+ bg noise p=0.3, kernel v14)** | **0.864** | bg noise = neutral |
 | **v5 + inference tricks (kernel v15)** | **0.876** | +0.012 — 50% stride + class-type smooth + file-max prior |
-| **soundscape-v6-b1 + inference tricks (kernel v16)** | **pending** | B1 NoisyStudent 4-fold, val losses 0.0324–0.0337 |
+| **soundscape-v6-b1 + inference tricks (kernel v16)** | **TIMEOUT** | B1 NoisyStudent 4-fold — CPU too slow |
+| **v5 + class-conditional pooling + persistence penalty (kernel v18)** | **pending** | max pool birds, penalty before smooth |
 | **Perch v4 Track A (kernel perch-v8)** | **pending** | frozen Perch + LogReg probes (40/60) + genus proxy + smooth |
 
 ### Local validation findings
@@ -129,12 +130,9 @@ Key insights from field literature (see `research-lit.md`):
 
 ---
 
-### 🔄 Step 2 — B1 NoisyStudent backbone (soundscape-v6-b1, kernel v16)
+### ❌ Step 2 — B1 NoisyStudent backbone (soundscape-v6-b1, kernel v16) — DEAD END
 
-**Expected: +0.005–0.015 LB | Risk: CPU inference time**
-
-- All 4 folds done: val losses 0.0337/0.0324/0.0332/0.0328
-- Dataset: `aldisued/birdclef2026-soundscape-v6-b1` | Kernel v16 submitted Mar 23 — **score pending**
+**CPU timeout** — EfficientNet-B1 + 50% overlap is too slow on Kaggle CPU. Kernel timed out before scoring. B0/B3 remain the only viable backbones for CPU inference within time limits.
 
 ---
 
@@ -228,7 +226,7 @@ BirdCLEF 2021/2022/2023/2024 datasets (~117K clips, all public on Kaggle). Pretr
 ## Kaggle setup
 
 - **Notebook**: `aldisued/birdclef-2026-baseline-inference`
-- **Current dataset**: `aldisued/birdclef2026-soundscape-v6-b1` (kernel v16 pending) | v15 LB **0.876**
+- **Current dataset**: `aldisued/birdclef2026-soundscape-v5` | kernel v18 pending (class-conditional pooling + persistence penalty)
 - **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
 - Submit: `kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-baseline-inference -v <int> -f "submission.csv" -m "..."`
 
@@ -259,7 +257,7 @@ ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=
 | `soundscape-v3` | `--baseline --soundscape-labels --htk --warm-restarts --gain-aug` | 0–3 | 0.858 | |
 | `soundscape-v4` | + CE loss | 0–3 | 0.723 | **DEAD END** |
 | `soundscape-v5` | + `--bg-noise-p 0.3` | 0–3 | 0.864 | bg noise = neutral; temporal smoothing was the gain |
-| `soundscape-v6-b1` | `--backbone tf_efficientnet_b1.ns_jft_in1k` + bg noise | 0–3 | pending | val losses 0.0337/0.0324/0.0332/0.0328 — kernel v16 |
+| `soundscape-v6-b1` | `--backbone tf_efficientnet_b1.ns_jft_in1k` + bg noise | 0–3 | **TIMEOUT** | CPU too slow for B1 + 50% overlap — **DEAD END** |
 
 ---
 
@@ -274,6 +272,7 @@ ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=
 - **Background noise (soundscape-v5)**: LB 0.864 = neutral vs v3+temporal smoothing. Label contamination from unlabeled bird calls in bg noise likely cancels any domain benefit.
 - **Naive SED head**: 0.750 (worse than plain B3 0.776) — too few temporal frames after 32× downsampling
 - **B3 backbone**: 0.776 — bigger not better here; B0 is the sweet spot for CPU inference budget
+- **B1 backbone (soundscape-v6-b1)**: CPU timeout — B1 + 50% overlap exceeds Kaggle time limit. Only B0/B3 viable.
 
 ---
 
