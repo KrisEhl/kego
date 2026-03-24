@@ -919,6 +919,7 @@ def train_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     use_mixup: bool = True,
+    mixup_alpha: float = 1.0,
     label_smoothing: float = 0.05,
     sed: bool = False,
     baseline: bool = False,
@@ -929,7 +930,7 @@ def train_epoch(
     for x, y in loader:
         x, y = x.to(device), y.to(device)
         if use_mixup:
-            x, y = mixup(x, y)
+            x, y = mixup(x, y, alpha=mixup_alpha)
         out = model(x)
         if baseline:
             loss = _dual_loss(out, y, label_smoothing, ce_loss=ce_loss)
@@ -1122,6 +1123,12 @@ def main():
         action="store_true",
         help="Use cross-entropy loss instead of BCE. Applies softmax over classes "
         "on frame logits (matches public baseline loss_type=CE).",
+    )
+    parser.add_argument(
+        "--mixup-alpha",
+        type=float,
+        default=1.0,
+        help="MixUp alpha (Beta distribution parameter). 1.0 = public baseline. 0.4 = prior default.",
     )
     args = parser.parse_args()
     if args.smoke:
@@ -1475,6 +1482,7 @@ def main():
             train_loader,
             optimizer,
             device,
+            mixup_alpha=args.mixup_alpha,
             sed=is_prob_model,
             baseline=use_dual_loss,
             ce_loss=args.ce_loss,
