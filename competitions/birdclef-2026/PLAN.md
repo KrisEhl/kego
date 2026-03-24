@@ -32,9 +32,9 @@ recordings in the Pantanal wetlands, South America.
 
 Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches exist — see research section.
 
-**Pending (both submitted Mar 23, awaiting scores):**
-- kernel v16: B1 NoisyStudent 4-fold + inference tricks
-- Perch v4 Track A kernel v8: frozen Perch + LogReg probes — ready to submit once daily slot frees up
+**Pending:**
+- kernel v21: soundscape-v7 + class-cond pooling + persistence penalty (timeout fixes applied)
+- Perch v4 Track A kernel v8: ready to submit
 
 ### Results
 
@@ -56,7 +56,8 @@ Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches 
 | **soundscape-v5 (+ bg noise p=0.3, kernel v14)** | **0.864** | bg noise = neutral |
 | **v5 + inference tricks (kernel v15)** | **0.876** | +0.012 — 50% stride + class-type smooth + file-max prior |
 | **soundscape-v6-b1 + inference tricks (kernel v16)** | **TIMEOUT** | B1 NoisyStudent 4-fold — CPU too slow |
-| **v5 + class-conditional pooling + persistence penalty (kernel v18)** | **pending** | max pool birds, penalty before smooth |
+| **v18/v19: class-cond pooling + persistence penalty + circular TTA** | **TIMEOUT** | rglob + TTA pushed over 90-min limit |
+| **v21: soundscape-v7 + class-cond pooling + persistence penalty** | **pending** | mixup α=1.0, timeout fixes (TTA off, rglob→iterdir) |
 | **Perch v4 Track A (kernel perch-v8)** | **pending** | frozen Perch + LogReg probes (40/60) + genus proxy + smooth |
 
 ### Local validation findings
@@ -132,7 +133,17 @@ Key insights from field literature (see `research-lit.md`):
 
 ### ❌ Step 2 — B1 NoisyStudent backbone (soundscape-v6-b1, kernel v16) — DEAD END
 
-**CPU timeout** — EfficientNet-B1 + 50% overlap is too slow on Kaggle CPU. Kernel timed out before scoring. B0/B3 remain the only viable backbones for CPU inference within time limits.
+**CPU timeout** — EfficientNet-B1 + 50% overlap is too slow on Kaggle CPU. B0/B3 remain the only viable backbones for CPU inference within time limits.
+
+---
+
+### ⚠️ Inference time budget — CRITICAL
+
+**90-min Kaggle CPU limit is tight.** v15 (LB 0.876) was close to the edge; v18/v19 timed out due to:
+1. `rglob("*")` over all `/kaggle/input` scanned 35K+ train audio paths — fixed to `iterdir()`
+2. Circular TTA doubles inference time — disabled (`tta=False`), keep as opt-in
+
+**Circular TTA**: do NOT re-enable unless timing confirmed safe with a headroom test. Once v21 LB score is known, estimate remaining budget before enabling TTA.
 
 ---
 
@@ -226,7 +237,7 @@ BirdCLEF 2021/2022/2023/2024 datasets (~117K clips, all public on Kaggle). Pretr
 ## Kaggle setup
 
 - **Notebook**: `aldisued/birdclef-2026-baseline-inference`
-- **Current dataset**: `aldisued/birdclef2026-soundscape-v5` | kernel v18 pending (class-conditional pooling + persistence penalty)
+- **Current dataset**: `aldisued/birdclef2026-soundscape-v7` | kernel v21 pending
 - **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
 - Submit: `kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-baseline-inference -v <int> -f "submission.csv" -m "..."`
 
@@ -258,6 +269,7 @@ ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=
 | `soundscape-v4` | + CE loss | 0–3 | 0.723 | **DEAD END** |
 | `soundscape-v5` | + `--bg-noise-p 0.3` | 0–3 | 0.864 | bg noise = neutral; temporal smoothing was the gain |
 | `soundscape-v6-b1` | `--backbone tf_efficientnet_b1.ns_jft_in1k` + bg noise | 0–3 | **TIMEOUT** | CPU too slow for B1 + 50% overlap — **DEAD END** |
+| `soundscape-v7` | same as v5 + `--mixup-alpha 1.0` (default) | 0–3 | pending v21 | val losses 0.0329–0.0341 (mean 0.0335) |
 
 ---
 
@@ -273,6 +285,8 @@ ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=
 - **Naive SED head**: 0.750 (worse than plain B3 0.776) — too few temporal frames after 32× downsampling
 - **B3 backbone**: 0.776 — bigger not better here; B0 is the sweet spot for CPU inference budget
 - **B1 backbone (soundscape-v6-b1)**: CPU timeout — B1 + 50% overlap exceeds Kaggle time limit. Only B0/B3 viable.
+- **Circular TTA**: 2× inference → timeout. Keep `tta=False`. Only re-enable with confirmed headroom.
+- **`rglob("*")` in sanity check cell**: scanned 35K+ train audio files → hidden time cost. Use `iterdir()` only.
 
 ---
 
