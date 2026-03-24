@@ -157,7 +157,7 @@ Root cause: only 53/234 species had trained probes (only species present in 66 l
 
 ---
 
-### 🎯 Step 3b — Perch with full training data probes (HIGH PRIORITY)
+### ⏳ Step 3b — Perch with full training data probes (perch-v10 pending submission)
 
 **Expected: Perch standalone ~0.85+, Perch+CNN ensemble ~0.91+ | ~1 day total work**
 
@@ -170,8 +170,8 @@ The public 0.912 notebooks train probes on all training clips (35,549), not just
 - [x] Re-uploaded `birdclef2026-perch-v4-artifacts` dataset with `perch_probes_v2.pkl` (103MB)
 - [x] Updated `kaggle_perch_inference.ipynb`: load v2 pkl, probes only for uncovered species (17/234)
 - [x] perch-v10 built and tested (kernel COMPLETE)
-- [ ] **Submit perch-v10** (blocked by 5/day limit — submit Mar 25)
-- [ ] If Perch standalone improves to ~0.85+, build Perch+CNN ensemble notebook
+- [ ] **Submit perch-v10** (blocked by 5/day limit — submit Mar 25, kernel already built)
+- [ ] If Perch standalone improves to ~0.85+: build Perch+CNN ensemble notebook (Step 4)
 
 **OOF analysis (clip-level)**: probes improve 25/202 species (those with Perch AP < 0.05 = not in vocab). Hurt 177/202 where Perch already performs well. Fix: probes only active for 17 species with no Perch vocab coverage (not directly mapped AND no genus proxy).
 
