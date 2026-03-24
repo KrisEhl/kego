@@ -32,7 +32,7 @@ recordings in the Pantanal wetlands, South America.
 
 Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches exist — see research section.
 
-**No pending submissions.**
+**Pending: perch-v10 ready to submit (hit 5/day limit Mar 24).**
 
 ### Results
 
@@ -58,6 +58,7 @@ Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches 
 | **v21: soundscape-v7 + class-cond pooling + persistence penalty** | **0.882** | mixup α=1.0, timeout fixes (TTA off, rglob→iterdir) |
 | **Perch v4 Track A (kernel perch-v8)** | **TIMEOUT** | unbatched infer_tf (1 call/slot) — timed out |
 | **Perch v4 batched (kernel perch-v9)** | **0.677** | 1 infer_tf/file — completed but far below CNN (0.882). Perch v4 label mapping weak vs public Perch v2. |
+| **perch-v10 (181 probes, full training set, probes only for uncovered species)** | **pending** | 181 probes trained on 35,549 clips; probes only activate for 17 species w/ zero Perch signal |
 
 ### Local validation findings
 
@@ -164,12 +165,15 @@ The public 0.912 notebooks train probes on all training clips (35,549), not just
 
 **Plan:**
 
-- [x] `perch_cache_train_clips.py` — written, ready to run on cluster
-- [ ] Run on cluster: ~3h CPU (batched, BATCH_SIZE=32). Saves `perch_train_cache.npz` (~215MB)
-- [ ] Update `train_perch_probes.py` to load from train clip cache (StratifiedKFold instead of site GroupKFold)
-- [ ] Re-upload `birdclef2026-perch-v4-artifacts` dataset with new probes
-- [ ] Update `kaggle_perch_inference.ipynb` to point to new artifacts, submit perch-v10
+- [x] `perch_cache_train_clips.py` — written and run on cluster (65.8 min, 0 errors, 206/234 species covered)
+- [x] `train_perch_probes_v2.py` — trained 181 probes in 7.3 min (StratifiedKFold-5, C=1.0, MIN_POS=10)
+- [x] Re-uploaded `birdclef2026-perch-v4-artifacts` dataset with `perch_probes_v2.pkl` (103MB)
+- [x] Updated `kaggle_perch_inference.ipynb`: load v2 pkl, probes only for uncovered species (17/234)
+- [x] perch-v10 built and tested (kernel COMPLETE)
+- [ ] **Submit perch-v10** (blocked by 5/day limit — submit Mar 25)
 - [ ] If Perch standalone improves to ~0.85+, build Perch+CNN ensemble notebook
+
+**OOF analysis (clip-level)**: probes improve 25/202 species (those with Perch AP < 0.05 = not in vocab). Hurt 177/202 where Perch already performs well. Fix: probes only active for 17 species with no Perch vocab coverage (not directly mapped AND no genus proxy).
 
 **Run on cluster:**
 ```bash
