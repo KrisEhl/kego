@@ -28,13 +28,11 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB 0.876 (v5 checkpoints + inference tricks, kernel v15)
+### Current best: LB 0.882 (soundscape-v7 + class-cond pooling + persistence penalty, kernel v21)
 
-Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches exist — see research section.
+Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches exist — see research section.
 
-**Pending:**
-- kernel v21: soundscape-v7 + class-cond pooling + persistence penalty (timeout fixes applied)
-- Perch v4 Track A kernel v8: ready to submit
+**No pending submissions.**
 
 ### Results
 
@@ -57,8 +55,9 @@ Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches 
 | **v5 + inference tricks (kernel v15)** | **0.876** | +0.012 — 50% stride + class-type smooth + file-max prior |
 | **soundscape-v6-b1 + inference tricks (kernel v16)** | **TIMEOUT** | B1 NoisyStudent 4-fold — CPU too slow |
 | **v18/v19: class-cond pooling + persistence penalty + circular TTA** | **TIMEOUT** | rglob + TTA pushed over 90-min limit |
-| **v21: soundscape-v7 + class-cond pooling + persistence penalty** | **pending** | mixup α=1.0, timeout fixes (TTA off, rglob→iterdir) |
-| **Perch v4 Track A (kernel perch-v8)** | **pending** | frozen Perch + LogReg probes (40/60) + genus proxy + smooth |
+| **v21: soundscape-v7 + class-cond pooling + persistence penalty** | **0.882** | mixup α=1.0, timeout fixes (TTA off, rglob→iterdir) |
+| **Perch v4 Track A (kernel perch-v8)** | **TIMEOUT** | unbatched infer_tf (1 call/slot) — timed out |
+| **Perch v4 batched (kernel perch-v9)** | **0.677** | 1 infer_tf/file — completed but far below CNN (0.882). Perch v4 label mapping weak vs public Perch v2. |
 
 ### Local validation findings
 
@@ -70,9 +69,9 @@ Gap to public top notebooks (0.912) = **0.036**. Two distinct public approaches 
 
 ### Two distinct approaches
 
-**Track A: Perch v2 frozen feature extractor — 0.892–0.912**
+**Track A: Perch frozen feature extractor — 0.892–0.912**
 
-Google's `google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1` (14,795 species, TF SavedModel) as a frozen embedding extractor. CPU-only, <90 min. No fine-tuning.
+Google's `google/bird-vocalization-classifier/tensorflow2/bird-vocalization-classifier` (10,932 species, TF SavedModel) as a frozen embedding extractor. CPU-only, <90 min. No fine-tuning. (**Note**: v2 and v4 both have 10,932 species — same label list. Version doesn't matter.)
 
 Pipeline:
 1. Audio → 12 × 5s windows → Perch v2 → 1536-dim embeddings + raw logits (14,795 classes)
@@ -147,38 +146,51 @@ Key insights from field literature (see `research-lit.md`):
 
 ---
 
-### 🔄 Step 3 — Perch v4 Track A (kernel perch-v8)
+### ❌ Step 3 — Perch quick probes (soundscapes only) — DEAD END (LB 0.677)
 
-**Expected: +0.03–0.05 LB → ~0.90+ | Using Perch v4 (10,932 species, 1280-dim)**
+**Result: LB 0.677 — far below CNN at 0.882.**
 
-- [x] Cache: `perch_labeled_cache.npz` (792 × 1280 emb, 792 × 10932 logits)
-- [x] Probes: 53 LogReg probes, mean AP 0.059 → 0.096 (+0.037 OOF)
-- [x] Kernel `aldisued/birdclef-2026-perch-v4-inference` v8 COMPLETE — **ready to submit**
-- [ ] Submit and record LB score
+Root cause: only 53/234 species had trained probes (only species present in 66 labeled soundscapes = 792 windows). Non-Aves species (76 classes) have no Perch coverage at all. Both Perch v2 and v4 on Kaggle have the same 10,932 species — switching versions wouldn't help.
 
-```bash
-kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-perch-v4-inference -v 8 -f "submission.csv" -m "Perch v4 Track A: frozen embeddings + LogReg probes (40/60 blend) + genus proxy + class-type smooth + file-max prior"
-```
-
-**Note on Perch v4 vs v2**: Public notebooks use Perch v2 (14,795 species, 1536-dim, natively on Kaggle). We use v4 (10,932 species, 1280-dim) uploaded as a dataset. Probes are v4-trained — incompatible with v2.
-
-**Perch v4 assets note**: `genus.csv` (2,333 bird genera) and `family.csv` (249 families) are separate label vocabularies for hierarchical outputs, not per-label mappings. `infer_tf` returns only species logits (10,932 dims). For unmapped non-bird species (76 classes: Amphibia, Insecta, Mammalia, Reptilia), Perch has no genus-level coverage — these remain best served by the rough eBird prefix proxy or direct fine-tuned CNN scores.
+**Batching fix worked** (v9 completed without timeout), but the score ceiling is the probe training data.
 
 ---
 
-### 🎯 Step 4 — Perch + CNN ensemble blend
+### 🎯 Step 3b — Perch with full training data probes (HIGH PRIORITY)
 
-**Expected: +0.01–0.03 LB on top of best individual | No retraining required | High priority**
+**Expected: Perch standalone ~0.85+, Perch+CNN ensemble ~0.91+ | ~1 day total work**
 
-After Perch LB score is known, blend Perch Track A predictions + soundscape CNN predictions.
+The public 0.912 notebooks train probes on all training clips (35,549), not just soundscapes (792). This covers 206/234 species instead of 53.
 
-Plan:
-1. Run both models on the 66 labeled soundscapes (OOF for CNN; direct for Perch cache)
-2. Grid-search blend weight α: `α × perch + (1-α) × cnn` for α ∈ [0.1, 0.2, ..., 0.9]
-3. Evaluate on soundscape cmAP — pick best α, then submit to LB
-4. Implement as a new inference notebook that loads both models and blends slot-level predictions
+**Plan:**
 
-Literature support: Perch embeddings capture global bioacoustic patterns well; fine-tuned CNN captures Pantanal-specific distribution shifts. These are genuinely complementary. Public 0.912 notebooks already use this blend.
+- [x] `perch_cache_train_clips.py` — written, ready to run on cluster
+- [ ] Run on cluster: ~3h CPU (batched, BATCH_SIZE=32). Saves `perch_train_cache.npz` (~215MB)
+- [ ] Update `train_perch_probes.py` to load from train clip cache (StratifiedKFold instead of site GroupKFold)
+- [ ] Re-upload `birdclef2026-perch-v4-artifacts` dataset with new probes
+- [ ] Update `kaggle_perch_inference.ipynb` to point to new artifacts, submit perch-v10
+- [ ] If Perch standalone improves to ~0.85+, build Perch+CNN ensemble notebook
+
+**Run on cluster:**
+```bash
+ssh kristian@omarchyd "cd /home/kristian/projects/kego && git pull && KEGO_PATH_DATA=/home/kristian/projects/kego/data PERCH_MODEL_DIR=/home/kristian/projects/kego/data/perch-v2 nohup ~/.local/bin/uv run python competitions/birdclef-2026/perch_cache_train_clips.py >> /tmp/perch_cache.log 2>&1 &"
+```
+
+---
+
+### 🎯 Step 4 — Perch + CNN ensemble blend (after Step 3b)
+
+**Expected: +0.01–0.03 LB on top of best individual | No retraining required**
+
+After Perch standalone scores, blend slot-level predictions:
+- Grid-search α: `α × perch + (1-α) × cnn` on 66 labeled soundscapes
+- Implement as new inference notebook loading both models
+
+---
+
+### 🎯 Step 5 — CNN improvements (parallel / fallback)
+
+Public 0.892 CNN notebooks use several things we haven't tried:
 
 ---
 
@@ -237,7 +249,7 @@ BirdCLEF 2021/2022/2023/2024 datasets (~117K clips, all public on Kaggle). Pretr
 ## Kaggle setup
 
 - **Notebook**: `aldisued/birdclef-2026-baseline-inference`
-- **Current dataset**: `aldisued/birdclef2026-soundscape-v7` | kernel v21 pending
+- **Current dataset**: `aldisued/birdclef2026-soundscape-v7` | kernel v21 scored 0.882
 - **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
 - Submit: `kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-baseline-inference -v <int> -f "submission.csv" -m "..."`
 
@@ -269,7 +281,7 @@ ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=
 | `soundscape-v4` | + CE loss | 0–3 | 0.723 | **DEAD END** |
 | `soundscape-v5` | + `--bg-noise-p 0.3` | 0–3 | 0.864 | bg noise = neutral; temporal smoothing was the gain |
 | `soundscape-v6-b1` | `--backbone tf_efficientnet_b1.ns_jft_in1k` + bg noise | 0–3 | **TIMEOUT** | CPU too slow for B1 + 50% overlap — **DEAD END** |
-| `soundscape-v7` | same as v5 + `--mixup-alpha 1.0` (default) | 0–3 | pending v21 | val losses 0.0329–0.0341 (mean 0.0335) |
+| `soundscape-v7` | same as v5 + `--mixup-alpha 1.0` (default) | 0–3 | **0.882** (v21) | val losses 0.0329–0.0341 (mean 0.0335); +0.006 vs v5 from class-cond pooling + persistence penalty |
 
 ---
 
