@@ -1,4 +1,4 @@
-"""Cache Perch embeddings for all 35,549 training clips.
+"""Cache Perch v4 embeddings for all 35,549 training clips.
 
 Reads train.csv, runs Perch on each clip (batched), saves embeddings +
 competition-space probs. Used to train per-class LogReg probes with full
@@ -15,17 +15,22 @@ Outputs:
 Runtime: ~3h CPU single-threaded, ~45min with BATCH_SIZE=32 (batched TF).
 Perch is CPU-only (TF SavedModel, no GPU kernel for this op).
 
-Usage (cluster, run from repo root):
+Model loading (in priority order):
+    1. PERCH_MODEL_DIR env var → local SavedModel directory
+    2. tfhub v4 (default) → "https://tfhub.dev/google/bird-vocalization-classifier/4"
+       (uses cluster tfhub cache if already downloaded)
+
+Usage (cluster — uses tfhub v4 cache from previous run):
     KEGO_PATH_DATA=/home/kristian/projects/kego/data \\
-    PERCH_MODEL_DIR=/home/kristian/projects/kego/data/perch-v2 \\
         ~/.local/bin/uv run python competitions/birdclef-2026/perch_cache_train_clips.py
 
-Usage (local Mac):
+Usage (local Mac — uses local SavedModel):
     KEGO_PATH_DATA=/Users/kristianehlert/projects/kego/data \\
     PERCH_MODEL_DIR=/Users/kristianehlert/projects/kego/data/perch-v2 \\
         uv run python competitions/birdclef-2026/perch_cache_train_clips.py
 """
 
+import glob
 import os
 import time
 from pathlib import Path
@@ -37,12 +42,8 @@ import tensorflow as tf
 
 # ── config ────────────────────────────────────────────────────────────────────
 DATA = Path(os.environ.get("KEGO_PATH_DATA", "data")) / "birdclef" / "birdclef-2026"
-PERCH_MODEL_DIR = Path(
-    os.environ.get(
-        "PERCH_MODEL_DIR",
-        str(Path(os.environ.get("KEGO_PATH_DATA", "data")) / "perch-v2"),
-    )
-)
+PERCH_MODEL_DIR = os.environ.get("PERCH_MODEL_DIR", "")  # optional local override
+PERCH_TFHUB_URL = "https://tfhub.dev/google/bird-vocalization-classifier/4"
 TRAIN_CSV = DATA / "train.csv"
 TRAIN_AUDIO_DIR = DATA / "train_audio"
 TAXONOMY_CSV = DATA / "taxonomy.csv"
@@ -60,10 +61,35 @@ n_species = len(competition_species)
 sp_to_idx = {sp: i for i, sp in enumerate(competition_species)}
 print(f"Competition species: {n_species}")
 
-# ── load Perch label mapping ───────────────────────────────────────────────────
-perch_label_csv = PERCH_MODEL_DIR / "assets" / "label.csv"
-perch_labels_df = pd.read_csv(perch_label_csv)
-perch_labels = perch_labels_df.iloc[:, 0].astype(str).tolist()
+# ── load Perch model + label list ─────────────────────────────────────────────
+if PERCH_MODEL_DIR and Path(PERCH_MODEL_DIR).exists():
+    print(f"\nLoading Perch from local SavedModel: {PERCH_MODEL_DIR}")
+    t0 = time.time()
+    perch_model = tf.saved_model.load(PERCH_MODEL_DIR)
+    perch_label_csv = Path(PERCH_MODEL_DIR) / "assets" / "label.csv"
+    perch_labels_df = pd.read_csv(perch_label_csv)
+    perch_labels = perch_labels_df.iloc[:, 0].astype(str).tolist()
+else:
+    import tensorflow_hub as hub
+
+    print(f"\nLoading Perch v4 from tfhub: {PERCH_TFHUB_URL}")
+    t0 = time.time()
+    perch_model = hub.load(PERCH_TFHUB_URL)
+    # find label file in tfhub cache
+    matches = glob.glob("/tmp/tfhub_modules/**/label.csv", recursive=True)
+    if not matches:
+        raise FileNotFoundError(
+            "Perch label.csv not found in tfhub cache. "
+            "Run perch_cache_soundscapes.py first to populate it."
+        )
+    perch_label_csv_path = matches[0]
+    with open(perch_label_csv_path) as f:
+        # first line may be header "ebird2021,comment" — skip if so
+        lines = [l.strip() for l in f if l.strip()]
+    perch_labels = [l.split(",")[0] for l in lines if not l.startswith("ebird")]
+
+print(f"Loaded in {time.time() - t0:.1f}s")
+
 n_perch = len(perch_labels)
 perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
 print(f"Perch labels: {n_perch}")
@@ -73,11 +99,6 @@ comp_to_perch = np.array(
 )
 perch_coverage = comp_to_perch >= 0
 print(f"Direct Perch mapping: {perch_coverage.sum()} / {n_species} competition species")
-
-# ── load Perch SavedModel ──────────────────────────────────────────────────────
-print(f"\nLoading Perch from {PERCH_MODEL_DIR} ...")
-t0 = time.time()
-perch_model = tf.saved_model.load(str(PERCH_MODEL_DIR))
 print(f"Loaded in {time.time() - t0:.1f}s")
 
 # smoke test + get embedding dim
