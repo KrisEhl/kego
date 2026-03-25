@@ -56,6 +56,7 @@ Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches 
 | **soundscape-v6-b1 + inference tricks (kernel v16)** | **TIMEOUT** | B1 NoisyStudent 4-fold — CPU too slow |
 | **v18/v19: class-cond pooling + persistence penalty + circular TTA** | **TIMEOUT** | rglob + TTA pushed over 90-min limit |
 | **v21: soundscape-v7 + class-cond pooling + persistence penalty** | **0.882** | mixup α=1.0, timeout fixes (TTA off, rglob→iterdir) |
+| **v23: soundscape-v8 (HGNetV2-B0, wrong mel config)** | **0.858** | regression — trained with EfficientNet mel config (win=2048, hop=512, 224 mel); should use win=626, hop=313, 256 mel |
 | **Perch v4 Track A (kernel perch-v8)** | **TIMEOUT** | unbatched infer_tf (1 call/slot) — timed out |
 | **Perch v4 batched (kernel perch-v9)** | **0.677** | 1 infer_tf/file — completed but far below CNN (0.882). Perch v4 label mapping weak vs public Perch v2. |
 | **perch-v10/v11/v13 (181 probes, full training set)** | **TIMEOUT** | Consistent timeout — test set ≥780 soundscapes × ~7s/file ≈ 91min > 90min budget. v9 (0.677) was a fluke on a fast scoring node. |
@@ -143,7 +144,7 @@ Key insights from field literature (see `research-lit.md`):
 1. `rglob("*")` over all `/kaggle/input` scanned 35K+ train audio paths — fixed to `iterdir()`
 2. Circular TTA doubles inference time — disabled (`tta=False`), keep as opt-in
 
-**Circular TTA**: do NOT re-enable unless timing confirmed safe with a headroom test. Once v21 LB score is known, estimate remaining budget before enabling TTA.
+**Circular TTA**: do NOT re-enable unless timing confirmed safe with a headroom test. v21 scored 0.882 — the public 0.892 uses TTA and fits within 90 min. The previous timeouts (v18/v19) were caused by `rglob` + B1 backbone, both fixed. TTA is the main untried gain — see Step 5b.
 
 ---
 
@@ -174,17 +175,52 @@ All work completed (181 probes trained on 35,549 clips, v2 pkl uploaded), but th
 
 ---
 
-### 🏃 Step 5a — HGNetV2-B0 backbone (soundscape-v8, training Mar 25)
+### ❌ Step 5a — HGNetV2-B0 backbone (soundscape-v8, kernel v23) — DEAD END
 
-**Expected: +0.005–0.015 LB | Training: ~3–4h on 2× RTX 3090**
+**Result: LB 0.858 — regression from 0.882.**
 
-Public 0.892 CNN notebooks use `hgnetv2_b0.ssld_stage2_ft_in1k` (PaddlePaddle SSLD distillation, ImageNet fine-tuned). Same config as soundscape-v7 otherwise.
+Root cause: trained HGNetV2 with the wrong mel config (224 mel, win_length=2048, hop=512 — same as EfficientNet-B0). The public HGNetV2 notebook uses win_length=626, hop=313, 256 mel, resize to 256×256. We gave HGNetV2 the wrong temporal resolution. Additionally, **the public 0.892 notebooks do NOT use HGNetV2** — they use EfficientNet-B0 NoisyStudent, the same backbone as our soundscape-v7.
 
-Launch: `--baseline --soundscape-labels --htk --warm-restarts --gain-aug --bg-noise-p 0.3 --mixup-alpha 1.0 --backbone hgnetv2_b0.ssld_stage2_ft_in1k --n_folds 4 --tag soundscape-v8`
+---
 
-- [ ] Fold 0+1 running (GPU 0+1 on head)
-- [ ] Fold 2+3 after fold 0+1 complete
-- [ ] Upload to Kaggle dataset, submit
+### 🎯 Step 5b — Re-enable circular TTA (inference-only, no retraining)
+
+**Expected: +0.008–0.012 LB | No retraining | Zero training cost**
+
+The 0.892 public notebook uses circular TTA (1.25s time shift, average with original). We disabled this in v21 due to timeout fears after v18/v19 timed out. Those timeouts were caused by `rglob("*")` (35K+ files scanned) and B1 backbone (too slow) — both already fixed in v21.
+
+**Plan**: run a timing test first, then enable TTA if headroom allows.
+
+1. Add timing instrumentation to measure total inference time per kernel run (or estimate from v21 logs)
+2. If v21 runs in <45 min → TTA safe; if ~60 min → borderline; if >70 min → risky
+3. Enable `tta=True` in inference kernel → push as new version → submit
+4. If TTA times out, try 25% stride (3.75s) instead of 50% + TTA
+
+---
+
+### 🎯 Step 5c — Alternative post-processing (inference-only, no retraining)
+
+**Expected: +0.003–0.008 LB | No retraining**
+
+The 0.892 notebook uses different post-processing than our v21:
+- **Sharpened temporal smooth**: `probs^1.5` → 5-tap `[0.05, 0.15, 0.60, 0.15, 0.05]` → `^(1/1.5)`
+- vs our: class-conditional average-neighbour + local-max propagation + persistence penalty
+
+A/B test: swap our post-processing for theirs, keep TTA off, compare LB scores.
+
+---
+
+### 🎯 Step 5d — HGNetV2-B0 with correct config (retrain)
+
+**Expected: unknown (no public LB score for HGNetV2 yet) | Training: ~3–4h**
+
+Correct mel config for HGNetV2:
+- `win_length=626, hop_length=313` (9.8ms hop, 50% overlap)
+- `n_mels=256`, resize input to (256, 256)
+- `fmin=20` (not 0)
+- OneCycleLR (warmup 25%, 20 epochs) instead of CosineAnnealingWarmRestarts
+
+Only worth training after confirming TTA (Step 5b) doesn't already close the gap.
 
 ---
 
