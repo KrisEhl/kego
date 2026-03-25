@@ -32,7 +32,7 @@ recordings in the Pantanal wetlands, South America.
 
 Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches exist — see research section.
 
-**Pending: perch-v10 ready to submit (hit 5/day limit Mar 24).**
+**No pending submissions. Perch standalone abandoned — consistently times out.**
 
 ### Results
 
@@ -58,7 +58,7 @@ Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches 
 | **v21: soundscape-v7 + class-cond pooling + persistence penalty** | **0.882** | mixup α=1.0, timeout fixes (TTA off, rglob→iterdir) |
 | **Perch v4 Track A (kernel perch-v8)** | **TIMEOUT** | unbatched infer_tf (1 call/slot) — timed out |
 | **Perch v4 batched (kernel perch-v9)** | **0.677** | 1 infer_tf/file — completed but far below CNN (0.882). Perch v4 label mapping weak vs public Perch v2. |
-| **perch-v10 (181 probes, full training set, probes only for uncovered species)** | **pending** | 181 probes trained on 35,549 clips; probes only activate for 17 species w/ zero Perch signal |
+| **perch-v10/v11/v13 (181 probes, full training set)** | **TIMEOUT** | Consistent timeout — test set ≥780 soundscapes × ~7s/file ≈ 91min > 90min budget. v9 (0.677) was a fluke on a fast scoring node. |
 
 ### Local validation findings
 
@@ -157,28 +157,20 @@ Root cause: only 53/234 species had trained probes (only species present in 66 l
 
 ---
 
-### ⏳ Step 3b — Perch with full training data probes (perch-v10 pending submission)
+### ❌ Step 3b — Perch standalone with full training data probes — DEAD END (timeout)
 
-**Expected: Perch standalone ~0.85+, Perch+CNN ensemble ~0.91+ | ~1 day total work**
+**Result: Consistent timeout. Perch inference ≥91 min on test set > 90-min Kaggle budget.**
 
-The public 0.912 notebooks train probes on all training clips (35,549), not just soundscapes (792). This covers 206/234 species instead of 53.
+All work completed (181 probes trained on 35,549 clips, v2 pkl uploaded), but the Perch TF model on CPU is simply too slow for the test set size. v9 (LB 0.677) was a one-time lucky run on a fast scoring node — not reproducible.
 
-**Plan:**
+**The public 0.912 notebooks solve this with a two-kernel cache workflow:**
+1. Cache kernel (submission): runs Perch on test soundscapes AND saves embeddings to output
+2. After scoring, download output → upload as dataset
+3. Fast inference kernel: loads cache, skips Perch, only runs probes (~2 min)
 
-- [x] `perch_cache_train_clips.py` — written and run on cluster (65.8 min, 0 errors, 206/234 species covered)
-- [x] `train_perch_probes_v2.py` — trained 181 probes in 7.3 min (StratifiedKFold-5, C=1.0, MIN_POS=10)
-- [x] Re-uploaded `birdclef2026-perch-v4-artifacts` dataset with `perch_probes_v2.pkl` (103MB)
-- [x] Updated `kaggle_perch_inference.ipynb`: load v2 pkl, probes only for uncovered species (17/234)
-- [x] perch-v10 built and tested (kernel COMPLETE)
-- [ ] **Submit perch-v10** (blocked by 5/day limit — submit Mar 25, kernel already built)
-- [ ] If Perch standalone improves to ~0.85+: build Perch+CNN ensemble notebook (Step 4)
+**We cannot implement this yet** — we need one successful Perch submission to harvest the cache. v13 (which saves `test_perch_cache.npz` to output) will eventually score on a fast node, at which point we download the output and enable fast inference.
 
-**OOF analysis (clip-level)**: probes improve 25/202 species (those with Perch AP < 0.05 = not in vocab). Hurt 177/202 where Perch already performs well. Fix: probes only active for 17 species with no Perch vocab coverage (not directly mapped AND no genus proxy).
-
-**Run on cluster:**
-```bash
-ssh kristian@omarchyd "cd /home/kristian/projects/kego && git pull && KEGO_PATH_DATA=/home/kristian/projects/kego/data PERCH_MODEL_DIR=/home/kristian/projects/kego/data/perch-v2 nohup ~/.local/bin/uv run python competitions/birdclef-2026/perch_cache_train_clips.py >> /tmp/perch_cache.log 2>&1 &"
-```
+**Pivot: focus on CNN improvements (Step 5) which reliably score at 0.882.**
 
 ---
 
