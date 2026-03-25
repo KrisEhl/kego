@@ -183,34 +183,68 @@ Root cause: trained HGNetV2 with the wrong mel config (224 mel, win_length=2048,
 
 ---
 
-### 🎯 Step 5b — Re-enable circular TTA (inference-only, no retraining)
+### ❌ Step 5b — Circular TTA (kernel v24) — DEAD END (timeout)
 
-**Expected: +0.008–0.012 LB | No retraining | Zero training cost**
+**Result: TIMEOUT. TTA doubles forward passes (4 models × 23 windows × 2 = 184 vs v21's 92). No headroom.**
 
-The 0.892 public notebook uses circular TTA (1.25s time shift, average with original). We disabled this in v21 due to timeout fears after v18/v19 timed out. Those timeouts were caused by `rglob("*")` (35K+ files scanned) and B1 backbone (too slow) — both already fixed in v21.
-
-**Plan**: run a timing test first, then enable TTA if headroom allows.
-
-1. Add timing instrumentation to measure total inference time per kernel run (or estimate from v21 logs)
-2. If v21 runs in <45 min → TTA safe; if ~60 min → borderline; if >70 min → risky
-3. Enable `tta=True` in inference kernel → push as new version → submit
-4. If TTA times out, try 25% stride (3.75s) instead of 50% + TTA
+Root cause: public 0.892 uses ~2 checkpoints total (1-fold blend). We use 4. At 4 folds + 50% overlap, we're already at the budget ceiling without TTA.
 
 ---
 
-### 🎯 Step 5c — Alternative post-processing (inference-only, no retraining)
+### 🎯 Step 5c — OpenVINO conversion (unlock TTA + 4 folds within budget)
 
-**Expected: +0.003–0.008 LB | No retraining**
+**Expected: +0.008–0.012 LB (TTA) | No retraining | Medium implementation effort**
+
+OpenVINO gives 2–3× CPU speedup via async inference queue (4 requests in flight). With speedup, 4 folds + 50% overlap + TTA all fit in 90 min. The public HGNetV2 notebook already uses this approach.
+
+**Workflow** (no GPU needed — pure CPU offline conversion):
+1. Convert 4 soundscape-v7 `.pt` checkpoints → OpenVINO IR (`.xml` + `.bin`) using `openvino.convert_model`
+2. Upload IR files as new Kaggle dataset `birdclef2026-soundscape-v7-openvino`
+3. Rewrite inference notebook to use `ov.Core` + `AsyncInferQueue` (4 concurrent requests)
+4. Enable `tta=True`, push kernel, submit
+
+**Conversion script**: `competitions/birdclef-2026/convert_to_openvino.py`
+
+Input shape: `(B, 3, 224, 313)` — dynamic batch, fixed spatial. Dynamic batch set via `ov_model.reshape`.
+
+**Inference rewrite key snippet**:
+```python
+core = ov.Core()
+core.set_property("CPU", {"PERFORMANCE_HINT": "THROUGHPUT", "INFERENCE_NUM_THREADS": "4", "NUM_STREAMS": "2"})
+compiled = core.compile_model(ov_model, "CPU")
+queue = AsyncInferQueue(compiled, jobs=4)  # 4 concurrent requests
+```
+
+- [ ] Convert + verify (max diff PyTorch vs OV < 1e-4)
+- [ ] Upload to Kaggle dataset
+- [ ] Rewrite inference notebook with AsyncInferQueue
+- [ ] Push kernel, submit with TTA=True
+
+---
+
+### 🎯 Step 5d — Alternative post-processing swap (inference-only, no retraining)
+
+**Expected: +0.003–0.006 LB | No retraining | Zero risk**
 
 The 0.892 notebook uses different post-processing than our v21:
 - **Sharpened temporal smooth**: `probs^1.5` → 5-tap `[0.05, 0.15, 0.60, 0.15, 0.05]` → `^(1/1.5)`
-- vs our: class-conditional average-neighbour + local-max propagation + persistence penalty
+- vs ours: class-conditional pooling + persistence penalty + average-neighbour + local-max
 
-A/B test: swap our post-processing for theirs, keep TTA off, compare LB scores.
+A/B test: swap post-processing, keep TTA off, compare LB vs v21's 0.882. Low-cost experiment.
 
 ---
 
-### 🎯 Step 5d — HGNetV2-B0 with correct config (retrain)
+### 🎯 Step 5e — 2-fold + TTA (inference-only, no retraining)
+
+**Expected: +0.004–0.008 LB | No retraining | Budget-safe**
+
+Use only fold 0+1 checkpoints (drop fold 2+3). 2 folds × 23 windows × 2 (TTA) = 92 passes = same as v21. Timing: identical, guaranteed to fit. Downside: 2-fold ensemble has more variance than 4-fold.
+
+Only try if 5c (OpenVINO) takes too long or doesn't work.
+
+---
+
+### 🎯 Step 5f — HGNetV2-B0 with correct config (retrain)
 
 **Expected: unknown (no public LB score for HGNetV2 yet) | Training: ~3–4h**
 
@@ -220,7 +254,7 @@ Correct mel config for HGNetV2:
 - `fmin=20` (not 0)
 - OneCycleLR (warmup 25%, 20 epochs) instead of CosineAnnealingWarmRestarts
 
-Only worth training after confirming TTA (Step 5b) doesn't already close the gap.
+Only pursue after exhausting inference-only gains from 5c/5d/5e.
 
 ---
 
