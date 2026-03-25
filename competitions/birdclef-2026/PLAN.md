@@ -174,6 +174,20 @@ All work completed (181 probes trained on 35,549 clips, v2 pkl uploaded), but th
 
 ---
 
+### 🏃 Step 5a — HGNetV2-B0 backbone (soundscape-v8, training Mar 25)
+
+**Expected: +0.005–0.015 LB | Training: ~3–4h on 2× RTX 3090**
+
+Public 0.892 CNN notebooks use `hgnetv2_b0.ssld_stage2_ft_in1k` (PaddlePaddle SSLD distillation, ImageNet fine-tuned). Same config as soundscape-v7 otherwise.
+
+Launch: `--baseline --soundscape-labels --htk --warm-restarts --gain-aug --bg-noise-p 0.3 --mixup-alpha 1.0 --backbone hgnetv2_b0.ssld_stage2_ft_in1k --n_folds 4 --tag soundscape-v8`
+
+- [ ] Fold 0+1 running (GPU 0+1 on head)
+- [ ] Fold 2+3 after fold 0+1 complete
+- [ ] Upload to Kaggle dataset, submit
+
+---
+
 ### 🎯 Step 4 — Perch + CNN ensemble blend (after Step 3b)
 
 **Expected: +0.01–0.03 LB on top of best individual | No retraining required**
