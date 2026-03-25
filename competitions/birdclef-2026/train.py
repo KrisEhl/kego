@@ -836,7 +836,11 @@ class BirdModelBaseline(nn.Module):
         self.encoder = timm.create_model(
             backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
         )
-        feat_dim = self.encoder.num_features
+        # num_features is unreliable for some backbones (e.g. HGNetV2) — probe actual output
+        with torch.no_grad():
+            _dummy = torch.zeros(1, 3, 64, 128)
+            _out = self.encoder(_dummy)
+            feat_dim = _out.shape[1]
         self.gem_pool = GEMFreqPool(p_init=3.0)
         self.head = AttentionSEDHead(feat_dim, n_classes, dropout)
 
