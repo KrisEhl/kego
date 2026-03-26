@@ -28,11 +28,13 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB 0.882 (soundscape-v7 + class-cond pooling + persistence penalty, kernel v21)
+### Current best: LB 0.882 (soundscape-v7 + class-cond pooling, kernel v21)
 
 Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches exist — see research section.
 
-**No pending submissions. Perch standalone abandoned — consistently times out.**
+**Pending submissions (after midnight UTC)**:
+- v35 CNN blend (4-fold v7 + 4-fold HGNetV2-Baseline) — kernel `aldisued/birdclef-2026-baseline-inference` v35
+- Perch v2 standalone — kernel `aldisued/birdclef-2026-perch-v2-inference` v3, expected ~0.905–0.912
 
 ### Results
 
@@ -62,6 +64,9 @@ Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches 
 | **perch-v10/v11/v13 (181 probes, full training set)** | **TIMEOUT** | Consistent timeout — test set ≥780 soundscapes × ~7s/file ≈ 91min > 90min budget. v9 (0.677) was a fluke on a fast scoring node. |
 | **v25–v30: OpenVINO / ONNX Runtime** | **DEAD END** | OpenVINO: no-internet install fails. ONNX Runtime: bundled wheels work but ONNX is slower than PyTorch on Kaggle CPU — even 4 folds no TTA times out |
 | **v31: PyTorch 2 best folds + circular TTA** | **0.857** | **REGRESSION** — fold diversity (4 folds) worth ~0.025 more than circular TTA. Dropping 2 folds not worth it. |
+| **v32: sharpened smooth + temperature T=1.1** | **0.881** | post-processing swap — neutral (±0.001 vs 0.882) |
+| **v35: 4-fold v7 + 4-fold HGNetV2-Baseline blend** | **pending** | kernel COMPLETE; HGNetV2-B0 BirdModelBaseline, correct mel (n_fft=2048, hop=625, 256-mel, fmin=20, slaney); val losses 0.0341–0.0348; submit after midnight UTC |
+| **Perch v2 port (kernel perch-v2-inference v3)** | **pending** | Bayesian site×hour priors + 52 LogReg probes + PCA(1536→32); faithful port of public 0.912; dry-run verified; expected ~0.905–0.912 |
 
 ### Local validation findings
 
@@ -160,28 +165,56 @@ Root cause: only 53/234 species had trained probes (only species present in 66 l
 
 ---
 
-### ❌ Step 3b — Perch standalone with full training data probes — DEAD END (timeout)
+### ❌ Step 3b — Perch v4 standalone with full training data probes — DEAD END (timeout)
 
-**Result: Consistent timeout. Perch inference ≥91 min on test set > 90-min Kaggle budget.**
+**Result: Consistent timeout. Our Perch v4 inference ≥91 min on test set > 90-min Kaggle budget.**
 
-All work completed (181 probes trained on 35,549 clips, v2 pkl uploaded), but the Perch TF model on CPU is simply too slow for the test set size. v9 (LB 0.677) was a one-time lucky run on a fast scoring node — not reproducible.
+Root causes (now understood clearly after analyzing the public 0.912 notebook):
+1. **Wrong Perch version**: We used Perch v4 (self-uploaded), which is slower than the official `perch_v2_cpu` model on Kaggle (a CPU-optimized SavedModel)
+2. **Wrong probe scope**: We trained probes only for 76 "unknown" species. The right approach trains per-class probes for ALL species with enough positives (~52–130), treating Perch embeddings as the *input features* rather than the fallback
+3. **Wrong architecture understanding**: We thought the public notebooks used a two-kernel cache to avoid live test inference. They don't — the inference kernel runs Perch live on test soundscapes in ~6 minutes. The cache (`jaejohn/perch-meta`) only covers the 59 labeled **training** soundscapes used to fit the probes
+4. **Missing Bayesian priors**: The jump from ~0.87 raw Perch to 0.912 comes from site×hour priors + per-class probes + genus proxies — none of which we implemented
 
-**The public 0.912 notebooks solve this with a two-kernel cache workflow:**
-1. Cache kernel (submission): runs Perch on test soundscapes AND saves embeddings to output
-2. After scoring, download output → upload as dataset
-3. Fast inference kernel: loads cache, skips Perch, only runs probes (~2 min)
+**The public approach runs live in 6 minutes** because `perch_v2_cpu` on Kaggle's CPU is fast, batch size is 16 files (192 windows), and the probes/priors are trivial compute. No cache step for test data is needed.
 
-**We cannot implement this yet** — we need one successful Perch submission to harvest the cache. v13 (which saves `test_perch_cache.npz` to output) will eventually score on a fast node, at which point we download the output and enable fast inference.
-
-**Pivot: focus on CNN improvements (Step 5) which reliably score at 0.882.**
+**Pivot: Port the public 0.912 approach properly — see Step 3c.**
 
 ---
 
-### ❌ Step 5a — HGNetV2-B0 backbone (soundscape-v8, kernel v23) — DEAD END
+### ✅ Step 3c — Perch v2 proper port (public 0.912 approach) — NOTEBOOK COMPLETE
 
-**Result: LB 0.858 — regression from 0.882.**
+**Status: Notebook built, verified, pushed. Ready to submit after midnight UTC.**
 
-Root cause: trained HGNetV2 with the wrong mel config (224 mel, win_length=2048, hop=512 — same as EfficientNet-B0). The public HGNetV2 notebook uses win_length=626, hop=313, 256 mel, resize to 256×256. We gave HGNetV2 the wrong temporal resolution. Additionally, **the public 0.892 notebooks do NOT use HGNetV2** — they use EfficientNet-B0 NoisyStudent, the same backbone as our soundscape-v7.
+Port of `yashanathaniel/simplerun-perch-v2embedprobe-bayesian-0-912` — dry-run output matches reference exactly:
+- OOF baseline AUC: 0.487292 ✓
+- Probes trained: 52/234 ✓
+- Score range: -25.162 to 15.932 ✓
+- Runs COMPLETE in ~6 min ✓
+
+**Notebook**: `inference/kaggle_perch_v2_inference.ipynb`
+**Kernel**: `aldisued/birdclef-2026-perch-v2-inference` (v3, COMPLETE)
+**Kernel-metadata**: `inference/kernel-perch-v2-metadata.json`
+**Sources**: `kdmitrie/bc26-tensorflow-2-20-0` (kernel, TF wheels) + `jaejohn/perch-meta` (dataset, training cache) + `google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1` (model)
+
+- [x] Create notebook, port pipeline
+- [x] Push & run (verified COMPLETE, dry-run matches reference)
+- [ ] Submit standalone (~0.905–0.912 expected) — **after midnight UTC**
+- [ ] Blend with v35 CNN predictions (α-sweep on labeled soundscapes) — see Step 4
+
+---
+
+### ✅ Step 5a — HGNetV2-B0 backbone (correct mel config) — COMPLETE, pending LB
+
+**v23: LB 0.858 (wrong mel config — dead end)**
+**v34: pending** — 4-fold v7 + 4-fold HGNetV2-Baseline blend (kernel COMPLETE, submit after midnight UTC)
+
+Correct mel config: `n_fft=2048, hop=625` (5s@32kHz = 160,000/625 = 256 time frames → natural 256×256, no resize). `n_mels=256, fmin=20, slaney norm`.
+
+Two HGNetV2 runs completed:
+- `soundscape-v8-hgnetv2`: `--hgnetv2` only → `BirdModel` (plain linear head, logits). Val losses 0.0329–0.0335. Uploaded as `birdclef2026-soundscape-v8-hgnetv2`.
+- `soundscape-v8-hgnetv2-b`: `--hgnetv2 --baseline` → `BirdModelBaseline` (GEMFreqPool + AttentionSEDHead, same arch as v7). Val losses 0.0341–0.0348. Uploaded as `birdclef2026-soundscape-v8-hgnetv2-b`. **v34 uses this.**
+
+Notebook auto-detects model type from checkpoint key schema (`head.cls_conv.bias` = BirdModelBaseline; `backbone.head.fc.bias` = BirdModel+sigmoid wrapper).
 
 ---
 
@@ -248,65 +281,48 @@ queue = AsyncInferQueue(compiled, jobs=4)  # 4 concurrent requests
 
 ---
 
-### 🎯 Step 5d — Alternative post-processing swap (inference-only, no retraining)
+### ✅ Step 5d — Alternative post-processing swap — TESTED, NEUTRAL
 
-**Expected: +0.003–0.006 LB | No retraining | Zero risk**
+**Result: LB 0.881 (v32) — essentially neutral vs 0.882 (v21).**
 
-The 0.892 notebook uses different post-processing than our v21:
-- **Sharpened temporal smooth**: `probs^1.5` → 5-tap `[0.05, 0.15, 0.60, 0.15, 0.05]` → `^(1/1.5)`
-- vs ours: class-conditional pooling + persistence penalty + average-neighbour + local-max
-
-A/B test: swap post-processing, keep TTA off, compare LB vs v21's 0.882. Low-cost experiment.
+Sharpened smooth + temperature T=1.1 does not improve over class-conditional pooling + persistence penalty. Current post-processing is fine.
 
 ---
 
-### 🎯 Step 5e — 2-fold + TTA (inference-only, no retraining)
+### ❌ Step 5e — 2-fold + TTA — DEAD END (LB 0.857)
 
-**Expected: +0.004–0.008 LB | No retraining | Budget-safe**
-
-Use only fold 0+1 checkpoints (drop fold 2+3). 2 folds × 23 windows × 2 (TTA) = 92 passes = same as v21. Timing: identical, guaranteed to fit. Downside: 2-fold ensemble has more variance than 4-fold.
-
-Only try if 5c (OpenVINO) takes too long or doesn't work.
+Fold diversity worth ~0.025 more than TTA. Don't drop folds.
 
 ---
 
-### 🎯 Step 5f — HGNetV2-B0 with correct config (retrain) — READY TO RUN
+### ✅ Step 5f — HGNetV2-B0 with correct config — COMPLETE, pending LB
 
-**Expected: unknown (no public LB score for HGNetV2 yet) | Training: ~3–4h**
-
-Correct mel config for HGNetV2:
-- `win_length=626, hop_length=313` (9.8ms hop, 50% overlap)
-- `n_mels=256`, `fmin=20`, slaney norm (not HTK)
-- 5s clip → 511 time frames; GEMFreqPool + AttentionSEDHead handle variable length (no square resize needed)
-- Same training flags as soundscape-v7 otherwise: `--soundscape-labels --warm-restarts --gain-aug --mixup-alpha 1.0`
-
-**Code ready**: `--hgnetv2` flag added to `train.py` and `precompute_specs.py`. Bug fixed: `precompute_specs.py` now passes `hop_length` correctly (was hardcoded to 512 for all configs).
-
-**To launch** (on cluster after git pull):
-```bash
-# Step 1: precompute XC spec cache (~35K files, ~30min)
-KEGO_PATH_DATA=... uv run python competitions/birdclef-2026/precompute_specs.py --hgnetv2 --workers 8
-
-# Step 2: precompute soundscape spec cache (66 files, fast)
-KEGO_PATH_DATA=... uv run python competitions/birdclef-2026/precompute_specs.py --hgnetv2 --soundscapes
-
-# Step 3: train 4 folds (2 at a time on 2 GPUs)
-CUDA_VISIBLE_DEVICES=0 ... train.py --hgnetv2 --soundscape-labels --warm-restarts --gain-aug --fold 0 --n_folds 4 --tag soundscape-v8-hgnetv2
-CUDA_VISIBLE_DEVICES=1 ... train.py --hgnetv2 --soundscape-labels --warm-restarts --gain-aug --fold 1 --n_folds 4 --tag soundscape-v8-hgnetv2
-# then folds 2+3
-```
-
-**After training**: upload checkpoints as new Kaggle dataset, blend with soundscape-v7 in inference notebook (0.6×HGNetV2 + 0.4×B0).
+See Step 5a above. v34 kernel ready to submit.
 
 ---
 
-### 🎯 Step 4 — Perch + CNN ensemble blend (after Step 3b)
+### 🎯 Step 5g — Per-class calibration on 66 labeled soundscapes (next after v34 LB)
+
+**Expected: +0.005–0.020 LB | No retraining | High priority**
+
+Learn per-class temperature T_c on OOF predictions from the 66 labeled soundscapes, maximizing per-class AP. Apply as `sigmoid(logit / T_c)` in inference. Particularly valuable for the 28 zero-shot species and 76 non-Aves classes.
+
+Implementation options:
+- Grid-search T_c ∈ [0.5, 2.0] per class using `eval_oof.py` soundscape predictions
+- Apply as a 234-element vector baked into the inference notebook
+
+**When to run**: after v34 LB result confirms HGNetV2 blend helps. If blend helps, calibrate the 8-model ensemble. If neutral, calibrate soundscape-v7 alone.
+
+---
+
+### 🎯 Step 4 — Perch v2 + CNN ensemble blend (after Step 3c scores)
 
 **Expected: +0.01–0.03 LB on top of best individual | No retraining required**
 
-After Perch standalone scores, blend slot-level predictions:
+After Perch v2 standalone scores (~0.912), blend slot-level predictions with our CNN (v35 ~0.882+):
 - Grid-search α: `α × perch + (1-α) × cnn` on 66 labeled soundscapes
 - Implement as new inference notebook loading both models
+- The two approaches are highly complementary: Perch = embedding similarity + site/time priors; CNN = learned spectrogram features
 
 ---
 
@@ -371,9 +387,10 @@ BirdCLEF 2021/2022/2023/2024 datasets (~117K clips, all public on Kaggle). Pretr
 ## Kaggle setup
 
 - **Notebook**: `aldisued/birdclef-2026-baseline-inference`
-- **Current dataset**: `aldisued/birdclef2026-soundscape-v7` | kernel v21 scored 0.882
+- **Current datasets**: `aldisued/birdclef2026-soundscape-v7` + `aldisued/birdclef2026-soundscape-v8-hgnetv2-b` (v34 blend)
 - **CRITICAL**: `enable_gpu: false` — competition GPU limit is 0 min; GPU requests cause silent failure
-- Submit: `kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-baseline-inference -v <int> -f "submission.csv" -m "..."`
+- Push: `kaggle kernels push -p competitions/birdclef-2026/inference/` (note: new path after repo reorganization)
+- Submit: `kaggle competitions submit -c birdclef-2026 -k aldisued/birdclef-2026-baseline-inference -v <int> -f submission.csv -m "..."`
 
 ---
 
@@ -385,9 +402,11 @@ Training on **2× RTX 3090** at `kristian@omarchyd` (Tailscale).
 
 Launch pattern (use subshell per fold to ensure `cd` applies; use `>>` to not overwrite logs):
 ```bash
-ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=0 KEGO_PATH_DATA=/home/kristian/projects/kego/data nohup ~/.local/bin/uv run python competitions/birdclef-2026/train.py --baseline --soundscape-labels --htk --warm-restarts --gain-aug --fold 0 --n_folds 4 --tag <tag> >> /tmp/<tag>_fold0.log 2>&1) &"
-ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=1 KEGO_PATH_DATA=/home/kristian/projects/kego/data nohup ~/.local/bin/uv run python competitions/birdclef-2026/train.py --baseline --soundscape-labels --htk --warm-restarts --gain-aug --fold 1 --n_folds 4 --tag <tag> >> /tmp/<tag>_fold1.log 2>&1) &"
+ssh kristian@192.168.178.32 "nohup bash -c 'cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=0 KEGO_PATH_DATA=/home/kristian/projects/kego/data ~/.local/bin/uv run python competitions/birdclef-2026/training/train_cnn.py --baseline --soundscape-labels --htk --warm-restarts --gain-aug --fold 0 --n_folds 4 --tag <tag> >> /tmp/<tag>_fold0.log 2>&1' &"
+ssh kristian@192.168.178.32 "nohup bash -c 'cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=1 KEGO_PATH_DATA=/home/kristian/projects/kego/data ~/.local/bin/uv run python competitions/birdclef-2026/training/train_cnn.py --baseline --soundscape-labels --htk --warm-restarts --gain-aug --fold 1 --n_folds 4 --tag <tag> >> /tmp/<tag>_fold1.log 2>&1' &"
 ```
+
+**Note**: script is now at `training/train_cnn.py` (renamed from `train.py`, reorganized Mar 26). Repo structure: `training/`, `data/`, `inference/`, `eval/`, `eda/`, `research/`.
 
 **Checkpoint naming**: always `--tag <experiment-name>`. Saves to `outputs/{tag}_fold{N}.pt`.
 
@@ -404,6 +423,8 @@ ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=
 | `soundscape-v5` | + `--bg-noise-p 0.3` | 0–3 | 0.864 | bg noise = neutral; temporal smoothing was the gain |
 | `soundscape-v6-b1` | `--backbone tf_efficientnet_b1.ns_jft_in1k` + bg noise | 0–3 | **TIMEOUT** | CPU too slow for B1 + 50% overlap — **DEAD END** |
 | `soundscape-v7` | same as v5 + `--mixup-alpha 1.0` (default) | 0–3 | **0.882** (v21) | val losses 0.0329–0.0341 (mean 0.0335); +0.006 vs v5 from class-cond pooling + persistence penalty |
+| `soundscape-v8-hgnetv2` | `--hgnetv2` (BirdModel, simple head), n_fft=2048, hop=625, 256-mel, fmin=20 | 0–3 | pending (v33) | val losses 0.0329–0.0335; blended with v7 in v33 kernel |
+| `soundscape-v8-hgnetv2-b` | `--hgnetv2 --baseline` (BirdModelBaseline), same mel config | 0–3 | pending (v35) | val losses 0.0341–0.0348; blended with v7 in v35 kernel (preferred) |
 
 ---
 
