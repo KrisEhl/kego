@@ -43,8 +43,18 @@ repos:
       hooks:
         - id: nbstripout
 
-    # ── Type checking ─────────────────────────────────────────────────
-    - repo: https://github.com/pre-commit/mirrors-mypy
-      rev: v1.19.1
+    # # ── Type checking ─────────────────────────────────────────────────
+
+    # - repo: https://github.com/pre-commit/mirrors-mypy
+    #   rev: v1.19.1
+    #   hooks:
+    #     - id: mypy
+
+    - repo: local
       hooks:
-        - id: mypy
+        - id: ty
+          name: ty type check
+          entry: ty check kego tests
+          language: system
+          pass_filenames: false
+          types: [python]
