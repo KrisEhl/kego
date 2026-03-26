@@ -128,7 +128,7 @@ def main() -> None:
     parser.add_argument(
         "--hgnetv2",
         action="store_true",
-        help="Compute 256-mel specs (n_fft=626, hop=313, fmin=20, slaney) into specs_cache_hgnetv2/. "
+        help="Compute 256-mel specs (n_fft=2048, hop=625, fmin=20, slaney) into specs_cache_hgnetv2/. "
         "Use with --soundscapes to also cache train_soundscapes/.",
     )
     parser.add_argument(

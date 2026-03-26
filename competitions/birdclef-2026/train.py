@@ -69,11 +69,12 @@ CACHE_DIR_BIRDSET = DATA / "specs_cache_256"
 SOUNDSCAPE_CACHE_DIR_BASELINE = DATA / "specs_cache_soundscape_224"
 CLIP_FRAMES_BIRDSET = CLIP_SAMPLES // HOP_LENGTH_BIRDSET  # 625 frames per 5s
 
-# HGNetV2-B0 config — correct mel for 256×256 input (win≈20ms, hop≈10ms)
-# n_fft=626 → 19.6ms window; hop=313 → 9.8ms hop; 5s @ 32kHz → 511 time frames
+# HGNetV2-B0 config — natural 256×256 input (no resize needed)
+# hop=625: 5s @ 32kHz = 160000/625 = 256 time frames exactly → (3, 256, 256)
+# n_fft=2048: 1025 unique bins, no empty mel filters (n_fft=626 caused empty filters)
 N_MELS_HGNETV2 = 256
-N_FFT_HGNETV2 = 626
-HOP_LENGTH_HGNETV2 = 313
+N_FFT_HGNETV2 = 2048
+HOP_LENGTH_HGNETV2 = 625
 CACHE_DIR_HGNETV2 = DATA / "specs_cache_hgnetv2"
 SOUNDSCAPE_CACHE_DIR_HGNETV2 = DATA / "specs_cache_soundscape_hgnetv2"
 
@@ -1145,7 +1146,7 @@ def main():
     parser.add_argument(
         "--hgnetv2",
         action="store_true",
-        help="HGNetV2-B0 config: n_mels=256, n_fft=626, hop=313, fmin=20 (slaney norm). "
+        help="HGNetV2-B0 config: n_mels=256, n_fft=2048, hop=625, fmin=20 (slaney norm). "
         "Uses GEMFreqPool+AttentionSEDHead with hgnetv2_b0.ssld_stage2_ft_in1k backbone. "
         "Requires separate spec cache (specs_cache_hgnetv2/). Run precompute_specs.py --hgnetv2 first.",
     )
