@@ -24,16 +24,21 @@ from tqdm import tqdm
 from train import (
     CACHE_DIR_BASELINE,
     CACHE_DIR_BASELINE_HTK,
+    CACHE_DIR_HGNETV2,
     DATA,
     FMAX,
     FMIN,
     FMIN_HTK,
     HOP_LENGTH,
+    HOP_LENGTH_HGNETV2,
     N_FFT,
     N_FFT_BASELINE,
+    N_FFT_HGNETV2,
     N_MELS,
     N_MELS_BASELINE,
+    N_MELS_HGNETV2,
     SOUNDSCAPE_CACHE_DIR_BASELINE_HTK,
+    SOUNDSCAPE_CACHE_DIR_HGNETV2,
     SR,
 )
 
@@ -45,7 +50,17 @@ CACHE_DIR = DATA / "specs_cache"
 
 def compute_and_save(args: tuple) -> tuple[str, bool, str]:
     """Worker: load audio, compute mel spec, save as float16 npy."""
-    filename, audio_dir, cache_dir, n_mels, n_fft, cap_duration, fmin, htk = args
+    (
+        filename,
+        audio_dir,
+        cache_dir,
+        n_mels,
+        n_fft,
+        hop_length,
+        cap_duration,
+        fmin,
+        htk,
+    ) = args
     src = audio_dir / filename
     stem = Path(filename).stem
     subdir = Path(filename).parent
@@ -77,7 +92,7 @@ def compute_and_save(args: tuple) -> tuple[str, bool, str]:
             y=y,
             sr=SR,
             n_mels=n_mels,
-            hop_length=HOP_LENGTH,
+            hop_length=hop_length,
             n_fft=n_fft,
             fmin=fmin,
             fmax=FMAX,
@@ -111,16 +126,39 @@ def main() -> None:
         "Saves to specs_cache_224_htk/ or specs_cache_soundscape_224_htk/.",
     )
     parser.add_argument(
+        "--hgnetv2",
+        action="store_true",
+        help="Compute 256-mel specs (n_fft=626, hop=313, fmin=20, slaney) into specs_cache_hgnetv2/. "
+        "Use with --soundscapes to also cache train_soundscapes/.",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Only report cache completeness, don't compute",
     )
     args = parser.parse_args()
 
-    fmin = FMIN_HTK if args.htk else FMIN
-    htk = args.htk
-
-    if args.soundscapes:
+    if args.hgnetv2:
+        fmin = FMIN  # 20 Hz, slaney norm
+        htk = False
+        hop_length = HOP_LENGTH_HGNETV2
+        n_mels = N_MELS_HGNETV2
+        n_fft = N_FFT_HGNETV2
+        if args.soundscapes:
+            cache_dir = SOUNDSCAPE_CACHE_DIR_HGNETV2
+            audio_dir = DATA / "train_soundscapes"
+            filenames = [p.name for p in sorted(audio_dir.glob("*.ogg"))]
+            cap_duration = None
+        else:
+            cache_dir = CACHE_DIR_HGNETV2
+            audio_dir = DATA / "train_audio"
+            train = pd.read_csv(DATA / "train.csv")
+            filenames = train["filename"].tolist()
+            cap_duration = MAX_DURATION
+    elif args.soundscapes:
+        fmin = FMIN_HTK if args.htk else FMIN
+        htk = args.htk
+        hop_length = HOP_LENGTH
         if args.htk:
             cache_dir = SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
         else:
@@ -131,6 +169,9 @@ def main() -> None:
         filenames = [p.name for p in sorted(audio_dir.glob("*.ogg"))]
         cap_duration = None  # soundscapes are full 60s — no cap
     elif args.baseline:
+        fmin = FMIN_HTK if args.htk else FMIN
+        htk = args.htk
+        hop_length = HOP_LENGTH
         cache_dir = CACHE_DIR_BASELINE_HTK if args.htk else CACHE_DIR_BASELINE
         n_mels = N_MELS_BASELINE
         n_fft = N_FFT_BASELINE
@@ -139,6 +180,9 @@ def main() -> None:
         filenames = train["filename"].tolist()
         cap_duration = MAX_DURATION
     else:
+        fmin = FMIN
+        htk = False
+        hop_length = HOP_LENGTH
         cache_dir = CACHE_DIR
         n_mels = N_MELS
         n_fft = N_FFT
@@ -165,12 +209,12 @@ def main() -> None:
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     tasks = [
-        (f, audio_dir, cache_dir, n_mels, n_fft, cap_duration, fmin, htk)
+        (f, audio_dir, cache_dir, n_mels, n_fft, hop_length, cap_duration, fmin, htk)
         for f in filenames
     ]
 
     print(f"Computing specs for {len(tasks)} files with {args.workers} workers...")
-    print(f"n_mels={n_mels}, n_fft={n_fft}, fmin={fmin}, htk={htk}")
+    print(f"n_mels={n_mels}, n_fft={n_fft}, hop={hop_length}, fmin={fmin}, htk={htk}")
     print(f"Output: {cache_dir}")
 
     ok = skipped = errors = 0

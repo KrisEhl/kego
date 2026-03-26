@@ -8,7 +8,7 @@
   "enable_gpu": false,
   "enable_tpu": false,
   "enable_internet": false,
-  "dataset_sources": ["aldisued/birdclef2026-soundscape-v7-onnx", "aldisued/onnxruntime-121-cp312-linux"],
+  "dataset_sources": ["aldisued/birdclef2026-soundscape-v7"],
   "competition_sources": ["birdclef-2026"],
   "kernel_sources": []
 }

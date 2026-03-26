@@ -60,6 +60,8 @@ Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches 
 | **Perch v4 Track A (kernel perch-v8)** | **TIMEOUT** | unbatched infer_tf (1 call/slot) — timed out |
 | **Perch v4 batched (kernel perch-v9)** | **0.677** | 1 infer_tf/file — completed but far below CNN (0.882). Perch v4 label mapping weak vs public Perch v2. |
 | **perch-v10/v11/v13 (181 probes, full training set)** | **TIMEOUT** | Consistent timeout — test set ≥780 soundscapes × ~7s/file ≈ 91min > 90min budget. v9 (0.677) was a fluke on a fast scoring node. |
+| **v25–v30: OpenVINO / ONNX Runtime** | **DEAD END** | OpenVINO: no-internet install fails. ONNX Runtime: bundled wheels work but ONNX is slower than PyTorch on Kaggle CPU — even 4 folds no TTA times out |
+| **v31: PyTorch 2 best folds + circular TTA** | **0.857** | **REGRESSION** — fold diversity (4 folds) worth ~0.025 more than circular TTA. Dropping 2 folds not worth it. |
 
 ### Local validation findings
 
@@ -191,6 +193,30 @@ Root cause: public 0.892 uses ~2 checkpoints total (1-fold blend). We use 4. At 
 
 ---
 
+### ❌ Step 5c — OpenVINO conversion — DEAD END (no internet install)
+
+**Result: `ModuleNotFoundError: No module named 'openvino'`.**
+
+`openvino` pip install fails on Kaggle (`enable_internet: false`). No viable offline wheel bundling path. Abandoned.
+
+---
+
+### ❌ Step 5c.2 — ONNX Runtime (bundled wheels) — DEAD END (ONNX slower than PyTorch on Kaggle CPU)
+
+**Result: COMPLETE (no timeout) but no public score = timed out in scoring environment.**
+
+ONNX Runtime was installed offline via bundled cp312 Linux wheels (dataset `aldisued/onnxruntime-121-cp312-linux`). Model converted correctly (max diff < 1e-7). But even 4 folds no TTA (same pass count as v21/LB 0.882) timed out. ONNX Runtime is slower than PyTorch on Kaggle's CPU hardware for this model, or the install+load overhead is too large. Both approaches abandoned.
+
+---
+
+### ❌ Step 5e — 2 best folds + circular TTA (kernel v31) — DEAD END (LB 0.857)
+
+**Result: LB 0.857 — regression from 0.882.**
+
+Root cause: 4-fold ensemble diversity is worth ~0.025 LB. TTA gain is smaller than the cost of dropping 2 folds. Circular TTA is only viable if all 4 folds fit within budget — requires 2× speedup (OpenVINO was the plan, but is blocked by no-internet).
+
+---
+
 ### 🎯 Step 5c — OpenVINO conversion (unlock TTA + 4 folds within budget)
 
 **Expected: +0.008–0.012 LB (TTA) | No retraining | Medium implementation effort**
@@ -244,17 +270,33 @@ Only try if 5c (OpenVINO) takes too long or doesn't work.
 
 ---
 
-### 🎯 Step 5f — HGNetV2-B0 with correct config (retrain)
+### 🎯 Step 5f — HGNetV2-B0 with correct config (retrain) — READY TO RUN
 
 **Expected: unknown (no public LB score for HGNetV2 yet) | Training: ~3–4h**
 
 Correct mel config for HGNetV2:
 - `win_length=626, hop_length=313` (9.8ms hop, 50% overlap)
-- `n_mels=256`, resize input to (256, 256)
-- `fmin=20` (not 0)
-- OneCycleLR (warmup 25%, 20 epochs) instead of CosineAnnealingWarmRestarts
+- `n_mels=256`, `fmin=20`, slaney norm (not HTK)
+- 5s clip → 511 time frames; GEMFreqPool + AttentionSEDHead handle variable length (no square resize needed)
+- Same training flags as soundscape-v7 otherwise: `--soundscape-labels --warm-restarts --gain-aug --mixup-alpha 1.0`
 
-Only pursue after exhausting inference-only gains from 5c/5d/5e.
+**Code ready**: `--hgnetv2` flag added to `train.py` and `precompute_specs.py`. Bug fixed: `precompute_specs.py` now passes `hop_length` correctly (was hardcoded to 512 for all configs).
+
+**To launch** (on cluster after git pull):
+```bash
+# Step 1: precompute XC spec cache (~35K files, ~30min)
+KEGO_PATH_DATA=... uv run python competitions/birdclef-2026/precompute_specs.py --hgnetv2 --workers 8
+
+# Step 2: precompute soundscape spec cache (66 files, fast)
+KEGO_PATH_DATA=... uv run python competitions/birdclef-2026/precompute_specs.py --hgnetv2 --soundscapes
+
+# Step 3: train 4 folds (2 at a time on 2 GPUs)
+CUDA_VISIBLE_DEVICES=0 ... train.py --hgnetv2 --soundscape-labels --warm-restarts --gain-aug --fold 0 --n_folds 4 --tag soundscape-v8-hgnetv2
+CUDA_VISIBLE_DEVICES=1 ... train.py --hgnetv2 --soundscape-labels --warm-restarts --gain-aug --fold 1 --n_folds 4 --tag soundscape-v8-hgnetv2
+# then folds 2+3
+```
+
+**After training**: upload checkpoints as new Kaggle dataset, blend with soundscape-v7 in inference notebook (0.6×HGNetV2 + 0.4×B0).
 
 ---
 
@@ -377,7 +419,9 @@ ssh kristian@omarchyd "(cd /home/kristian/projects/kego && CUDA_VISIBLE_DEVICES=
 - **Naive SED head**: 0.750 (worse than plain B3 0.776) — too few temporal frames after 32× downsampling
 - **B3 backbone**: 0.776 — bigger not better here; B0 is the sweet spot for CPU inference budget
 - **B1 backbone (soundscape-v6-b1)**: CPU timeout — B1 + 50% overlap exceeds Kaggle time limit. Only B0/B3 viable.
-- **Circular TTA**: 2× inference → timeout. Keep `tta=False`. Only re-enable with confirmed headroom.
+- **Circular TTA**: 2× inference → timeout with 4 folds. Safe with 2 folds (same 4 total passes as v21). See v31.
+- **OpenVINO**: `openvino` pip fails on Kaggle (no internet). Dead end.
+- **ONNX Runtime (bundled wheels)**: Installs offline fine, max diff < 1e-7. But ONNX is *slower* than PyTorch on Kaggle CPU — 4 folds no TTA still times out. Dead end.
 - **`rglob("*")` in sanity check cell**: scanned 35K+ train audio files → hidden time cost. Use `iterdir()` only.
 
 ---

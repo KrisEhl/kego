@@ -69,6 +69,14 @@ CACHE_DIR_BIRDSET = DATA / "specs_cache_256"
 SOUNDSCAPE_CACHE_DIR_BASELINE = DATA / "specs_cache_soundscape_224"
 CLIP_FRAMES_BIRDSET = CLIP_SAMPLES // HOP_LENGTH_BIRDSET  # 625 frames per 5s
 
+# HGNetV2-B0 config — correct mel for 256×256 input (win≈20ms, hop≈10ms)
+# n_fft=626 → 19.6ms window; hop=313 → 9.8ms hop; 5s @ 32kHz → 511 time frames
+N_MELS_HGNETV2 = 256
+N_FFT_HGNETV2 = 626
+HOP_LENGTH_HGNETV2 = 313
+CACHE_DIR_HGNETV2 = DATA / "specs_cache_hgnetv2"
+SOUNDSCAPE_CACHE_DIR_HGNETV2 = DATA / "specs_cache_soundscape_hgnetv2"
+
 
 # ---------------------------------------------------------------------------
 # Audio utilities
@@ -1134,6 +1142,13 @@ def main():
         default=1.0,
         help="MixUp alpha (Beta distribution parameter). 1.0 = public baseline. 0.4 = prior default.",
     )
+    parser.add_argument(
+        "--hgnetv2",
+        action="store_true",
+        help="HGNetV2-B0 config: n_mels=256, n_fft=626, hop=313, fmin=20 (slaney norm). "
+        "Uses GEMFreqPool+AttentionSEDHead with hgnetv2_b0.ssld_stage2_ft_in1k backbone. "
+        "Requires separate spec cache (specs_cache_hgnetv2/). Run precompute_specs.py --hgnetv2 first.",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -1147,7 +1162,20 @@ def main():
     birdset_norm = False
     htk_cfg = args.htk
     fmin_cfg = FMIN_HTK if args.htk else FMIN
-    if args.birdset:
+    if args.hgnetv2:
+        cache_dir = CACHE_DIR_HGNETV2
+        n_mels_cfg = N_MELS_HGNETV2
+        n_fft_cfg = N_FFT_HGNETV2
+        hop_length_cfg = HOP_LENGTH_HGNETV2
+        minmax_norm = True
+        birdset_norm = False
+        htk_cfg = False
+        fmin_cfg = FMIN  # 20 Hz, slaney norm
+        freq_mask = args.freq_mask if args.freq_mask > 0 else 30
+        time_mask = args.time_mask if args.time_mask > 0 else 30
+        if args.backbone == "efficientnet_b0":
+            args.backbone = "hgnetv2_b0.ssld_stage2_ft_in1k"
+    elif args.birdset:
         cache_dir = CACHE_DIR_BIRDSET
         n_mels_cfg = N_MELS_BIRDSET
         n_fft_cfg = N_FFT_BIRDSET
@@ -1251,11 +1279,12 @@ def main():
     if args.bg_noise_p > 0:
         soundscape_dir = DATA / "train_soundscapes"
         bg_pool = load_background_pool(soundscape_dir)
-        sc_cache_candidate = (
-            SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
-            if args.htk
-            else SOUNDSCAPE_CACHE_DIR_BASELINE
-        )
+        if args.hgnetv2:
+            sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_HGNETV2
+        elif args.htk:
+            sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
+        else:
+            sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE
         if sc_cache_candidate.exists():
             print(
                 f"Background noise: preloading {len(bg_pool)} specs from"
@@ -1293,8 +1322,10 @@ def main():
         sc_labels_path = DATA / "train_soundscapes_labels.csv"
         sc_labels = pd.read_csv(sc_labels_path)
         soundscape_dir = DATA / "train_soundscapes"
-        # Select HTK or standard soundscape cache
-        if args.htk:
+        # Select soundscape cache matching mel config
+        if args.hgnetv2:
+            sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_HGNETV2
+        elif args.htk:
             sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
         else:
             sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE
