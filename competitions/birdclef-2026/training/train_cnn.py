@@ -1146,8 +1146,9 @@ def main():
     parser.add_argument(
         "--hgnetv2",
         action="store_true",
-        help="HGNetV2-B0 config: n_mels=256, n_fft=2048, hop=625, fmin=20 (slaney norm). "
-        "Uses GEMFreqPool+AttentionSEDHead with hgnetv2_b0.ssld_stage2_ft_in1k backbone. "
+        help="HGNetV2-B0 mel config: n_mels=256, n_fft=2048, hop=625, fmin=20 (slaney norm). "
+        "Sets backbone to hgnetv2_b0.ssld_stage2_ft_in1k. Model head follows other flags: "
+        "plain BirdModel by default, BirdModelBaseline (GEMFreqPool+SED) with --baseline. "
         "Requires separate spec cache (specs_cache_hgnetv2/). Run precompute_specs.py --hgnetv2 first.",
     )
     args = parser.parse_args()

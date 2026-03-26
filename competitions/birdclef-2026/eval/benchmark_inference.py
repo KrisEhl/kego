@@ -83,13 +83,27 @@ class AttentionSEDHead(nn.Module):
         return torch.sigmoid((att * cls).sum(dim=-1))
 
 
+class BirdModel(nn.Module):
+    def __init__(self, backbone, n_classes, pretrained=False):
+        super().__init__()
+        self.backbone = timm.create_model(
+            backbone, pretrained=pretrained, num_classes=n_classes, in_chans=3
+        )
+
+    def forward(self, x):
+        return self.backbone(x)
+
+
 class BirdModelBaseline(nn.Module):
     def __init__(self, backbone, n_classes, pretrained=False, dropout=0.1):
         super().__init__()
         self.encoder = timm.create_model(
             backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
         )
-        feat_dim = self.encoder.num_features
+        # Probe actual output dim — num_features is unreliable for some backbones (e.g. hgnetv2)
+        with torch.no_grad():
+            _dummy = torch.zeros(1, 3, 64, 128)
+            feat_dim = self.encoder(_dummy).shape[1]
         self.gem_pool = GEMFreqPool(p_init=3.0)
         self.head = AttentionSEDHead(feat_dim, n_classes, dropout)
 
@@ -142,7 +156,14 @@ def load_checkpoints(tag: str, n_folds: int, device: torch.device, data_dir: Pat
         taxonomy = pd.read_csv(tax_path)
         n_classes = len(taxonomy)
 
-        model = BirdModelBaseline(backbone=backbone, n_classes=n_classes).to(device)
+        # Detect model type from checkpoint key schema (same as kaggle_inference.ipynb)
+        if "head.cls_conv.bias" in ckpt["model"]:
+            model = BirdModelBaseline(backbone=backbone, n_classes=n_classes).to(device)
+        elif "backbone.head.fc.bias" in ckpt["model"]:
+            model = BirdModel(backbone=backbone, n_classes=n_classes).to(device)
+        else:
+            print(f"  WARNING: unknown checkpoint schema in {ckpt_path.name}, skipping")
+            continue
         model.load_state_dict(ckpt["model"])
         model.eval()
         models_cfg.append((model, n_mels, n_fft, hop_length, "minmax", fmin, htk))

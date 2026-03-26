@@ -8,7 +8,7 @@
   "enable_gpu": false,
   "enable_tpu": false,
   "enable_internet": false,
-  "dataset_sources": ["aldisued/birdclef2026-soundscape-v7"],
+  "dataset_sources": ["aldisued/birdclef2026-soundscape-v7", "aldisued/birdclef2026-soundscape-v8-hgnetv2"],
   "competition_sources": ["birdclef-2026"],
   "kernel_sources": []
 }

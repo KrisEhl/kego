@@ -1,0 +1,21 @@
+{
+  "id": "aldisued/aimo3-tir-baseline",
+  "title": "AIMO3 TIR Baseline",
+  "code_file": "notebook.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "dataset_sources": [
+    "animsamuelk/utils-aimo-3"
+  ],
+  "competition_sources": [
+    "ai-mathematical-olympiad-progress-prize-3"
+  ],
+  "kernel_sources": [],
+  "model_sources": [
+    "qwen-lm/qwq-32b/transformers/qwq-32b-awq/1"
+  ]
+}

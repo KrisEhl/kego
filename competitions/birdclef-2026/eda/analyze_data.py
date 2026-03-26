@@ -29,7 +29,9 @@ import pandas as pd
 import soundfile as sf
 
 DATA = (
-    Path(os.getenv("KEGO_PATH_DATA", Path(__file__).parent.parent.parent / "data"))
+    Path(
+        os.getenv("KEGO_PATH_DATA", Path(__file__).parent.parent.parent.parent / "data")
+    )
     / "birdclef"
     / "birdclef-2026"
 )
@@ -52,7 +54,7 @@ def main() -> None:
     parser.add_argument("--no-plots", action="store_true", help="Skip plot generation")
     parser.add_argument(
         "--out",
-        default=str(Path(__file__).parent / "plots" / "analyze_plots.png"),
+        default=str(Path(__file__).parent.parent / "plots" / "analyze_plots.png"),
         help="Output path for plots",
     )
     args = parser.parse_args()

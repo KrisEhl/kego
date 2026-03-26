@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -21,7 +22,10 @@ import numpy as np
 import pandas as pd
 import soundfile as sf
 from tqdm import tqdm
-from train import (
+
+# train_cnn.py lives in ../training/ relative to this file
+sys.path.insert(0, str(Path(__file__).parent.parent / "training"))
+from train_cnn import (
     CACHE_DIR_BASELINE,
     CACHE_DIR_BASELINE_HTK,
     CACHE_DIR_HGNETV2,

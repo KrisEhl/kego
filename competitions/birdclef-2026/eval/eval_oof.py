@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import librosa
@@ -27,15 +28,20 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from train import (
+
+# train_cnn.py lives in ../training/ relative to this file
+sys.path.insert(0, str(Path(__file__).parent.parent / "training"))
+from train_cnn import (
     CACHE_DIR,
     CACHE_DIR_BASELINE,
+    CACHE_DIR_BASELINE_HTK,
+    CACHE_DIR_HGNETV2,
     CLIP_SAMPLES,
     DATA,
+    FMIN,
+    HOP_LENGTH,
     N_FFT,
-    N_FFT_BASELINE,
     N_MELS,
-    N_MELS_BASELINE,
     SR,
     BirdDataset,
     BirdModel,
@@ -45,7 +51,7 @@ from train import (
     spec_to_tensor,
 )
 
-OUT = Path(__file__).parent / "outputs"
+OUT = Path(__file__).parent.parent / "outputs"
 
 
 def load_model_from_ckpt(
@@ -69,28 +75,60 @@ def load_model_from_ckpt(
 
 
 def dataset_kwargs_from_ckpt(ckpt: dict) -> dict:
-    """Return BirdDataset kwargs matching the checkpoint's training config."""
-    if ckpt.get("baseline", False):
-        return dict(
-            cache_dir=CACHE_DIR_BASELINE,
-            n_mels=N_MELS_BASELINE,
-            n_fft=N_FFT_BASELINE,
-            minmax_norm=True,
-        )
-    return dict(cache_dir=CACHE_DIR, n_mels=N_MELS, n_fft=N_FFT, minmax_norm=False)
+    """Return BirdDataset kwargs matching the checkpoint's training config.
+
+    Reads mel params from checkpoint so any backbone/config combo works.
+    """
+    n_mels = ckpt.get("n_mels", N_MELS)
+    n_fft = ckpt.get("n_fft", N_FFT)
+    hop_length = ckpt.get("hop_length", HOP_LENGTH)
+    minmax_norm = ckpt.get("minmax_norm", False)
+    fmin = ckpt.get("fmin", FMIN)
+    htk = ckpt.get("htk", False)
+
+    # Pick the correct spec cache from checkpoint params
+    if ckpt.get("backbone", "").startswith("hgnetv2") and not ckpt.get(
+        "baseline", False
+    ):
+        # HGNetV2 BirdModel (--hgnetv2 without --baseline)
+        cache_dir = CACHE_DIR_HGNETV2
+    elif ckpt.get("baseline", False):
+        cache_dir = CACHE_DIR_BASELINE_HTK if htk else CACHE_DIR_BASELINE
+    else:
+        cache_dir = CACHE_DIR
+
+    return dict(
+        cache_dir=cache_dir,
+        n_mels=n_mels,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        minmax_norm=minmax_norm,
+        fmin=fmin,
+        htk=htk,
+    )
 
 
 @torch.no_grad()
 def run_inference(
-    model: nn.Module, loader: DataLoader, device: torch.device
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    is_prob_model: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Returns (preds, labels) both shape (N, n_species)."""
+    """Returns (preds, labels) both shape (N, n_species).
+
+    is_prob_model: if True, model already outputs probabilities (BirdModelBaseline/SED)
+    and sigmoid is NOT applied. For plain BirdModel (logits), sigmoid is applied.
+    """
     model.eval()
     all_preds, all_labels = [], []
     for x, y in tqdm(loader, desc="Inference", leave=False):
         x = x.to(device)
-        logits = model(x)
-        preds = torch.sigmoid(logits).cpu().numpy()
+        out = model(x)
+        if is_prob_model:
+            preds = out.cpu().numpy()
+        else:
+            preds = torch.sigmoid(out).cpu().numpy()
         all_preds.append(preds)
         all_labels.append(y.numpy())
     return np.concatenate(all_preds), np.concatenate(all_labels)
@@ -122,11 +160,11 @@ def eval_soundscapes(
 ) -> float:
     """Sliding-window inference on the 66 labeled train soundscapes.
 
-    models_cfg: list of (model, n_mels, n_fft, minmax_norm) — same format as
-    the inference notebook. Uses the full model ensemble averaged.
+    models_cfg: list of (model, n_mels, n_fft, hop_length, minmax_norm, fmin, htk, is_prob)
+    is_prob=True means the model outputs probabilities (BirdModelBaseline/SED), not logits.
     Returns soundscape-level cmAP — much closer to LB than clip OOF.
     """
-    from train import spec_to_tensor_minmax
+    from train_cnn import spec_to_tensor_minmax
 
     sc_labels = pd.read_csv(DATA / "train_soundscapes_labels.csv")
     sc_dir = DATA / "train_soundscapes"
@@ -143,12 +181,28 @@ def eval_soundscapes(
 
         # Ensemble: average predictions across all models
         fold_preds = []
-        for model, n_mels, n_fft, minmax_norm in models_cfg:
+        for (
+            model,
+            n_mels,
+            n_fft,
+            hop_length,
+            minmax_norm,
+            fmin,
+            htk,
+            is_prob,
+        ) in models_cfg:
             chunks = []
             pos = 0
             while pos + CLIP_SAMPLES <= len(y):
                 chunk = y[pos : pos + CLIP_SAMPLES]
-                spec = make_melspec(chunk, n_mels=n_mels, n_fft=n_fft)
+                spec = make_melspec(
+                    chunk,
+                    n_mels=n_mels,
+                    n_fft=n_fft,
+                    hop_length=hop_length,
+                    fmin=fmin,
+                    htk=htk,
+                )
                 tensor = (
                     spec_to_tensor_minmax(spec) if minmax_norm else spec_to_tensor(spec)
                 )
@@ -158,12 +212,10 @@ def eval_soundscapes(
                 break
             batch = torch.stack(chunks).to(device)
             out = model(batch)
-            # baseline/SED models return probs; plain model returns logits
-            preds = (
-                out.cpu().numpy()
-                if out.max() <= 1.0
-                else torch.sigmoid(out).cpu().numpy()
-            )
+            if is_prob:
+                preds = out.cpu().numpy()
+            else:
+                preds = torch.sigmoid(out).cpu().numpy()
             fold_preds.append(preds)
 
         if not fold_preds:
@@ -269,8 +321,9 @@ def main() -> None:
         model = load_model_from_ckpt(
             ckpt, n_species, device, default_backbone=args.backbone
         )
+        is_prob = ckpt.get("baseline", False) or ckpt.get("sed", False)
 
-        preds, labels = run_inference(model, val_loader, device)
+        preds, labels = run_inference(model, val_loader, device, is_prob_model=is_prob)
         all_preds[val_idx] = preds
         all_labels[val_idx] = labels
 
@@ -346,8 +399,18 @@ def main() -> None:
                     ckpt, n_species, device, default_backbone=args.backbone
                 )
                 cfg = dataset_kwargs_from_ckpt(ckpt)
+                is_prob = ckpt.get("baseline", False) or ckpt.get("sed", False)
                 sc_models_cfg.append(
-                    (model, cfg["n_mels"], cfg["n_fft"], cfg["minmax_norm"])
+                    (
+                        model,
+                        cfg["n_mels"],
+                        cfg["n_fft"],
+                        cfg["hop_length"],
+                        cfg["minmax_norm"],
+                        cfg["fmin"],
+                        cfg["htk"],
+                        is_prob,
+                    )
                 )
         print(f"Ensemble: {len(sc_models_cfg)} fold checkpoints")
         sc_cmap = eval_soundscapes(sc_models_cfg, species, species_to_idx, device)
