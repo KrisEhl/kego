@@ -1,0 +1,9 @@
+[competition]
+slug = "birdclef-2026"
+kaggle_user = "aldisued"
+enable_gpu = false
+submit_file = "submission.csv"
+pattern = "inference_only"
+inference_notebook = "inference/kernel.py"
+checkpoint_dir = "training/outputs"
+primary_metric = "cmAP"

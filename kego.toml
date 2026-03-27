@@ -1,0 +1,7 @@
+[cluster]
+ray_address = "http://192.168.178.32:8265"
+mlflow_uri = "http://192.168.178.32:5000"
+
+[cluster.resources]
+default = {num_gpus = 0.5}
+heavy = {num_gpus = 1}
