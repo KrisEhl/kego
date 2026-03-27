@@ -24,6 +24,7 @@ import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.metrics import average_precision_score
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
@@ -993,6 +994,33 @@ def val_epoch(
     return total_loss / len(loader), mean_above, top2
 
 
+@torch.no_grad()
+def eval_soundscape_cmAP(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    is_prob: bool = True,
+) -> float:
+    """cmAP on held-out labeled soundscape windows (leakage-free val metric)."""
+    model.eval()
+    all_preds: list[np.ndarray] = []
+    all_labels: list[np.ndarray] = []
+    for x, y in loader:
+        out = model(x.to(device))
+        preds = out.cpu().numpy() if is_prob else torch.sigmoid(out).cpu().numpy()
+        all_preds.append(preds)
+        all_labels.append(y.numpy())
+    preds_arr = np.concatenate(all_preds)
+    labels_arr = np.concatenate(all_labels)
+    bin_labels = (labels_arr > 0).astype(np.int32)
+    aps = []
+    for c in range(labels_arr.shape[1]):
+        if bin_labels[:, c].sum() == 0:
+            continue
+        aps.append(average_precision_score(bin_labels[:, c], preds_arr[:, c]))
+    return float(np.mean(aps)) if aps else float("nan")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1100,7 +1128,15 @@ def main():
         action="store_true",
         help="Include train_soundscapes_labels.csv in training. A fraction of soundscapes "
         "is held out for validation (see --soundscape-val-frac). When set, early stopping "
-        "uses soundscape val loss instead of XC val loss — much closer to LB metric.",
+        "uses soundscape cmAP instead of XC val loss — much closer to LB metric.",
+    )
+    parser.add_argument(
+        "--soundscape-val-frac",
+        type=float,
+        default=0.15,
+        help="Fraction of soundscape files held out as leakage-free val set (default 0.15 "
+        "≈ 10/66 files). Stratified by station. 0 = all files in train (legacy behaviour). "
+        "Only used with --soundscape-labels.",
     )
     parser.add_argument(
         "--htk",
@@ -1320,6 +1356,7 @@ def main():
     )
 
     # Labeled soundscape segments (train_soundscapes_labels.csv)
+    sc_val_loader = None
     if args.soundscape_labels:
         sc_labels_path = DATA / "train_soundscapes_labels.csv"
         sc_labels = pd.read_csv(sc_labels_path)
@@ -1333,8 +1370,26 @@ def main():
             sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE
         sc_cache = sc_cache_candidate if sc_cache_candidate.exists() else None
 
+        # Stratified holdout by station (prevents leakage: model no longer trains+evals same files)
+        val_frac = args.soundscape_val_frac
+        if val_frac > 0:
+            unique_files = sc_labels["filename"].unique()
+            stations = np.array([str(f).split("_")[3] for f in unique_files])
+            rng = np.random.RandomState(42)
+            val_files: set[str] = set()
+            for st in np.unique(stations):
+                st_files = unique_files[stations == st]
+                n_val = max(1, round(len(st_files) * val_frac))
+                chosen = rng.choice(st_files, size=n_val, replace=False)
+                val_files.update(chosen.tolist())
+            sc_train_labels = sc_labels[~sc_labels["filename"].isin(val_files)]
+            sc_val_labels = sc_labels[sc_labels["filename"].isin(val_files)]
+        else:
+            sc_train_labels = sc_labels
+            sc_val_labels = None
+
         sc_ds = SoundscapeLabelsDataset(
-            sc_labels,
+            sc_train_labels,
             soundscape_dir=soundscape_dir,
             species_to_idx=species_to_idx,
             n_species=n_species,
@@ -1354,12 +1409,43 @@ def main():
             gain_db=args.gain_db,
         )
         train_ds = ConcatDataset([train_ds, sc_ds])
-        # Val stays as XC OOF fold — all 66 soundscapes used for training
-        n_sc_files = sc_labels["filename"].nunique()
+        n_sc_train_files = sc_train_labels["filename"].nunique()
         print(
-            f"Soundscape labels: {len(sc_ds)} segments ({n_sc_files} soundscapes) added to train"
+            f"Soundscape labels: {len(sc_ds)} segments ({n_sc_train_files} soundscapes) added to train"
         )
-        print(f"Combined train set: {len(train_ds)} samples | Val: XC OOF fold")
+
+        if sc_val_labels is not None and len(sc_val_labels) > 0:
+            sc_val_ds = SoundscapeLabelsDataset(
+                sc_val_labels,
+                soundscape_dir=soundscape_dir,
+                species_to_idx=species_to_idx,
+                n_species=n_species,
+                augment=False,
+                n_mels=n_mels_cfg,
+                n_fft=n_fft_cfg,
+                hop_length=hop_length_cfg,
+                minmax_norm=minmax_norm,
+                cache_dir=sc_cache,
+                fmin=fmin_cfg,
+                htk=htk_cfg,
+            )
+            sc_val_loader = DataLoader(
+                sc_val_ds,
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=args.workers,
+                pin_memory=True,
+            )
+            n_sc_val_files = sc_val_labels["filename"].nunique()
+            print(
+                f"  Soundscape val (held-out): {n_sc_val_files} files, {len(sc_val_ds)} segs "
+                f"(frac={val_frac})"
+            )
+            print("  Early stopping: soundscape cmAP (leakage-free)")
+        else:
+            print(f"  All {n_sc_train_files} soundscapes in train (no holdout)")
+
+        print(f"Combined train set: {len(train_ds)} samples")
         if sc_cache:
             print(f"  Using spec cache: {sc_cache.name}")
         else:
@@ -1429,7 +1515,7 @@ def main():
         )
 
     OUT.mkdir(exist_ok=True)
-    best_val_loss = float("inf")
+    best_metric = float("inf")  # minimized: -sc_cmap (preferred) or val_loss
     epochs_no_improve = 0
     if args.tag:
         best_path = OUT / f"{args.tag}_fold{args.fold}.pt"
@@ -1448,11 +1534,13 @@ def main():
     # ── Stage 1: Perch soft-label pretraining ──────────────────────────────────
     if args.perch_npz:
         soundscape_dir = DATA / "train_soundscapes"
-        perch_cache = (
-            SOUNDSCAPE_CACHE_DIR_BASELINE
-            if SOUNDSCAPE_CACHE_DIR_BASELINE.exists()
-            else None
-        )
+        if args.hgnetv2:
+            _pc = SOUNDSCAPE_CACHE_DIR_HGNETV2
+        elif args.htk:
+            _pc = SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
+        else:
+            _pc = SOUNDSCAPE_CACHE_DIR_BASELINE
+        perch_cache = _pc if _pc.exists() else None
         if perch_cache:
             print(f"Perch spec cache: {perch_cache}")
         else:
@@ -1534,11 +1622,22 @@ def main():
         )
         scheduler.step()
 
+        # Soundscape cmAP on held-out files — leakage-free, closer to LB metric
+        sc_cmap: float | None = None
+        if sc_val_loader is not None:
+            sc_cmap = eval_soundscape_cmAP(
+                model, sc_val_loader, device, is_prob=is_prob_model
+            )
+
+        # Early stopping uses soundscape cmAP when available, else XC val loss
+        improvement_metric = -sc_cmap if sc_cmap is not None else val_loss
+
         elapsed = time.time() - t0
-        marker = " *" if val_loss < best_val_loss else ""
+        marker = " *" if improvement_metric < best_metric else ""
+        sc_str = f" sc_cmap={sc_cmap:.4f}" if sc_cmap is not None else ""
         print(
             f"Epoch {epoch:03d}/{args.epochs} | "
-            f"train={train_loss:.4f} val={val_loss:.4f} | "
+            f"train={train_loss:.4f} val={val_loss:.4f}{sc_str} | "
             f"ml_above={ml_above:.1f} top2={ml_top2:.3f} | "
             f"{elapsed:.0f}s{marker}",
             flush=True,
@@ -1551,8 +1650,8 @@ def main():
                 flush=True,
             )
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if improvement_metric < best_metric:
+            best_metric = improvement_metric
             epochs_no_improve = 0
             torch.save(
                 {
@@ -1585,6 +1684,7 @@ def main():
                     "perch_epochs": args.perch_epochs,
                     "perch_min_prob": args.perch_min_prob,
                     "soundscape_labels": args.soundscape_labels,
+                    "soundscape_val_frac": args.soundscape_val_frac,
                     "htk": args.htk,
                     "fmin": fmin_cfg,
                     "warm_restarts": args.warm_restarts,
@@ -1602,7 +1702,12 @@ def main():
                 )
                 break
 
-    print(f"\nBest val loss: {best_val_loss:.4f} → {best_path}")
+    metric_label = "sc_cmap" if sc_val_loader is not None else "val_loss"
+    print(
+        f"\nBest {metric_label}: {-best_metric:.4f} → {best_path}"
+        if sc_val_loader is not None
+        else f"\nBest val_loss: {best_metric:.4f} → {best_path}"
+    )
 
 
 if __name__ == "__main__":
