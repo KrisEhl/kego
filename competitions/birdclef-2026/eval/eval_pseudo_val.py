@@ -32,7 +32,7 @@ from train_cnn import (  # noqa: E402
 
 DATA = Path(os.getenv("KEGO_PATH_DATA", "data")) / "birdclef" / "birdclef-2026"
 SOUNDSCAPE_DIR = DATA / "train_soundscapes"
-CKPT_DIR = Path(__file__).parent.parent / "outputs"
+CKPT_DIR = Path(__file__).parent.parent / "training" / "outputs"
 DEFAULT_NPZ = DATA / "cnn_pseudo_labels_soft.npz"
 
 # Stations with NO labeled soundscapes → zero leakage
