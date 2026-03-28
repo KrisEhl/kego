@@ -18,6 +18,7 @@ _POLL_INTERVAL = 2  # seconds between log polls
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     p = subparsers.add_parser("logs", help="Show logs for a cluster job")
     p.add_argument("id", help="Kego experiment ID (or prefix)")
+    p.add_argument("--fold", type=int, help="Show logs for a specific fold only")
     p.add_argument(
         "--no-follow",
         action="store_true",
@@ -111,6 +112,12 @@ def _logs(args: argparse.Namespace, extra_args: list[str]) -> int:
     if not runs:
         print(f"No runs found matching ID: {args.id}")
         return 1
+
+    if args.fold is not None:
+        runs = [r for r in runs if r.data.params.get("fold") == str(args.fold)]
+        if not runs:
+            print(f"No runs found for fold {args.fold}")
+            return 1
 
     follow = not args.no_follow
     base = config.cluster.ray_address.rstrip("/")
