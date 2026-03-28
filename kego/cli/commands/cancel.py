@@ -50,15 +50,23 @@ def _cancel(args: argparse.Namespace, extra_args: list[str]) -> int:
 
         client = MlflowClient()
         experiment_ids = [e.experiment_id for e in client.search_experiments()]
-        # Match by kego_id prefix OR run name substring
-        runs = client.search_runs(
+        # MLflow doesn't support OR — run two queries and merge by run_id
+        by_id = client.search_runs(
             experiment_ids=experiment_ids,
-            filter_string=(
-                f"tags.kego_id LIKE '{args.id}%' OR "
-                f"tags.`mlflow.runName` LIKE '%{args.id}%'"
-            ),
+            filter_string=f"tags.kego_id LIKE '{args.id}%'",
             max_results=10,
         )
+        by_name = client.search_runs(
+            experiment_ids=experiment_ids,
+            filter_string=f"tags.`mlflow.runName` LIKE '%{args.id}%'",
+            max_results=10,
+        )
+        seen: set[str] = set()
+        runs = []
+        for r in [*by_id, *by_name]:
+            if r.info.run_id not in seen:
+                seen.add(r.info.run_id)
+                runs.append(r)
     except Exception as e:
         print(f"Error reaching MLflow: {e}")
         return 1
