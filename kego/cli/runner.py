@@ -6,7 +6,8 @@ Invoked as: python -m kego.cli.runner <script> [script_args...]
 
 Environment variables (injected by kego run):
     MLFLOW_TRACKING_URI    — MLflow server URI (empty string = no logging)
-    KEGO_EXPERIMENT_NAME   — MLflow experiment name
+    KEGO_EXPERIMENT_NAME   — MLflow experiment name (competition slug if available)
+    KEGO_RUN_NAME          — MLflow run name (--name or auto-generated)
     KEGO_EXPERIMENT_ID     — 6-char experiment ID stored as MLflow tag
     KEGO_CLI_PARAMS        — JSON dict of CLI args to pre-log as params
 """
@@ -43,6 +44,7 @@ def parse_kego_lines(
 def _log_to_mlflow(
     tracking_uri: str,
     experiment_name: str,
+    run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
     metrics: dict[str, float],
@@ -62,7 +64,7 @@ def _log_to_mlflow(
     tags = {"kego_id": experiment_id, **(extra_tags or {})}
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
-    with mlflow.start_run(tags=tags):
+    with mlflow.start_run(run_name=run_name, tags=tags):
         if cli_params:
             mlflow.log_params(cli_params)
         if params:
@@ -75,6 +77,7 @@ def run(argv: list[str]) -> int:
     """Run script at argv[0] with args argv[1:], tracking KEGO_ lines."""
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
     experiment_name = os.environ.get("KEGO_EXPERIMENT_NAME", "kego-default")
+    run_name = os.environ.get("KEGO_RUN_NAME", experiment_name)
     experiment_id = os.environ.get("KEGO_EXPERIMENT_ID", "unknown")
     cli_params = json.loads(os.environ.get("KEGO_CLI_PARAMS", "{}"))
 
@@ -104,6 +107,7 @@ def run(argv: list[str]) -> int:
     _log_to_mlflow(
         tracking_uri,
         experiment_name,
+        run_name,
         experiment_id,
         cli_params,
         metrics,

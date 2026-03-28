@@ -28,6 +28,7 @@ def run(
     script_args: list[str],
     config: KegoConfig,
     experiment_name: str,
+    run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
 ) -> int:
@@ -50,6 +51,7 @@ def run(
         "MLFLOW_TRACKING_URI": os.environ.get("MLFLOW_TRACKING_URI")
         or config.cluster.mlflow_uri,
         "KEGO_EXPERIMENT_NAME": experiment_name,
+        "KEGO_RUN_NAME": run_name,
         "KEGO_EXPERIMENT_ID": experiment_id,
         "KEGO_CLI_PARAMS": json.dumps(cli_params),
         "KEGO_TARGET": "local",

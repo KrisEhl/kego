@@ -61,12 +61,11 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
                 cli_params[key] = "true"
         i += 1
 
-    experiment_name = exp_module.build_experiment_name(
-        args.script, args.name, cli_params
-    )
+    run_name = exp_module.build_experiment_name(args.script, args.name, cli_params)
+    experiment_name = config.competition.slug if config.competition else run_name
     experiment_id = exp_module.generate_id()
 
-    print(f"kego run: {experiment_name} [{experiment_id}] → {args.target}", flush=True)
+    print(f"kego run: {run_name} [{experiment_id}] → {args.target}", flush=True)
 
     if args.target == "local":
         if folds and len(folds) > 1:
@@ -83,6 +82,7 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
             script_args=fold_args,
             config=config,
             experiment_name=experiment_name,
+            run_name=run_name,
             experiment_id=experiment_id,
             cli_params=fold_cli_params,
         )
@@ -95,6 +95,7 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
             base_args=script_args,
             config=config,
             experiment_name=experiment_name,
+            run_name=run_name,
             experiment_id=experiment_id,
             cli_params=cli_params,
         )

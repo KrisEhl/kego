@@ -18,6 +18,7 @@ def build_ray_command(
     script_args: list[str],
     config: KegoConfig,
     experiment_name: str,
+    run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
 ) -> list[str]:
@@ -38,6 +39,7 @@ def build_ray_command(
         "env_vars": {
             "MLFLOW_TRACKING_URI": config.cluster.mlflow_uri,
             "KEGO_EXPERIMENT_NAME": experiment_name,
+            "KEGO_RUN_NAME": run_name,
             "KEGO_EXPERIMENT_ID": experiment_id,
             "KEGO_CLI_PARAMS": json.dumps(cli_params),
             "KEGO_PATH_DATA": os.environ.get(
@@ -79,6 +81,7 @@ def submit_fold(
     script_args: list[str],
     config: KegoConfig,
     experiment_name: str,
+    run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
 ) -> str:
@@ -99,7 +102,13 @@ def submit_fold(
         RuntimeError: If ray job submit fails or job ID cannot be parsed
     """
     cmd = build_ray_command(
-        script, script_args, config, experiment_name, experiment_id, cli_params
+        script,
+        script_args,
+        config,
+        experiment_name,
+        run_name,
+        experiment_id,
+        cli_params,
     )
     result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
     if result.returncode != 0:
@@ -118,6 +127,7 @@ def submit(
     base_args: list[str],
     config: KegoConfig,
     experiment_name: str,
+    run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
 ) -> list[str]:
@@ -140,7 +150,13 @@ def submit(
         fold_args = [*base_args, "--fold", str(fold)]
         fold_params = {**cli_params, "fold": str(fold)}
         job_id = submit_fold(
-            script, fold_args, config, experiment_name, experiment_id, fold_params
+            script,
+            fold_args,
+            config,
+            experiment_name,
+            run_name,
+            experiment_id,
+            fold_params,
         )
         print(f"  fold {fold}: {job_id}", flush=True)
         job_ids.append(job_id)

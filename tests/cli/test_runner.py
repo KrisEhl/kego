@@ -90,6 +90,7 @@ def test_run_captures_metrics(dummy_script):
     def fake_log(
         tracking_uri,
         experiment_name,
+        run_name,
         experiment_id,
         cli_params,
         metrics,

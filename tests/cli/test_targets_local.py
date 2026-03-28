@@ -44,10 +44,12 @@ def test_run_sets_env_vars(config, monkeypatch):
         script_args=["--fold", "0"],
         config=config,
         experiment_name="test-exp",
+        run_name="soundscape-v8",
         experiment_id="abc123",
         cli_params={"fold": "0"},
     )
 
     assert captured_env["MLFLOW_TRACKING_URI"] == "http://192.168.1.1:5000"
     assert captured_env["KEGO_EXPERIMENT_NAME"] == "test-exp"
+    assert captured_env["KEGO_RUN_NAME"] == "soundscape-v8"
     assert captured_env["KEGO_EXPERIMENT_ID"] == "abc123"
