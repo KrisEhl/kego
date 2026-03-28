@@ -52,6 +52,7 @@ def test_run_and_ls(tmp_path: Path, repo_root: Path) -> None:
     assert ls_result.returncode == 0, ls_result.stderr
     assert "FINISHED" in ls_result.stdout
     assert "local" in ls_result.stdout
+    assert "0.9123" in ls_result.stdout
 
 
 def test_run_debug_excluded_from_ls(tmp_path: Path, repo_root: Path) -> None:

@@ -16,6 +16,18 @@ def _ago(start: datetime.datetime) -> str:
     return f"{int(delta.total_seconds() // 60)}m"
 
 
+def _resolve_metric(runs: pd.DataFrame, primary_metric: str) -> str:
+    """Return primary_metric if it has data, otherwise the first metric col that does."""
+
+    preferred = f"metrics.{primary_metric}"
+    if preferred in runs.columns and runs[preferred].notna().any():
+        return primary_metric
+    for col in runs.columns:
+        if col.startswith("metrics.") and runs[col].notna().any():
+            return col[len("metrics.") :]
+    return primary_metric
+
+
 def format_table(runs: pd.DataFrame, primary_metric: str) -> list[str]:
     """Format experiment runs into a table. Returns list of lines."""
     import pandas as pd
@@ -23,6 +35,7 @@ def format_table(runs: pd.DataFrame, primary_metric: str) -> list[str]:
     if runs.empty:
         return ["No experiments found."]
 
+    primary_metric = _resolve_metric(runs, primary_metric)
     metric_col = f"metrics.{primary_metric}"
 
     header = f"{'ID':<8} {'NAME':<26} {'TARGET':<8} {primary_metric.upper():>8} {'STATUS':<10} {'AGO'}"
