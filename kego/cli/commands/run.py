@@ -177,6 +177,29 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
             cli_params=cli_params,
             mlflow_run_ids=mlflow_run_ids,
         )
+
+        # Tag each pre-created MLflow run with its Ray submission ID for kego logs.
+        if mlflow_run_ids and job_ids:
+            try:
+                import mlflow
+
+                tracking_uri = (
+                    os.environ.get("MLFLOW_TRACKING_URI") or config.cluster.mlflow_uri
+                )
+                mlflow.set_tracking_uri(tracking_uri)
+                from mlflow.tracking import MlflowClient
+
+                client = MlflowClient()
+                for fold, job_id in zip(resolved_folds, job_ids):
+                    run_id = mlflow_run_ids.get(fold)
+                    if run_id:
+                        client.set_tag(run_id, "ray_submission_id", job_id)
+            except Exception as e:
+                print(
+                    f"  Warning: could not tag runs with ray_submission_id ({e})",
+                    flush=True,
+                )
+
         print(
             f"\nSubmitted {len(job_ids)} job(s). Track with: uv run kego ls", flush=True
         )

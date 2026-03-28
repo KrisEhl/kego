@@ -115,7 +115,7 @@ def submit_fold(
     )
     args_str = " ".join(script_args)
     entrypoint = (
-        f"cd {config.cluster.repo_path} && "
+        f"cd {config.cluster.uv_project_dir} && "
         f"uv run python -m kego.cli.runner {cluster_script} {args_str}"
     )
     return _submit_http(config, entrypoint, runtime_env)

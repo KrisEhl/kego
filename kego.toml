@@ -2,6 +2,7 @@
 ray_address = "http://192.168.178.32:8265"
 mlflow_uri = "http://192.168.178.32:5000"
 repo_path = "~/projects/kego"
+uv_project_dir = "~/projects/kego/competitions/playground"
 
 [cluster.resources]
 default = {num_gpus = 0.5}
