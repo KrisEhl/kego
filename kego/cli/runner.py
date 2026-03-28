@@ -52,7 +52,12 @@ def _log_to_mlflow(
     """Log everything to MLflow. No-op if tracking_uri is empty."""
     if not tracking_uri:
         return
+    import logging
+
     import mlflow
+
+    logging.getLogger("mlflow").setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)
 
     tags = {"kego_id": experiment_id, **(extra_tags or {})}
     mlflow.set_tracking_uri(tracking_uri)

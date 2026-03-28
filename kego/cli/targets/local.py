@@ -47,7 +47,8 @@ def run(
         Exit code from script
     """
     env_patch = {
-        "MLFLOW_TRACKING_URI": config.cluster.mlflow_uri,
+        "MLFLOW_TRACKING_URI": os.environ.get("MLFLOW_TRACKING_URI")
+        or config.cluster.mlflow_uri,
         "KEGO_EXPERIMENT_NAME": experiment_name,
         "KEGO_EXPERIMENT_ID": experiment_id,
         "KEGO_CLI_PARAMS": json.dumps(cli_params),

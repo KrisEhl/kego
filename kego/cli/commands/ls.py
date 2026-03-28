@@ -58,12 +58,21 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
 
 
 def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
+    import logging
+    import os
+
     import mlflow
 
     from kego.cli import config as cfg_module
 
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "5")
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "0")
+    logging.getLogger("mlflow").setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)
+
     config = cfg_module.load_config()
-    mlflow.set_tracking_uri(config.cluster.mlflow_uri)
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI") or config.cluster.mlflow_uri
+    mlflow.set_tracking_uri(tracking_uri)
 
     filter_parts: list[str] = []
     if not args.show_all:
@@ -73,10 +82,6 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
 
     filter_string = " AND ".join(filter_parts) if filter_parts else ""
 
-    import os
-
-    os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "5")
-
     try:
         runs = mlflow.search_runs(
             search_all_experiments=True,
@@ -85,7 +90,7 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
             max_results=50,
         )
     except Exception as e:
-        print(f"Cannot reach MLflow at {config.cluster.mlflow_uri}: {e}")
+        print(f"Cannot reach MLflow at {tracking_uri}: {e}")
         return 1
 
     primary_metric = "metric"
