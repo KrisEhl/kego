@@ -4,8 +4,11 @@ CLUSTER_PLAYGROUND ?= $(CLUSTER_REPO)/competitions/playground
 CLUSTER_BRANCH ?= main
 
 # Cluster management (run from local Mac)
-cluster-start:
-	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_REPO) && git fetch && git checkout $(CLUSTER_BRANCH) && git pull --ff-only && cd $(CLUSTER_PLAYGROUND) && uv sync && uv run make start-head && uv run make mlflow-start'"
+cluster-sync:
+	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_REPO) && git fetch && git checkout $(CLUSTER_BRANCH) && git pull --ff-only && cd $(CLUSTER_PLAYGROUND) && uv sync'"
+
+cluster-start: cluster-sync
+	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_PLAYGROUND) && (uv run ray status >/dev/null 2>&1 && echo \"Ray already running, skipping start\") || (uv run make start-head && uv run make mlflow-start)'"
 
 cluster-stop:
 	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_PLAYGROUND) && uv run make stop && uv run make mlflow-stop'"
