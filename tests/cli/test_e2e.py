@@ -112,7 +112,7 @@ def test_ls_offline_mlflow_fails_fast(tmp_path: Path, repo_root: Path) -> None:
 
     ls_result = _run_kego(["ls"], env=env, cwd=repo_root)
     assert ls_result.returncode == 1
-    assert "Cannot reach MLflow" in ls_result.stdout
+    assert "Cannot reach MLflow at http://127.0.0.1:19999" in ls_result.stdout
 
 
 # ---------------------------------------------------------------------------

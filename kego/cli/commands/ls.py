@@ -89,8 +89,12 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
             order_by=["start_time DESC"],
             max_results=50,
         )
-    except Exception as e:
-        print(f"Cannot reach MLflow at {tracking_uri}: {e}")
+    except Exception:
+        print(
+            f"Cannot reach MLflow at {tracking_uri} — is the cluster online?\n"
+            "  Start cluster : make cluster-start\n"
+            "  Test locally  : MLFLOW_TRACKING_URI=sqlite:///local.db uv run kego ls"
+        )
         return 1
 
     primary_metric = "metric"
