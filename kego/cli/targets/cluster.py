@@ -26,7 +26,8 @@ def _cluster_script_path(local_script: str, config: KegoConfig) -> str:
         rel = local_path.relative_to(config.repo_root)
     except ValueError:
         rel = Path(local_path.name)
-    cluster_root = Path(config.cluster.repo_path).expanduser()
+    # Keep tilde unexpanded — the cluster shell expands it on the remote machine
+    cluster_root = Path(config.cluster.repo_path)
     return str(cluster_root / rel)
 
 
@@ -46,7 +47,7 @@ def _build_runtime_env(
         "KEGO_CLI_PARAMS": json.dumps(cli_params),
         "KEGO_PATH_DATA": os.environ.get(
             "KEGO_PATH_DATA",
-            str(Path(config.cluster.repo_path).expanduser() / "data"),
+            str(Path(config.cluster.repo_path) / "data"),
         ),
         "KEGO_TARGET": "cluster",
         "KEGO_DEBUG": "false",
@@ -114,7 +115,7 @@ def submit_fold(
     )
     args_str = " ".join(script_args)
     entrypoint = (
-        f"cd {Path(config.cluster.repo_path).expanduser()} && "
+        f"cd {config.cluster.repo_path} && "
         f"uv run python -m kego.cli.runner {cluster_script} {args_str}"
     )
     return _submit_http(config, entrypoint, runtime_env)

@@ -30,7 +30,7 @@ def test_cluster_script_path_inside_repo(config):
     local = "/home/user/projects/kego/competitions/birdclef-2026/training/train_cnn.py"
     result = _cluster_script_path(local, config)
     assert result.endswith("competitions/birdclef-2026/training/train_cnn.py")
-    assert result.startswith(str(Path("~/projects/kego").expanduser()))
+    assert result.startswith("~/projects/kego")
 
 
 def test_cluster_script_path_outside_repo(config):
