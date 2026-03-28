@@ -70,6 +70,8 @@ def _logs(args: argparse.Namespace, extra_args: list[str]) -> int:
                 print(logs or "(no logs yet)")
         except urllib.error.HTTPError as e:
             print(f"  Ray API error (HTTP {e.code}): {e.read().decode()}")
+            if e.code == 404:
+                return 1
         except OSError:
             print(
                 f"  Cannot reach Ray cluster at {config.cluster.ray_address} — "

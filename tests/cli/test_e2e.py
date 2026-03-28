@@ -117,6 +117,68 @@ def test_ls_offline_mlflow_fails_fast(tmp_path: Path, repo_root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# kego logs
+# ---------------------------------------------------------------------------
+
+
+def test_logs_unknown_id(tmp_path: Path, repo_root: Path) -> None:
+    """kego logs with an unknown ID prints a clear error."""
+    mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
+    env = _base_env(repo_root, mlflow_uri)
+
+    result = _run_kego(["logs", "xxxxxx"], env=env, cwd=repo_root)
+    assert result.returncode == 1
+    assert "No runs found" in result.stdout
+
+
+def test_logs_no_ray_submission_id(tmp_path: Path, repo_root: Path) -> None:
+    """kego logs shows a helpful message when run has no ray_submission_id tag."""
+    mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
+    env = _base_env(repo_root, mlflow_uri)
+
+    # Create a run via kego run (local — no ray_submission_id tag)
+    script = tmp_path / "train.py"
+    script.write_text("print('KEGO_METRIC fold_auc 0.9')\n")
+    run_result = _run_kego(
+        ["run", str(script), "--name", "logs-test"], env=env, cwd=repo_root
+    )
+    assert run_result.returncode == 0, run_result.stderr
+
+    # Extract the kego ID from the run output
+    kego_id = run_result.stdout.split("[")[1].split("]")[0]
+
+    result = _run_kego(["logs", kego_id], env=env, cwd=repo_root)
+    assert result.returncode == 0
+    assert "ray_submission_id" in result.stdout
+
+
+def test_logs_unknown_submission_id(tmp_path: Path, repo_root: Path) -> None:
+    """kego logs with a fake ray_submission_id gets a 404 and exits non-zero."""
+    import mlflow
+
+    mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
+    env = _base_env(repo_root, mlflow_uri)
+
+    # Manually create a run with a bogus ray_submission_id tag
+    mlflow.set_tracking_uri(mlflow_uri)
+    mlflow.set_experiment("test-exp")
+    with mlflow.start_run(
+        run_name="ray-run",
+        tags={
+            "kego_id": "aabbcc",
+            "kego_target": "cluster",
+            "kego_debug": "false",
+            "ray_submission_id": "raysubmit_fake123",
+        },
+    ):
+        pass
+
+    result = _run_kego(["logs", "aabbcc"], env=env, cwd=repo_root)
+    assert result.returncode == 1
+    assert "Ray API error" in result.stdout
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
