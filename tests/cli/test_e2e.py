@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def _run_kego(
     args: list[str], env: dict[str, str], cwd: Path
@@ -152,12 +154,17 @@ def test_logs_no_ray_submission_id(tmp_path: Path, repo_root: Path) -> None:
     assert "ray_submission_id" in result.stdout
 
 
-def test_logs_unknown_submission_id(tmp_path: Path, repo_root: Path) -> None:
+def test_logs_unknown_submission_id(
+    tmp_path: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """kego logs with a fake ray_submission_id gets a 404 and exits non-zero."""
     import mlflow
 
     mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
     env = _base_env(repo_root, mlflow_uri)
+
+    # Set via monkeypatch so this env var is restored after the test
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", mlflow_uri)
 
     # Manually create a run with a bogus ray_submission_id tag
     mlflow.set_tracking_uri(mlflow_uri)

@@ -1,3 +1,6 @@
+[cluster]
+uv_project_dir = "~/projects/kego/competitions/birdclef-2026"
+
 [competition]
 slug = "birdclef-2026"
 kaggle_user = "aldisued"

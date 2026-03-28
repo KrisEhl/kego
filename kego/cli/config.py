@@ -96,7 +96,13 @@ def load_config(
     if competition_dir is not None:
         comp_toml = competition_dir / "kego.toml"
         with open(comp_toml, "rb") as f:
-            comp_raw = tomllib.load(f)["competition"]
+            comp_data = tomllib.load(f)
+        comp_raw = comp_data["competition"]
+        # Allow competition kego.toml to override specific cluster settings.
+        if "cluster" in comp_data:
+            comp_cluster = comp_data["cluster"]
+            if "uv_project_dir" in comp_cluster:
+                cluster.uv_project_dir = comp_cluster["uv_project_dir"]
         competition = CompetitionConfig(**comp_raw)
 
     return KegoConfig(
