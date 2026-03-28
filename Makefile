@@ -3,13 +3,13 @@ CLUSTER_PLAYGROUND ?= ~/projects/kego/competitions/playground
 
 # Cluster management (run from local Mac)
 cluster-start:
-	ssh $(CLUSTER_HOST) "cd $(CLUSTER_PLAYGROUND) && git pull --ff-only && uv run make start-head && uv run make mlflow-start"
+	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_PLAYGROUND) && git pull --ff-only && uv run make start-head && uv run make mlflow-start'"
 
 cluster-stop:
-	ssh $(CLUSTER_HOST) "cd $(CLUSTER_PLAYGROUND) && uv run make stop && uv run make mlflow-stop"
+	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_PLAYGROUND) && uv run make stop && uv run make mlflow-stop'"
 
 cluster-status:
-	ssh $(CLUSTER_HOST) "cd $(CLUSTER_PLAYGROUND) && uv run ray status"
+	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_PLAYGROUND) && uv run ray status'"
 
 install:
 	uv sync
