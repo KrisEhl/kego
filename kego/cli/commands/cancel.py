@@ -48,25 +48,11 @@ def _cancel(args: argparse.Namespace, extra_args: list[str]) -> int:
         mlflow.set_tracking_uri(config.cluster.mlflow_uri)
         from mlflow.tracking import MlflowClient
 
+        from kego.cli.experiment import resolve_runs
+
         client = MlflowClient()
         experiment_ids = [e.experiment_id for e in client.search_experiments()]
-        # MLflow doesn't support OR — run two queries and merge by run_id
-        by_id = client.search_runs(
-            experiment_ids=experiment_ids,
-            filter_string=f"tags.kego_id LIKE '{args.id}%'",
-            max_results=10,
-        )
-        by_name = client.search_runs(
-            experiment_ids=experiment_ids,
-            filter_string=f"tags.`mlflow.runName` LIKE '%{args.id}%'",
-            max_results=10,
-        )
-        seen: set[str] = set()
-        runs = []
-        for r in [*by_id, *by_name]:
-            if r.info.run_id not in seen:
-                seen.add(r.info.run_id)
-                runs.append(r)
+        runs = resolve_runs(args.id, client, experiment_ids)
     except Exception as e:
         print(f"Error reaching MLflow: {e}")
         return 1

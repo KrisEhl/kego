@@ -2,8 +2,43 @@ from __future__ import annotations
 
 import secrets
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mlflow.entities import Run
+    from mlflow.tracking import MlflowClient
 
 _INFRA_PARAMS = frozenset({"debug", "gpu", "target", "folds", "fold"})
+
+
+def resolve_runs(
+    query: str,
+    client: MlflowClient,
+    experiment_ids: list[str],
+    max_results: int = 10,
+) -> list[Run]:
+    """Return MLflow runs matching query by kego_id prefix or run name substring.
+
+    Runs two searches (MLflow doesn't support OR) and merges by run_id.
+    Caller is responsible for setting mlflow.set_tracking_uri() first.
+    """
+    by_id = client.search_runs(
+        experiment_ids=experiment_ids,
+        filter_string=f"tags.kego_id LIKE '{query}%'",
+        max_results=max_results,
+    )
+    by_name = client.search_runs(
+        experiment_ids=experiment_ids,
+        filter_string=f"tags.`mlflow.runName` LIKE '%{query}%'",
+        max_results=max_results,
+    )
+    seen: set[str] = set()
+    runs: list[Run] = []
+    for r in [*by_id, *by_name]:
+        if r.info.run_id not in seen:
+            seen.add(r.info.run_id)
+            runs.append(r)
+    return runs
 
 
 def generate_id() -> str:

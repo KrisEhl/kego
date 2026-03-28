@@ -6,7 +6,9 @@ def main() -> None:
     from kego.cli.commands import cancel as cancel_cmd
     from kego.cli.commands import logs as logs_cmd
     from kego.cli.commands import ls as ls_cmd
+    from kego.cli.commands import push as push_cmd
     from kego.cli.commands import run as run_cmd
+    from kego.cli.commands import submit as submit_cmd
 
     parser = argparse.ArgumentParser(
         prog="kego", description="kego ML experiment engine"
@@ -18,6 +20,8 @@ def main() -> None:
     ls_cmd.add_parser(subparsers)
     logs_cmd.add_parser(subparsers)
     cancel_cmd.add_parser(subparsers)
+    push_cmd.add_parser(subparsers)
+    submit_cmd.add_parser(subparsers)
 
     args, extra = parser.parse_known_args()
     sys.exit(args.func(args, extra) or 0)

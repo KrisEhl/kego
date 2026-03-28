@@ -63,6 +63,26 @@ def find_competition_dir(start: Path | None = None) -> Path | None:
     return None
 
 
+def find_competition_dir_by_slug(
+    slug: str,
+    repo_root: Path | None = None,
+) -> Path | None:
+    """Find a competition directory whose kego.toml has [competition] slug == slug."""
+    if repo_root is None:
+        repo_root = find_repo_root()
+    competitions_dir = repo_root / "competitions"
+    if not competitions_dir.exists():
+        return None
+    for comp_dir in sorted(competitions_dir.iterdir()):
+        toml_path = comp_dir / "kego.toml"
+        if toml_path.exists():
+            with open(toml_path, "rb") as f:
+                data = tomllib.load(f)
+            if data.get("competition", {}).get("slug") == slug:
+                return comp_dir
+    return None
+
+
 def load_config(
     repo_root: Path | None = None,
     competition_dir: Path | None = None,
