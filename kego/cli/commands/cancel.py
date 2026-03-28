@@ -101,10 +101,18 @@ def _cancel(args: argparse.Namespace, extra_args: list[str]) -> int:
 
         try:
             _ray_stop(base, submission_id)
-            print(f"  fold {fold}: cancelled ({submission_id})")
             cancelled += 1
         except RuntimeError as e:
             print(f"  fold {fold}: {e}")
+            continue
+
+        # Mark the MLflow run as KILLED so kego ls shows the correct status
+        try:
+            client.set_terminated(run.info.run_id, status="KILLED")
+        except Exception as e:
+            print(f"  fold {fold}: warning — could not update MLflow status ({e})")
+
+        print(f"  fold {fold}: cancelled ({submission_id})")
 
     print(f"\nCancelled {cancelled} job(s).")
     return 0
