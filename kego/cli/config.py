@@ -16,6 +16,7 @@ class ClusterConfig:
     repo_path: str = "~/projects/kego"
     uv_project_dir: str = "~/projects/kego/competitions/playground"
     data_path: str = "/home/kristian/projects/kego/data"
+    ssh_host: str = ""
 
 
 @dataclass
@@ -104,6 +105,7 @@ def load_config(
             "uv_project_dir", "~/projects/kego/competitions/playground"
         ),
         data_path=c.get("data_path", "/home/kristian/projects/kego/data"),
+        ssh_host=c.get("ssh_host", ""),
     )
 
     competition = None

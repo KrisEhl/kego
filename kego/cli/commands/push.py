@@ -14,6 +14,44 @@ from pathlib import Path
 from kego.cli import config as cfg_module
 
 
+def _rsync_from_cluster(
+    ssh_host: str,
+    cluster_repo_path: str,
+    competition_dir: Path,
+    repo_root: Path,
+    checkpoint_dir: str,
+    run_name: str,
+    local_ckpt_dir: Path,
+) -> list[Path]:
+    """Rsync matching checkpoints from the cluster. Returns list of local paths."""
+    rel = competition_dir.relative_to(repo_root)
+    remote_dir = f"{ssh_host}:{cluster_repo_path}/{rel}/{checkpoint_dir}/"
+    pattern = f"{run_name}_fold*.pt"
+
+    print(f"Fetching checkpoints from {ssh_host}...", flush=True)
+    local_ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "rsync",
+            "-az",
+            "--include",
+            pattern,
+            "--exclude",
+            "*",
+            remote_dir,
+            str(local_ckpt_dir) + "/",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f"rsync failed:\n{result.stderr}")
+        return []
+
+    return sorted(local_ckpt_dir.glob(pattern))
+
+
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     p = subparsers.add_parser(
         "push", help="Upload model checkpoints to Kaggle Datasets"
@@ -83,11 +121,28 @@ def _push(args: argparse.Namespace, extra_args: list[str]) -> int:
     run_name = run.data.tags.get("mlflow.runName", args.experiment)
     kego_id = run.data.tags.get("kego_id", "unknown")
 
-    # Find checkpoints
+    # Find checkpoints — try local first, then rsync from cluster
     ckpt_dir = config.competition_dir / comp.checkpoint_dir
     checkpoints = sorted(ckpt_dir.glob(f"{run_name}_fold*.pt"))
+
+    if not checkpoints and config.cluster.ssh_host:
+        checkpoints = _rsync_from_cluster(
+            config.cluster.ssh_host,
+            config.cluster.repo_path,
+            config.competition_dir,
+            config.repo_root,
+            comp.checkpoint_dir,
+            run_name,
+            ckpt_dir,
+        )
+
     if not checkpoints:
-        print(f"No checkpoints found: {ckpt_dir}/{run_name}_fold*.pt")
+        hint = (
+            "\nAdd ssh_host to kego.toml [cluster] to fetch from cluster."
+            if not config.cluster.ssh_host
+            else ""
+        )
+        print(f"No checkpoints found: {ckpt_dir}/{run_name}_fold*.pt{hint}")
         return 1
 
     print(f"Packaging {len(checkpoints)} checkpoint(s) for '{run_name}' [{kego_id}]:")
