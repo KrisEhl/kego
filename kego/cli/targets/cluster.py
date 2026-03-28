@@ -45,10 +45,7 @@ def _build_runtime_env(
         "KEGO_RUN_NAME": run_name,
         "KEGO_EXPERIMENT_ID": experiment_id,
         "KEGO_CLI_PARAMS": json.dumps(cli_params),
-        "KEGO_PATH_DATA": os.environ.get(
-            "KEGO_PATH_DATA",
-            str(Path(config.cluster.repo_path) / "data"),
-        ),
+        "KEGO_PATH_DATA": os.environ.get("KEGO_PATH_DATA", config.cluster.data_path),
         "KEGO_TARGET": "cluster",
         "KEGO_DEBUG": "false",
     }

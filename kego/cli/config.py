@@ -15,6 +15,7 @@ class ClusterConfig:
     mlflow_uri: str
     repo_path: str = "~/projects/kego"
     uv_project_dir: str = "~/projects/kego/competitions/playground"
+    data_path: str = "/home/kristian/projects/kego/data"
     default_resources: dict = field(default_factory=lambda: {"num_gpus": 0.5})
     heavy_resources: dict = field(default_factory=lambda: {"num_gpus": 1})
 
@@ -85,6 +86,7 @@ def load_config(
         uv_project_dir=c.get(
             "uv_project_dir", "~/projects/kego/competitions/playground"
         ),
+        data_path=c.get("data_path", "/home/kristian/projects/kego/data"),
         default_resources=resources.get("default", {"num_gpus": 0.5}),
         heavy_resources=resources.get("heavy", {"num_gpus": 1}),
     )
