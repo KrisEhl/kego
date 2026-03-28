@@ -1,6 +1,14 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
+
+
+@pytest.fixture(scope="session")
+def repo_root() -> Path:
+    """Absolute path to the repository root (contains kego.toml and .git)."""
+    return Path(__file__).parent.parent
 
 
 @pytest.fixture

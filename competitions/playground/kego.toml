@@ -1,0 +1,9 @@
+[competition]
+slug = "tabular-playground-series-s6e2"
+kaggle_user = "aldisued"
+enable_gpu = false
+submit_file = "submission.csv"
+pattern = "inference_only"
+inference_notebook = "submit_s6e2.sh"
+checkpoint_dir = "outputs"
+primary_metric = "fold_auc"
