@@ -36,22 +36,24 @@ def _build_runtime_env(
     run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
+    mlflow_run_id: str | None = None,
 ) -> dict:
-    return {
-        "env_vars": {
-            "MLFLOW_TRACKING_URI": config.cluster.mlflow_uri,
-            "KEGO_EXPERIMENT_NAME": experiment_name,
-            "KEGO_RUN_NAME": run_name,
-            "KEGO_EXPERIMENT_ID": experiment_id,
-            "KEGO_CLI_PARAMS": json.dumps(cli_params),
-            "KEGO_PATH_DATA": os.environ.get(
-                "KEGO_PATH_DATA",
-                str(Path(config.cluster.repo_path).expanduser() / "data"),
-            ),
-            "KEGO_TARGET": "cluster",
-            "KEGO_DEBUG": "false",
-        },
+    env_vars: dict[str, str] = {
+        "MLFLOW_TRACKING_URI": config.cluster.mlflow_uri,
+        "KEGO_EXPERIMENT_NAME": experiment_name,
+        "KEGO_RUN_NAME": run_name,
+        "KEGO_EXPERIMENT_ID": experiment_id,
+        "KEGO_CLI_PARAMS": json.dumps(cli_params),
+        "KEGO_PATH_DATA": os.environ.get(
+            "KEGO_PATH_DATA",
+            str(Path(config.cluster.repo_path).expanduser() / "data"),
+        ),
+        "KEGO_TARGET": "cluster",
+        "KEGO_DEBUG": "false",
     }
+    if mlflow_run_id:
+        env_vars["KEGO_MLFLOW_RUN_ID"] = mlflow_run_id
+    return {"env_vars": env_vars}
 
 
 def _submit_http(config: KegoConfig, entrypoint: str, runtime_env: dict) -> str:
@@ -103,11 +105,12 @@ def submit_fold(
     run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
+    mlflow_run_id: str | None = None,
 ) -> str:
     """Submit one fold as a Ray job. Returns the Ray submission ID."""
     cluster_script = _cluster_script_path(script, config)
     runtime_env = _build_runtime_env(
-        config, experiment_name, run_name, experiment_id, cli_params
+        config, experiment_name, run_name, experiment_id, cli_params, mlflow_run_id
     )
     args_str = " ".join(script_args)
     entrypoint = (
@@ -126,12 +129,14 @@ def submit(
     run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
+    mlflow_run_ids: dict[int, str] | None = None,
 ) -> list[str]:
     """Submit one Ray job per fold. Returns list of Ray submission IDs."""
     job_ids: list[str] = []
     for fold in folds:
         fold_args = [*base_args, "--fold", str(fold)]
         fold_params = {**cli_params, "fold": str(fold)}
+        run_id = (mlflow_run_ids or {}).get(fold)
         job_id = submit_fold(
             script,
             fold_args,
@@ -140,6 +145,7 @@ def submit(
             run_name,
             experiment_id,
             fold_params,
+            mlflow_run_id=run_id,
         )
         print(f"  fold {fold}: {job_id}", flush=True)
         job_ids.append(job_id)

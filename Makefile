@@ -1,9 +1,11 @@
 CLUSTER_HOST ?= kristian@omarchyd
-CLUSTER_PLAYGROUND ?= ~/projects/kego/competitions/playground
+CLUSTER_REPO ?= ~/projects/kego
+CLUSTER_PLAYGROUND ?= $(CLUSTER_REPO)/competitions/playground
+CLUSTER_BRANCH ?= main
 
 # Cluster management (run from local Mac)
 cluster-start:
-	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_PLAYGROUND) && git pull --ff-only && uv run make start-head && uv run make mlflow-start'"
+	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_REPO) && git fetch && git checkout $(CLUSTER_BRANCH) && git pull --ff-only && cd $(CLUSTER_PLAYGROUND) && uv sync && uv run make start-head && uv run make mlflow-start'"
 
 cluster-stop:
 	ssh $(CLUSTER_HOST) "bash -lc 'cd $(CLUSTER_PLAYGROUND) && uv run make stop && uv run make mlflow-stop'"

@@ -1,12 +1,71 @@
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 from pathlib import Path
 
 from kego.cli import config as cfg_module
 from kego.cli import experiment as exp_module
 from kego.cli.targets import cluster as cluster_target
 from kego.cli.targets import local as local_target
+
+
+def _pre_create_runs(
+    config: cfg_module.KegoConfig,
+    experiment_name: str,
+    run_name: str,
+    experiment_id: str,
+    cli_params: dict[str, str],
+    folds: list[int],
+) -> dict[int, str]:
+    """Create one MLflow run per fold so cluster jobs appear immediately in kego ls.
+
+    Returns a dict mapping fold index → mlflow run_id.
+    Falls back gracefully if MLflow is unreachable.
+    """
+    import mlflow
+
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI") or config.cluster.mlflow_uri
+    logging.getLogger("mlflow").setLevel(logging.WARNING)
+    logging.getLogger("alembic").setLevel(logging.WARNING)
+
+    run_ids: dict[int, str] = {}
+    try:
+        from mlflow.entities import Param
+        from mlflow.tracking import MlflowClient
+
+        mlflow.set_tracking_uri(tracking_uri)
+        client = MlflowClient()
+        exp = mlflow.set_experiment(experiment_name)
+        for fold in folds:
+            fold_params = {**cli_params, "fold": str(fold)}
+            tags = {
+                "kego_id": experiment_id,
+                "kego_target": "cluster",
+                "kego_debug": "false",
+                "mlflow.runName": run_name,
+            }
+            # Create run via low-level client so it stays RUNNING (no context manager).
+            # The cluster runner will resume it by run_id and call set_terminated().
+            run = client.create_run(
+                experiment_id=exp.experiment_id,
+                run_name=run_name,
+                tags=tags,
+            )
+            client.log_batch(
+                run.info.run_id,
+                params=[Param(k, str(v)) for k, v in fold_params.items()],
+            )
+            run_ids[fold] = run.info.run_id
+    except Exception as e:
+        print(
+            f"  Warning: could not pre-create MLflow runs ({e})"
+            " — jobs won't appear in kego ls until they start",
+            flush=True,
+        )
+
+    return run_ids
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
@@ -96,6 +155,17 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
 
     elif args.target == "cluster":
         resolved_folds = folds if folds is not None else [0]
+
+        # Pre-create one MLflow run per fold so jobs appear immediately in kego ls.
+        mlflow_run_ids = _pre_create_runs(
+            config=config,
+            experiment_name=experiment_name,
+            run_name=run_name,
+            experiment_id=experiment_id,
+            cli_params=cli_params,
+            folds=resolved_folds,
+        )
+
         job_ids = cluster_target.submit(
             script=script,
             folds=resolved_folds,
@@ -105,6 +175,7 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
             run_name=run_name,
             experiment_id=experiment_id,
             cli_params=cli_params,
+            mlflow_run_ids=mlflow_run_ids,
         )
         print(
             f"\nSubmitted {len(job_ids)} job(s). Track with: uv run kego ls", flush=True

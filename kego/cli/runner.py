@@ -10,6 +10,7 @@ Environment variables (injected by kego run):
     KEGO_RUN_NAME          — MLflow run name (--name or auto-generated)
     KEGO_EXPERIMENT_ID     — 6-char experiment ID stored as MLflow tag
     KEGO_CLI_PARAMS        — JSON dict of CLI args to pre-log as params
+    KEGO_MLFLOW_RUN_ID     — (cluster only) pre-created run ID to resume instead of creating a new one
 """
 
 from __future__ import annotations
@@ -52,8 +53,11 @@ def run(argv: list[str]) -> int:
     target = os.environ.get("KEGO_TARGET", "local")
     debug = os.environ.get("KEGO_DEBUG", "false")
 
-    # Open the MLflow run before launching the script so it appears as RUNNING
+    # Open the MLflow run before launching the script so it appears as RUNNING.
+    # If KEGO_MLFLOW_RUN_ID is set, resume the run pre-created at submission time
+    # (cluster path). Otherwise create a fresh run (local path).
     active_run = None
+    existing_run_id = os.environ.get("KEGO_MLFLOW_RUN_ID", "")
     if tracking_uri:
         import mlflow
 
@@ -61,15 +65,18 @@ def run(argv: list[str]) -> int:
         logging.getLogger("alembic").setLevel(logging.WARNING)
 
         mlflow.set_tracking_uri(tracking_uri)
-        mlflow.set_experiment(experiment_name)
-        tags = {
-            "kego_id": experiment_id,
-            "kego_target": target,
-            "kego_debug": debug,
-        }
-        active_run = mlflow.start_run(run_name=run_name, tags=tags)
-        if cli_params:
-            mlflow.log_params(cli_params)
+        if existing_run_id:
+            active_run = mlflow.start_run(run_id=existing_run_id)
+        else:
+            mlflow.set_experiment(experiment_name)
+            tags = {
+                "kego_id": experiment_id,
+                "kego_target": target,
+                "kego_debug": debug,
+            }
+            active_run = mlflow.start_run(run_name=run_name, tags=tags)
+            if cli_params:
+                mlflow.log_params(cli_params)
 
     cmd = [sys.executable, *list(argv)]
     process = subprocess.Popen(  # noqa: S603

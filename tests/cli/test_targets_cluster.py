@@ -79,6 +79,7 @@ def test_submit_fans_out_folds(config):
         run_name,
         experiment_id,
         cli_params,
+        mlflow_run_id=None,
     ):
         submitted.append({"script_args": script_args, "cli_params": cli_params})
         return f"raysubmit_fold{len(submitted)}"
