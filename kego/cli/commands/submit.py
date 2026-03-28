@@ -21,8 +21,7 @@ _POLL_INTERVAL = 30  # seconds
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     p = subparsers.add_parser("submit", help="Push inference kernel to Kaggle")
     p.add_argument(
-        "--experiment",
-        required=True,
+        "experiment",
         metavar="ID_OR_NAME",
         help="Kego experiment ID (prefix) or run name",
     )

@@ -19,8 +19,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         "push", help="Upload model checkpoints to Kaggle Datasets"
     )
     p.add_argument(
-        "--experiment",
-        required=True,
+        "experiment",
         metavar="ID_OR_NAME",
         help="Kego experiment ID (prefix) or run name",
     )
