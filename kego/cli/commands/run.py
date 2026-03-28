@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from kego.cli import config as cfg_module
 from kego.cli import experiment as exp_module
@@ -29,6 +30,11 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
 
 
 def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
+    script_path = Path(args.script).resolve()
+    if not script_path.exists():
+        print(f"Error: script not found: {args.script}")
+        return 1
+
     config = cfg_module.load_config()
 
     # Resolve folds
@@ -61,7 +67,8 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
                 cli_params[key] = "true"
         i += 1
 
-    run_name = exp_module.build_experiment_name(args.script, args.name, cli_params)
+    script = str(script_path)
+    run_name = exp_module.build_experiment_name(script, args.name, cli_params)
     experiment_name = config.competition.slug if config.competition else run_name
     experiment_id = exp_module.generate_id()
 
@@ -78,7 +85,7 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
             fold_args += ["--fold", str(folds[0])]
         fold_cli_params = {**cli_params, **({"fold": str(folds[0])} if folds else {})}
         return local_target.run(
-            script=args.script,
+            script=script,
             script_args=fold_args,
             config=config,
             experiment_name=experiment_name,
@@ -90,7 +97,7 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
     elif args.target == "cluster":
         resolved_folds = folds if folds is not None else [0]
         job_ids = cluster_target.submit(
-            script=args.script,
+            script=script,
             folds=resolved_folds,
             base_args=script_args,
             config=config,
