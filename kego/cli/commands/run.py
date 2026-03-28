@@ -94,7 +94,10 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
         print(f"Error: script not found: {args.script}")
         return 1
 
-    config = cfg_module.load_config()
+    # Detect competition from script path so per-competition kego.toml overrides apply
+    # even when running from the repo root.
+    competition_dir = cfg_module.find_competition_dir(script_path.parent)
+    config = cfg_module.load_config(competition_dir=competition_dir)
 
     # Resolve folds
     if args.folds:
