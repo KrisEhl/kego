@@ -15,6 +15,8 @@ from pathlib import Path
 from kego.cli import config as cfg_module
 from kego.cli.commands.push import dataset_slug
 
+_VERSION_RE = re.compile(r"[Kk]ernel\s+[Vv]ersion\s+(\d+)")
+
 _POLL_INTERVAL = 30  # seconds
 
 
@@ -157,6 +159,11 @@ def _submit(args: argparse.Namespace, extra_args: list[str]) -> int:
             return 1
 
         print(result.stdout.strip())
+
+        # Tag MLflow run with kernel version so kego kernel-list can show it
+        m = _VERSION_RE.search(result.stdout)
+        if m:
+            client.set_tag(run.info.run_id, "kaggle_kernel_version", m.group(1))
 
     if args.no_wait:
         print(f"\nKernel submitted. Check: kaggle kernels status {kernel_ref}")
