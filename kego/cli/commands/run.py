@@ -86,13 +86,18 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         help="Smoke-test mode (forwards --debug to script)",
     )
     p.add_argument(
-        "--resources",
-        default="default",
-        help=(
-            "Resource preset from kego.toml [cluster.resources] "
-            "(e.g. 'default', 'heavy') or a float for num_gpus (e.g. '1'). "
-            "Default: default"
-        ),
+        "--gpu",
+        type=float,
+        default=0.5,
+        metavar="N",
+        help="Number of GPUs per fold (default: 0.5)",
+    )
+    p.add_argument(
+        "--cpu",
+        type=float,
+        default=1,
+        metavar="N",
+        help="Number of CPUs per fold (default: 1)",
     )
     p.set_defaults(func=_run)
 
@@ -107,22 +112,6 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
     # even when running from the repo root.
     competition_dir = cfg_module.find_competition_dir(script_path.parent)
     config = cfg_module.load_config(competition_dir=competition_dir)
-
-    # Resolve resource preset: named preset from config or raw float for num_gpus.
-    resources_arg: str = args.resources
-    try:
-        num_gpus = float(resources_arg)
-        resources: dict = {"num_gpus": num_gpus}
-    except ValueError:
-        named = config.cluster.all_resources.get(resources_arg)
-        if named is None:
-            available = list(config.cluster.all_resources.keys())
-            print(
-                f"Error: unknown resource preset '{resources_arg}'. "
-                f"Available: {available}"
-            )
-            return 1
-        resources = named
 
     # Resolve folds
     if args.folds:
@@ -204,7 +193,8 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
             experiment_id=experiment_id,
             cli_params=cli_params,
             mlflow_run_ids=mlflow_run_ids,
-            resources=resources,
+            num_gpus=args.gpu,
+            num_cpus=args.cpu,
         )
 
         # Tag each pre-created MLflow run with its Ray submission ID for kego logs.

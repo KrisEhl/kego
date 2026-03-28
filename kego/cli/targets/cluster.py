@@ -55,7 +55,11 @@ def _build_runtime_env(
 
 
 def _submit_http(
-    config: KegoConfig, entrypoint: str, runtime_env: dict, resources: dict
+    config: KegoConfig,
+    entrypoint: str,
+    runtime_env: dict,
+    num_gpus: float,
+    num_cpus: float,
 ) -> str:
     """Submit a Ray job via the HTTP API. Returns the submission ID."""
     # Ray address is http://host:8265 — jobs API lives at /api/jobs/
@@ -65,8 +69,8 @@ def _submit_http(
     body = {
         "entrypoint": entrypoint,
         "runtime_env": runtime_env,
-        "entrypoint_num_gpus": resources.get("num_gpus", 0),
-        "entrypoint_resources": {k: v for k, v in resources.items() if k != "num_gpus"},
+        "entrypoint_num_gpus": num_gpus,
+        "entrypoint_num_cpus": num_cpus,
     }
 
     data = json.dumps(body).encode()
@@ -105,7 +109,8 @@ def submit_fold(
     experiment_id: str,
     cli_params: dict[str, str],
     mlflow_run_id: str | None = None,
-    resources: dict | None = None,
+    num_gpus: float = 0.5,
+    num_cpus: float = 1,
 ) -> str:
     """Submit one fold as a Ray job. Returns the Ray submission ID."""
     cluster_script = _cluster_script_path(script, config)
@@ -117,9 +122,7 @@ def submit_fold(
         f"cd {config.cluster.uv_project_dir} && "
         f"uv run python -m kego.cli.runner {cluster_script} {args_str}"
     )
-    return _submit_http(
-        config, entrypoint, runtime_env, resources or config.cluster.default_resources
-    )
+    return _submit_http(config, entrypoint, runtime_env, num_gpus, num_cpus)
 
 
 def submit(
@@ -132,7 +135,8 @@ def submit(
     experiment_id: str,
     cli_params: dict[str, str],
     mlflow_run_ids: dict[int, str] | None = None,
-    resources: dict | None = None,
+    num_gpus: float = 0.5,
+    num_cpus: float = 1,
 ) -> list[str]:
     """Submit one Ray job per fold. Returns list of Ray submission IDs."""
     job_ids: list[str] = []
@@ -149,7 +153,8 @@ def submit(
             experiment_id,
             fold_params,
             mlflow_run_id=run_id,
-            resources=resources,
+            num_gpus=num_gpus,
+            num_cpus=num_cpus,
         )
         print(f"  fold {fold}: {job_id}", flush=True)
         job_ids.append(job_id)

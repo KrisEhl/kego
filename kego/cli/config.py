@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -16,9 +16,6 @@ class ClusterConfig:
     repo_path: str = "~/projects/kego"
     uv_project_dir: str = "~/projects/kego/competitions/playground"
     data_path: str = "/home/kristian/projects/kego/data"
-    default_resources: dict = field(default_factory=lambda: {"num_gpus": 0.5})
-    heavy_resources: dict = field(default_factory=lambda: {"num_gpus": 1})
-    all_resources: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -79,7 +76,6 @@ def load_config(
         root = tomllib.load(f)
 
     c = root["cluster"]
-    resources = c.get("resources", {})
     cluster = ClusterConfig(
         ray_address=c["ray_address"],
         mlflow_uri=c["mlflow_uri"],
@@ -88,9 +84,6 @@ def load_config(
             "uv_project_dir", "~/projects/kego/competitions/playground"
         ),
         data_path=c.get("data_path", "/home/kristian/projects/kego/data"),
-        default_resources=resources.get("default", {"num_gpus": 0.5}),
-        heavy_resources=resources.get("heavy", {"num_gpus": 1}),
-        all_resources=resources,
     )
 
     competition = None

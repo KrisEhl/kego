@@ -63,9 +63,11 @@ def test_submit_fold_calls_http_api(config):
         )
     assert job_id == "raysubmit_ABC"
     mock_http.assert_called_once()
-    _, entrypoint, _, _ = mock_http.call_args[0]
+    _, entrypoint, _, num_gpus, num_cpus = mock_http.call_args[0]
     assert "kego.cli.runner" in entrypoint
     assert "--fold" in entrypoint
+    assert num_gpus == 0.5
+    assert num_cpus == 1
 
 
 def test_submit_fans_out_folds(config):
@@ -80,7 +82,8 @@ def test_submit_fans_out_folds(config):
         experiment_id,
         cli_params,
         mlflow_run_id=None,
-        resources=None,
+        num_gpus=0.5,
+        num_cpus=1,
     ):
         submitted.append({"script_args": script_args, "cli_params": cli_params})
         return f"raysubmit_fold{len(submitted)}"
