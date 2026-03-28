@@ -69,6 +69,11 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
     print(f"kego run: {experiment_name} [{experiment_id}] → {args.target}", flush=True)
 
     if args.target == "local":
+        if folds and len(folds) > 1:
+            print(
+                f"Note: local target runs single fold only (fold {folds[0]}). Use --target cluster for fan-out.",
+                flush=True,
+            )
         fold_args = script_args[:]
         if folds:
             fold_args += ["--fold", str(folds[0])]

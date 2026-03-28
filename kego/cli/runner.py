@@ -47,15 +47,17 @@ def _log_to_mlflow(
     cli_params: dict[str, str],
     metrics: dict[str, float],
     params: dict[str, str],
+    extra_tags: dict[str, str] | None = None,
 ) -> None:
     """Log everything to MLflow. No-op if tracking_uri is empty."""
     if not tracking_uri:
         return
     import mlflow
 
+    tags = {"kego_id": experiment_id, **(extra_tags or {})}
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment(experiment_name)
-    with mlflow.start_run(tags={"kego_id": experiment_id}):
+    with mlflow.start_run(tags=tags):
         if cli_params:
             mlflow.log_params(cli_params)
         if params:
@@ -90,10 +92,22 @@ def run(argv: list[str]) -> int:
     process.wait()
 
     metrics, params = parse_kego_lines(collected_lines)
-    metrics["exit_code"] = float(process.returncode)
+
+    target = os.environ.get("KEGO_TARGET", "local")
+    debug = os.environ.get("KEGO_DEBUG", "false")
 
     _log_to_mlflow(
-        tracking_uri, experiment_name, experiment_id, cli_params, metrics, params
+        tracking_uri,
+        experiment_name,
+        experiment_id,
+        cli_params,
+        metrics,
+        params,
+        extra_tags={
+            "kego_exit_code": str(process.returncode),
+            "kego_target": target,
+            "kego_debug": debug,
+        },
     )
 
     return process.returncode

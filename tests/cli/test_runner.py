@@ -88,7 +88,13 @@ def test_run_captures_metrics(dummy_script):
     captured = {}
 
     def fake_log(
-        tracking_uri, experiment_name, experiment_id, cli_params, metrics, params
+        tracking_uri,
+        experiment_name,
+        experiment_id,
+        cli_params,
+        metrics,
+        params,
+        extra_tags=None,
     ):
         captured.update({"metrics": metrics, "params": params})
 

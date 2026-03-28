@@ -10,7 +10,7 @@ from kego.cli import runner
 from kego.cli.config import KegoConfig
 
 
-def build_command(script: str, script_args: list[str]) -> list[str]:
+def _build_command(script: str, script_args: list[str]) -> list[str]:
     """Build command to invoke training script via runner.
 
     Args:
@@ -51,6 +51,8 @@ def run(
         "KEGO_EXPERIMENT_NAME": experiment_name,
         "KEGO_EXPERIMENT_ID": experiment_id,
         "KEGO_CLI_PARAMS": json.dumps(cli_params),
+        "KEGO_TARGET": "local",
+        "KEGO_DEBUG": "true" if "--debug" in script_args else "false",
     }
     old = {k: os.environ.get(k) for k in env_patch}
     os.environ.update(env_patch)

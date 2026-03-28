@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -39,7 +40,12 @@ def build_ray_command(
             "KEGO_EXPERIMENT_NAME": experiment_name,
             "KEGO_EXPERIMENT_ID": experiment_id,
             "KEGO_CLI_PARAMS": json.dumps(cli_params),
-            "KEGO_PATH_DATA": str(Path.home() / "projects/kego/data"),
+            "KEGO_PATH_DATA": os.environ.get(
+                "KEGO_PATH_DATA",
+                str(Path.home() / "projects/kego/data"),
+            ),
+            "KEGO_TARGET": "cluster",
+            "KEGO_DEBUG": "false",
         },
     }
 

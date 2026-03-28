@@ -47,7 +47,6 @@ def format_table(runs: pd.DataFrame, primary_metric: str) -> list[str]:
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     p = subparsers.add_parser("ls", help="List and compare experiments")
-    p.add_argument("--competition", help="Filter by competition slug")
     p.add_argument("--name", help="Filter by experiment name")
     p.add_argument(
         "--all",
