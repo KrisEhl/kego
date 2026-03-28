@@ -1,41 +1,43 @@
-"""Ray cluster execution target — submits jobs to Ray cluster."""
+"""Ray cluster execution target — submits jobs via Ray Jobs HTTP API.
+
+No `ray` binary required on the local machine. Uses stdlib urllib to POST
+directly to the Ray dashboard at port 8265.
+"""
 
 from __future__ import annotations
 
 import json
 import os
-import re
-import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from kego.cli.config import KegoConfig
 
-_JOB_ID_RE = re.compile(r"(raysubmit_\w+)")
+
+def _cluster_script_path(local_script: str, config: KegoConfig) -> str:
+    """Convert a local absolute script path to its equivalent on the cluster.
+
+    Computes the path relative to the local repo root, then prepends the
+    cluster repo path from config (e.g. ~/projects/kego).
+    """
+    local_path = Path(local_script)
+    try:
+        rel = local_path.relative_to(config.repo_root)
+    except ValueError:
+        rel = Path(local_path.name)
+    cluster_root = Path(config.cluster.repo_path).expanduser()
+    return str(cluster_root / rel)
 
 
-def build_ray_command(
-    script: str,
-    script_args: list[str],
+def _build_runtime_env(
     config: KegoConfig,
     experiment_name: str,
     run_name: str,
     experiment_id: str,
     cli_params: dict[str, str],
-) -> list[str]:
-    """Build the ray job submit command list.
-
-    Args:
-        script: Path to training script
-        script_args: Script arguments
-        config: KegoConfig with cluster settings
-        experiment_name: MLflow experiment name
-        experiment_id: 6-char experiment ID for tagging
-        cli_params: CLI parameters to pre-log as MLflow params
-
-    Returns:
-        Ray job submit command as list of strings
-    """
-    runtime_env = {
+) -> dict:
+    return {
         "env_vars": {
             "MLFLOW_TRACKING_URI": config.cluster.mlflow_uri,
             "KEGO_EXPERIMENT_NAME": experiment_name,
@@ -44,36 +46,53 @@ def build_ray_command(
             "KEGO_CLI_PARAMS": json.dumps(cli_params),
             "KEGO_PATH_DATA": os.environ.get(
                 "KEGO_PATH_DATA",
-                str(Path.home() / "projects/kego/data"),
+                str(Path(config.cluster.repo_path).expanduser() / "data"),
             ),
             "KEGO_TARGET": "cluster",
             "KEGO_DEBUG": "false",
         },
     }
 
-    entrypoint = [
-        "uv",
-        "run",
-        "python",
-        "-m",
-        "kego.cli.runner",
-        script,
-        *script_args,
-    ]
 
-    return [
-        "uv",
-        "run",
-        "ray",
-        "job",
-        "submit",
-        "--address",
-        config.cluster.ray_address,
-        "--runtime-env-json",
-        json.dumps(runtime_env),
-        "--",
-        *entrypoint,
-    ]
+def _submit_http(config: KegoConfig, entrypoint: str, runtime_env: dict) -> str:
+    """Submit a Ray job via the HTTP API. Returns the submission ID."""
+    # Ray address is http://host:8265 — jobs API lives at /api/jobs/
+    base = config.cluster.ray_address.rstrip("/")
+    url = f"{base}/api/jobs/"
+
+    resources = config.cluster.default_resources
+    body = {
+        "entrypoint": entrypoint,
+        "runtime_env": runtime_env,
+        "entrypoint_num_gpus": resources.get("num_gpus", 0),
+        "entrypoint_resources": {k: v for k, v in resources.items() if k != "num_gpus"},
+    }
+
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(  # noqa: S310
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+            result = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            f"Ray job submission failed (HTTP {e.code}): {e.read().decode()}"
+        ) from e
+    except OSError as e:
+        raise RuntimeError(
+            f"Cannot reach Ray cluster at {config.cluster.ray_address} — "
+            "is the cluster online?\n"
+            "  Start cluster : make cluster-start"
+        ) from e
+
+    submission_id = result.get("submission_id")
+    if not submission_id:
+        raise RuntimeError(f"No submission_id in response: {result}")
+    return submission_id
 
 
 def submit_fold(
@@ -85,40 +104,17 @@ def submit_fold(
     experiment_id: str,
     cli_params: dict[str, str],
 ) -> str:
-    """Submit one fold as a Ray job. Returns the Ray submission ID.
-
-    Args:
-        script: Path to training script
-        script_args: Script arguments
-        config: KegoConfig with cluster settings
-        experiment_name: MLflow experiment name
-        experiment_id: 6-char experiment ID for tagging
-        cli_params: CLI parameters to pre-log as MLflow params
-
-    Returns:
-        Ray submission ID (e.g. 'raysubmit_ABCD1234')
-
-    Raises:
-        RuntimeError: If ray job submit fails or job ID cannot be parsed
-    """
-    cmd = build_ray_command(
-        script,
-        script_args,
-        config,
-        experiment_name,
-        run_name,
-        experiment_id,
-        cli_params,
+    """Submit one fold as a Ray job. Returns the Ray submission ID."""
+    cluster_script = _cluster_script_path(script, config)
+    runtime_env = _build_runtime_env(
+        config, experiment_name, run_name, experiment_id, cli_params
     )
-    result = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
-    if result.returncode != 0:
-        raise RuntimeError(f"ray job submit failed:\n{result.stderr}")
-
-    for line in result.stdout.splitlines():
-        if m := _JOB_ID_RE.search(line):
-            return m.group(1)
-
-    raise RuntimeError(f"Could not parse job ID from output:\n{result.stdout}")
+    args_str = " ".join(script_args)
+    entrypoint = (
+        f"cd {Path(config.cluster.repo_path).expanduser()} && "
+        f"uv run python -m kego.cli.runner {cluster_script} {args_str}"
+    )
+    return _submit_http(config, entrypoint, runtime_env)
 
 
 def submit(
@@ -131,20 +127,7 @@ def submit(
     experiment_id: str,
     cli_params: dict[str, str],
 ) -> list[str]:
-    """Submit one Ray job per fold. Returns list of Ray submission IDs.
-
-    Args:
-        script: Path to training script
-        folds: List of fold indices to submit
-        base_args: Base script arguments (without fold-specific args)
-        config: KegoConfig with cluster settings
-        experiment_name: MLflow experiment name
-        experiment_id: 6-char experiment ID for tagging
-        cli_params: CLI parameters to pre-log as MLflow params
-
-    Returns:
-        List of Ray submission IDs (e.g. ['raysubmit_A', 'raysubmit_B', ...])
-    """
+    """Submit one Ray job per fold. Returns list of Ray submission IDs."""
     job_ids: list[str] = []
     for fold in folds:
         fold_args = [*base_args, "--fold", str(fold)]

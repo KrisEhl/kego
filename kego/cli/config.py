@@ -13,6 +13,7 @@ except ImportError:
 class ClusterConfig:
     ray_address: str
     mlflow_uri: str
+    repo_path: str = "~/projects/kego"
     default_resources: dict = field(default_factory=lambda: {"num_gpus": 0.5})
     heavy_resources: dict = field(default_factory=lambda: {"num_gpus": 1})
 
@@ -79,6 +80,7 @@ def load_config(
     cluster = ClusterConfig(
         ray_address=c["ray_address"],
         mlflow_uri=c["mlflow_uri"],
+        repo_path=c.get("repo_path", "~/projects/kego"),
         default_resources=resources.get("default", {"num_gpus": 0.5}),
         heavy_resources=resources.get("heavy", {"num_gpus": 1}),
     )
