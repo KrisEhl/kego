@@ -1,6 +1,6 @@
 import os
 import textwrap
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -67,7 +67,7 @@ def test_run_returns_zero_on_success(dummy_script):
         "KEGO_EXPERIMENT_ID": "abc123",
         "KEGO_CLI_PARAMS": "{}",
     }
-    with patch.dict(os.environ, env_vars), patch("kego.cli.runner._log_to_mlflow"):
+    with patch.dict(os.environ, env_vars):
         exit_code = run([str(dummy_script)])
     assert exit_code == 0
 
@@ -79,38 +79,44 @@ def test_run_returns_nonzero_on_failure(failing_script):
         "KEGO_EXPERIMENT_ID": "abc123",
         "KEGO_CLI_PARAMS": "{}",
     }
-    with patch.dict(os.environ, env_vars), patch("kego.cli.runner._log_to_mlflow"):
+    with patch.dict(os.environ, env_vars):
         exit_code = run([str(failing_script)])
     assert exit_code == 1
 
 
 def test_run_captures_metrics(dummy_script):
-    captured = {}
-
-    def fake_log(
-        tracking_uri,
-        experiment_name,
-        run_name,
-        experiment_id,
-        cli_params,
-        metrics,
-        params,
-        extra_tags=None,
-    ):
-        captured.update({"metrics": metrics, "params": params})
+    """Metrics and params from stdout are logged to MLflow."""
+    mock_run = MagicMock()
+    mock_run.__enter__ = MagicMock(return_value=mock_run)
+    mock_run.__exit__ = MagicMock(return_value=False)
 
     env_vars = {
-        "MLFLOW_TRACKING_URI": "",
+        "MLFLOW_TRACKING_URI": "http://fake:5000",
         "KEGO_EXPERIMENT_NAME": "test",
+        "KEGO_RUN_NAME": "test-run",
         "KEGO_EXPERIMENT_ID": "abc123",
         "KEGO_CLI_PARAMS": "{}",
     }
     with (
         patch.dict(os.environ, env_vars),
-        patch("kego.cli.runner._log_to_mlflow", side_effect=fake_log),
+        patch("mlflow.set_tracking_uri"),
+        patch("mlflow.set_experiment"),
+        patch("mlflow.start_run", return_value=mock_run),
+        patch("mlflow.log_params") as mock_log_params,
+        patch("mlflow.log_metric") as mock_log_metric,
+        patch("mlflow.set_tag"),
+        patch("mlflow.end_run"),
     ):
         run([str(dummy_script)])
 
-    assert captured["metrics"]["fold_auc"] == pytest.approx(0.8821)
-    assert captured["metrics"]["val_loss"] == pytest.approx(0.3142)
-    assert captured["params"]["backbone"] == "efficientnet_b0"
+    logged_metrics = {
+        call.args[0]: call.args[1] for call in mock_log_metric.call_args_list
+    }
+    assert logged_metrics["fold_auc"] == pytest.approx(0.8821)
+    assert logged_metrics["val_loss"] == pytest.approx(0.3142)
+
+    # KEGO_PARAM backbone should be in one of the log_params calls
+    all_params = {}
+    for call in mock_log_params.call_args_list:
+        all_params.update(call.args[0])
+    assert all_params["backbone"] == "efficientnet_b0"

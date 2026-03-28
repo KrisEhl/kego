@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -41,38 +42,6 @@ def parse_kego_lines(
     return metrics, params
 
 
-def _log_to_mlflow(
-    tracking_uri: str,
-    experiment_name: str,
-    run_name: str,
-    experiment_id: str,
-    cli_params: dict[str, str],
-    metrics: dict[str, float],
-    params: dict[str, str],
-    extra_tags: dict[str, str] | None = None,
-) -> None:
-    """Log everything to MLflow. No-op if tracking_uri is empty."""
-    if not tracking_uri:
-        return
-    import logging
-
-    import mlflow
-
-    logging.getLogger("mlflow").setLevel(logging.WARNING)
-    logging.getLogger("alembic").setLevel(logging.WARNING)
-
-    tags = {"kego_id": experiment_id, **(extra_tags or {})}
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(experiment_name)
-    with mlflow.start_run(run_name=run_name, tags=tags):
-        if cli_params:
-            mlflow.log_params(cli_params)
-        if params:
-            mlflow.log_params(params)
-        for name, value in metrics.items():
-            mlflow.log_metric(name, value)
-
-
 def run(argv: list[str]) -> int:
     """Run script at argv[0] with args argv[1:], tracking KEGO_ lines."""
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
@@ -80,6 +49,27 @@ def run(argv: list[str]) -> int:
     run_name = os.environ.get("KEGO_RUN_NAME", experiment_name)
     experiment_id = os.environ.get("KEGO_EXPERIMENT_ID", "unknown")
     cli_params = json.loads(os.environ.get("KEGO_CLI_PARAMS", "{}"))
+    target = os.environ.get("KEGO_TARGET", "local")
+    debug = os.environ.get("KEGO_DEBUG", "false")
+
+    # Open the MLflow run before launching the script so it appears as RUNNING
+    active_run = None
+    if tracking_uri:
+        import mlflow
+
+        logging.getLogger("mlflow").setLevel(logging.WARNING)
+        logging.getLogger("alembic").setLevel(logging.WARNING)
+
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(experiment_name)
+        tags = {
+            "kego_id": experiment_id,
+            "kego_target": target,
+            "kego_debug": debug,
+        }
+        active_run = mlflow.start_run(run_name=run_name, tags=tags)
+        if cli_params:
+            mlflow.log_params(cli_params)
 
     cmd = [sys.executable, *list(argv)]
     process = subprocess.Popen(  # noqa: S603
@@ -101,23 +91,15 @@ def run(argv: list[str]) -> int:
 
     metrics, params = parse_kego_lines(collected_lines)
 
-    target = os.environ.get("KEGO_TARGET", "local")
-    debug = os.environ.get("KEGO_DEBUG", "false")
+    if active_run is not None:
+        import mlflow
 
-    _log_to_mlflow(
-        tracking_uri,
-        experiment_name,
-        run_name,
-        experiment_id,
-        cli_params,
-        metrics,
-        params,
-        extra_tags={
-            "kego_exit_code": str(process.returncode),
-            "kego_target": target,
-            "kego_debug": debug,
-        },
-    )
+        if params:
+            mlflow.log_params(params)
+        for name, value in metrics.items():
+            mlflow.log_metric(name, value)
+        mlflow.set_tag("kego_exit_code", str(process.returncode))
+        mlflow.end_run(status="FINISHED" if process.returncode == 0 else "FAILED")
 
     return process.returncode
 

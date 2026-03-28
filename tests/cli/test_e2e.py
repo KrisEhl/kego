@@ -104,7 +104,7 @@ def test_run_nonzero_exit_still_logs(tmp_path: Path, repo_root: Path) -> None:
     assert result.returncode != 0
 
     ls_result = _run_kego(["ls", "--all"], env=env, cwd=repo_root)
-    assert "FINISHED" in ls_result.stdout
+    assert "FAILED" in ls_result.stdout  # non-zero exit → FAILED status in MLflow
 
 
 def test_ls_offline_mlflow_fails_fast(tmp_path: Path, repo_root: Path) -> None:
