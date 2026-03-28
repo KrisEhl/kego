@@ -54,13 +54,14 @@ def _build_runtime_env(
     return {"env_vars": env_vars}
 
 
-def _submit_http(config: KegoConfig, entrypoint: str, runtime_env: dict) -> str:
+def _submit_http(
+    config: KegoConfig, entrypoint: str, runtime_env: dict, resources: dict
+) -> str:
     """Submit a Ray job via the HTTP API. Returns the submission ID."""
     # Ray address is http://host:8265 — jobs API lives at /api/jobs/
     base = config.cluster.ray_address.rstrip("/")
     url = f"{base}/api/jobs/"
 
-    resources = config.cluster.default_resources
     body = {
         "entrypoint": entrypoint,
         "runtime_env": runtime_env,
@@ -104,6 +105,7 @@ def submit_fold(
     experiment_id: str,
     cli_params: dict[str, str],
     mlflow_run_id: str | None = None,
+    resources: dict | None = None,
 ) -> str:
     """Submit one fold as a Ray job. Returns the Ray submission ID."""
     cluster_script = _cluster_script_path(script, config)
@@ -115,7 +117,9 @@ def submit_fold(
         f"cd {config.cluster.uv_project_dir} && "
         f"uv run python -m kego.cli.runner {cluster_script} {args_str}"
     )
-    return _submit_http(config, entrypoint, runtime_env)
+    return _submit_http(
+        config, entrypoint, runtime_env, resources or config.cluster.default_resources
+    )
 
 
 def submit(
@@ -128,6 +132,7 @@ def submit(
     experiment_id: str,
     cli_params: dict[str, str],
     mlflow_run_ids: dict[int, str] | None = None,
+    resources: dict | None = None,
 ) -> list[str]:
     """Submit one Ray job per fold. Returns list of Ray submission IDs."""
     job_ids: list[str] = []
@@ -144,6 +149,7 @@ def submit(
             experiment_id,
             fold_params,
             mlflow_run_id=run_id,
+            resources=resources,
         )
         print(f"  fold {fold}: {job_id}", flush=True)
         job_ids.append(job_id)

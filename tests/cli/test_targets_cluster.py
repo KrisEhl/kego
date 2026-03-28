@@ -63,7 +63,7 @@ def test_submit_fold_calls_http_api(config):
         )
     assert job_id == "raysubmit_ABC"
     mock_http.assert_called_once()
-    _, entrypoint, _ = mock_http.call_args[0]
+    _, entrypoint, _, _ = mock_http.call_args[0]
     assert "kego.cli.runner" in entrypoint
     assert "--fold" in entrypoint
 
@@ -80,6 +80,7 @@ def test_submit_fans_out_folds(config):
         experiment_id,
         cli_params,
         mlflow_run_id=None,
+        resources=None,
     ):
         submitted.append({"script_args": script_args, "cli_params": cli_params})
         return f"raysubmit_fold{len(submitted)}"
