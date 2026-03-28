@@ -36,7 +36,7 @@ Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches 
 - v36 CNN (4-fold v7 only, reverted from 8-model blend) — kernel v36 COMPLETE — v35 timed out in scoring env (8 models too slow)
 - Perch v2 standalone — kernel `aldisued/birdclef-2026-perch-v2-inference` v3 — yesterday's submission was over daily limit, resubmit today
 
-**Active work**: Pseudo-label pipeline (Step 9) — highest priority, expected +0.010–0.020 LB
+**Active work**: Step 9 closed (pseudo-label pretraining = dead end). Next: see next steps below.
 
 ### Results
 
@@ -68,8 +68,9 @@ Gap to public top notebooks (0.912) = **0.030**. Two distinct public approaches 
 | **v31: PyTorch 2 best folds + circular TTA** | **0.857** | **REGRESSION** — fold diversity (4 folds) worth ~0.025 more than circular TTA. Dropping 2 folds not worth it. |
 | **v32: sharpened smooth + temperature T=1.1** | **0.881** | post-processing swap — neutral (±0.001 vs 0.882) |
 | **v35: 4-fold v7 + 4-fold HGNetV2-Baseline blend** | **TIMEOUT** | 8 models too slow for scoring env (COMPLETE, blank score) — reverted to 4×v7 for v36 |
-| **v36: 4-fold v7 only** | **pending** | reverted to proven config; kernel COMPLETE; submit Mar 27 |
+| **v36: 4-fold v7 only** | **pending** | reverted to proven config; kernel COMPLETE; submit when slot available |
 | **Perch v2 port (kernel perch-v2-inference v3)** | **pending** | over daily limit Mar 27 — resubmit; expected ~0.905–0.912 |
+| **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 
 ### Local validation findings
 
@@ -135,89 +136,33 @@ Key insights from field literature (see `research-lit.md`):
 
 ## Next steps (ordered by expected impact)
 
-### 🎯 Step 9 — Pseudo-Label Pipeline (HIGHEST PRIORITY) — Expected +0.010–0.020 LB
+### ❌ Step 9 — Pseudo-Label Pipeline — DEAD END (Mar 28)
 
-**Why**: Local validation is broken. The 66 labeled soundscapes have leakage (trained on them, evaluated on them), cover only 75/234 species, and are 64.5% station S22 while S01/S02/S13 make up 63% of all soundscapes but have zero labels. Soundscape cmAP has ±0.008 CI — can't detect improvements <0.010. Fix: generate soft pseudo-labels from 10,592 unlabeled soundscapes, fix the leakage, build a better validation set, then train with pseudo-labels.
+**Infrastructure built** (reusable for future experiments):
+- `data/pseudo_label_cnn_soft.py` — generates soft `.npz` pseudo-labels from any checkpoint ensemble
+- `eval/eval_pseudo_val.py` — evaluates ensembles on 500 S01/S02 files vs pseudo-labels
+- `train_cnn.py --soundscape-val-frac 0.15` — leakage-free soundscape cmAP validation (14 held-out files, stratified by station, seed=42)
 
-**Key insight**: The `PerchDataset` class + `--perch-npz`/`--perch-epochs`/`--perch-min-prob` flags are already in `train_cnn.py`. Phase 3 and 4 only need generating the right `.npz` input file.
+**Validation findings** (sc_cmap on 14 held-out labeled soundscapes with real labels):
 
----
+| Model | sc_cmap | Notes |
+|---|---|---|
+| v7 4-fold ensemble | **0.9762** | baseline — no pseudo-labels |
+| v9 (5ep, min-prob 0.1, 126K windows) | 0.65 | −0.33 vs v7 |
+| v9b (5ep, min-prob 0.3, 93K windows) | 0.62 | worse — fewer windows didn't help |
+| v9c (2ep, min-prob 0.1, 126K windows) | 0.69 | best variant — fewer epochs = less damage |
+| v9d (1ep, min-prob 0.1, 126K windows) | 0.69 | same as v9c — floor reached |
 
-#### Phase 0 — CNN Soft-Label Generation (prerequisite, ~2h runtime)
+**Root cause**: Two-stage pretraining (Stage 1 pseudo-labels → Stage 2 XC fine-tuning) is a net regression regardless of pretraining duration. Even 1 epoch of Stage 1 on 126K noisy pseudo-label windows costs ~0.28 sc_cmap that 30 epochs of fine-tuning cannot recover. The teacher (v7, LB 0.882) is not accurate enough on these stations for the student to benefit.
 
-Run 4-fold soundscape-v7 ensemble on all 10,592 unlabeled soundscapes. Save full `(12, 234)` float32 probability arrays — no threshold filter. Output: `data/birdclef/birdclef-2026/cnn_pseudo_labels_soft.npz` in PerchDataset `.npz` format (`filenames`, `labels`, `species` arrays).
+**Why it failed here but works in BirdCLEF 2024/2025**: Those solutions use pseudo-labeling to handle species with very few XC training clips (<10 examples). Our 234 species are reasonably covered (median 125 clips/species). Pseudo-labels on unlabeled soundscapes add domain-shift signal but the XC training already covers the taxonomy — the added noise outweighs the benefit.
 
-**Key difference from prior failure**: Prior `pseudo_label_self.py` used hard threshold → discarded 99% of signal. This time: save ALL windows as soft labels, let `--perch-min-prob` filter at training time.
+**What to try instead** (if pseudo-labels are revisited):
+- Mix pseudo-labels directly into Stage 2 training (same loader as XC data, weighted down) rather than separate pretraining stage
+- Use only very high-confidence windows (min-prob 0.5+, ~10K windows) as hard-label augmentation
+- Use Perch embeddings as features rather than pseudo-labels for training
 
-Script: `data/pseudo_label_cnn_soft.py` (new). Split across 2 GPUs, merge outputs. Estimated 2–3h wall-clock. Reserve 500 files from S01/S02/S13 as held-out val set (exclude from generation or filter at training time).
-
-- [ ] Write `data/pseudo_label_cnn_soft.py`
-- [ ] Run on cluster (2× RTX 3090), merge outputs
-- [ ] Verify output: check label density, spot-check file predictions
-
----
-
-#### Phase 1 — Fix Validation Leakage (1–2h, no retraining)
-
-Add `--soundscape-val-frac 0.15` to `train_cnn.py`: hold out ~10 labeled soundscape files from training, evaluate on those only. Gives a true OOF soundscape signal for future training runs.
-
-- [ ] Add `--soundscape-val-frac` arg, stratified split by station, use as eval metric
-
----
-
-#### Phase 2 — Pseudo-Val Set from Unlabeled Soundscapes (2h, no retraining)
-
-Select 500 files from S01/S02/S13 (held out from Phase 0). Write `eval/eval_pseudo_val.py`: run ensemble on 500 files, compute cmAP against CNN pseudo-labels (threshold 0.2). Use as secondary diagnostic metric going forward.
-
-**Caveat**: Circular (CNN vs CNN) — use only to detect large regressions (>0.015 drop), not for fine-grained ranking.
-
-- [ ] Select 500 val files (seed=42), write eval script
-
----
-
-#### Phase 3 — CNN Soft-Label Training / soundscape-v9 (MAIN EXPERIMENT)
-
-Train using `PerchDataset` with `cnn_pseudo_labels_soft.npz`. Stage-1: pseudo-label pretraining. Stage-2: XC fine-tuning. Exclude 500 pseudo-val files.
-
-```bash
-python training/train_cnn.py \
-  --baseline --soundscape-labels --htk --warm-restarts --gain-aug \
-  --perch-npz data/birdclef/birdclef-2026/cnn_pseudo_labels_soft.npz \
-  --perch-epochs 5 --perch-min-prob 0.1 \
-  --fold 0 --n_folds 4 --tag soundscape-v9-pseudolabels
-```
-
-**Expected: +0.005–0.020 LB**. BirdCLEF 2024/2025 top solutions used this exact approach for +0.015–0.040. Our CNN has much more signal on Pantanal species than Perch did in prior attempt (0.882 vs 0.677 baseline).
-
-- [ ] Verify `PerchDataset` works with CNN-format `.npz`
-- [ ] Launch folds 0+1, then 2+3
-- [ ] Submit to Kaggle
-
----
-
-#### Phase 4 — Perch Soft Labels (parallel track, independent label source)
-
-Run `archive/pseudo_label_perch.py` on all unlabeled soundscapes — produces `perch_pseudo_labels_soft.npz` with Perch logits→234 species mapping. Then train the same way. Independent from CNN → avoids circular bias. Covers 158/234 Aves species.
-
-**Prior failure was not label generation but downstream training**: used hard CSV threshold + wrong dataset class. `PerchDataset` + soft labels = different experiment.
-
-Prerequisite: TF 2.x on cluster (`python -c "import tensorflow"`). Estimated 35 min generation on 2 GPUs batched.
-
-- [ ] Verify TF on cluster
-- [ ] Run `archive/pseudo_label_perch.py` on all soundscapes
-- [ ] Train with Perch pseudo-labels, compare vs CNN pseudo-labels
-
----
-
-#### Expected Impact Summary
-
-| Phase | What | LB gain | Effort |
-|---|---|---|---|
-| 0 | CNN soft-label generation | (prerequisite) | 3h code + 2h compute |
-| 1 | Val leakage fix | Better local signal only | 1–2h |
-| 2 | Pseudo-val eval | Better local signal only | 2h |
-| 3 | CNN soft-label training | **+0.005–0.020** | 1h code + 12h train |
-| 4 | Perch soft-label training | +0.005–0.015 on top | 0.5h + 35min gen |
+**Phase 4 (Perch soft labels)** — deprioritized. Same architecture issue applies; Perch is also weaker than v7 on these species (LB 0.677 vs 0.882).
 
 ---
 
