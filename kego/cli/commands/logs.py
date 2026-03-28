@@ -100,11 +100,23 @@ def _logs(args: argparse.Namespace, extra_args: list[str]) -> int:
 
         client = MlflowClient()
 
-        runs = client.search_runs(
-            experiment_ids=[e.experiment_id for e in client.search_experiments()],
+        experiment_ids = [e.experiment_id for e in client.search_experiments()]
+        by_id = client.search_runs(
+            experiment_ids=experiment_ids,
             filter_string=f"tags.kego_id LIKE '{args.id}%'",
             max_results=10,
         )
+        by_name = client.search_runs(
+            experiment_ids=experiment_ids,
+            filter_string=f"tags.`mlflow.runName` LIKE '%{args.id}%'",
+            max_results=10,
+        )
+        seen: set[str] = set()
+        runs = []
+        for r in [*by_id, *by_name]:
+            if r.info.run_id not in seen:
+                seen.add(r.info.run_id)
+                runs.append(r)
     except Exception as e:
         print(f"Error reaching MLflow at {tracking_uri}: {e}")
         return 1
