@@ -73,6 +73,10 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
 
     filter_string = " AND ".join(filter_parts) if filter_parts else ""
 
+    import os
+
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "5")
+
     try:
         runs = mlflow.search_runs(
             search_all_experiments=True,
