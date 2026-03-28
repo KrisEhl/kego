@@ -4,4 +4,4 @@ mlflow_uri = "http://192.168.178.32:5000"
 
 [cluster.resources]
 default = {num_gpus = 0.5}
-heavy = {num_gpus = 1}
+heavy = {num_gpus = 1, resources = {"heavy_gpu" = 1}}
