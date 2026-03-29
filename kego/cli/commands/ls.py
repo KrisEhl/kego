@@ -44,6 +44,7 @@ def format_table(
     runs: pd.DataFrame,
     primary_metric: str,
     exp_names: dict[str, str] | None = None,
+    show_metric_name: bool = False,
 ) -> list[str]:
     """Format experiment runs into a table. Returns list of lines."""
     import pandas as pd
@@ -53,9 +54,10 @@ def format_table(
 
     fallback_metric = _resolve_metric(runs, primary_metric)
 
+    metric_name_col = f" {'METRIC_NAME':<10}" if show_metric_name else ""
     header = (
         f"{'ID':<8} {'NAME':<26} {'COMPETITION':<20} {'TARGET':<8}"
-        f" {'METRIC':>8} {'STATUS':<10} {'AGO'}"
+        f" {'METRIC':>8}{metric_name_col} {'STATUS':<10} {'AGO'}"
     )
     sep = "-" * len(header)
     lines = [header, sep]
@@ -66,13 +68,15 @@ def format_table(
         mlflow_exp_id = str(row.get("experiment_id", ""))
         competition = (exp_names or {}).get(mlflow_exp_id, "?")[:20]
         target = str(row.get("tags.kego_target", "local"))[:8]
+        metric_name = str(row.get("tags.kego_primary_metric") or fallback_metric)
         metric = _metric_str(row, fallback_metric)
         status = str(row.get("status", "?"))[:10]
         start = row.get("start_time")
         ago = _ago(start) if start is not None and pd.notna(start) else "?"
+        metric_name_cell = f" {metric_name:<10}" if show_metric_name else ""
         lines.append(
             f"{exp_id:<8} {name:<26} {competition:<20} {target:<8}"
-            f" {metric:>8} {status:<10} {ago}"
+            f" {metric:>8}{metric_name_cell} {status:<10} {ago}"
         )
 
     return lines
@@ -86,6 +90,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         action="store_true",
         dest="show_all",
         help="Include debug runs",
+    )
+    p.add_argument(
+        "--metric-name",
+        action="store_true",
+        dest="show_metric_name",
+        help="Show metric name column",
     )
     p.set_defaults(func=_ls)
 
@@ -142,7 +152,7 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
     if config.competition:
         primary_metric = config.competition.primary_metric
 
-    for line in format_table(runs, primary_metric, exp_names):
+    for line in format_table(runs, primary_metric, exp_names, args.show_metric_name):
         print(line)
 
     return 0
