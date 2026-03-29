@@ -136,7 +136,7 @@ def _start_mlflow(config: cfg_module.KegoConfig) -> int:
         f"--default-artifact-root mlflow-artifacts:/ "
         f"--artifacts-destination {mlflow_dir}/artifacts "
         f"--host 0.0.0.0 --port {mlflow_port} "
-        f"> {mlflow_dir}/server.log 2>&1 & echo $! > {mlflow_dir}/server.pid"
+        f"< /dev/null > {mlflow_dir}/server.log 2>&1 & echo $! > {mlflow_dir}/server.pid"
     )
     return _ssh_run(config.cluster.ssh_host, cmd)
 
