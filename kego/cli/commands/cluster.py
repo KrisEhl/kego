@@ -39,12 +39,16 @@ def _cluster(args: argparse.Namespace, extra_args: list[str]) -> int:
     return 1
 
 
-def _ssh_run(ssh_host: str, cmd: str) -> int:
-    # SSH non-interactive sessions don't load the shell profile, so prepend
-    # the common uv install locations to PATH explicitly.
+def _ssh_run(ssh_host: str, cmd: str, detached: bool = False) -> int:
+    """Run a command on the remote host via SSH.
+
+    detached=True adds -n to prevent local stdin from blocking the SSH session,
+    required when the remote command backgrounds a process (nohup ... &).
+    """
     full_cmd = 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && ' + cmd
+    ssh_flags = ["-n"] if detached else []
     result = subprocess.run(  # noqa: S603
-        ["ssh", "-n", ssh_host, full_cmd],  # noqa: S607
+        ["ssh", *ssh_flags, ssh_host, full_cmd],  # noqa: S607
         text=True,
     )
     return result.returncode
@@ -140,7 +144,7 @@ def _start_mlflow(config: cfg_module.KegoConfig) -> int:
         f"--host 0.0.0.0 --port {mlflow_port} "
         f"< /dev/null > {mlflow_dir}/server.log 2>&1 & echo $! > {mlflow_dir}/server.pid"
     )
-    return _ssh_run(config.cluster.ssh_host, cmd)
+    return _ssh_run(config.cluster.ssh_host, cmd, detached=True)
 
 
 def _stop(config: cfg_module.KegoConfig) -> int:
