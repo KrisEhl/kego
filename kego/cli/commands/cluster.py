@@ -94,6 +94,16 @@ def _start(config: cfg_module.KegoConfig) -> int:
     if rc != 0:
         return rc
 
+    # Skip Ray if already running (gcs_server is the head process)
+    check_ray = "pgrep -x gcs_server > /dev/null 2>&1"
+    result = subprocess.run(  # noqa: S603
+        ["ssh", config.cluster.ssh_host, check_ray],  # noqa: S607
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        print("Ray head already running — skipping")
+        return 0
+
     print(f"Starting Ray head on {config.cluster.ssh_host}...")
     return _ssh_run(config.cluster.ssh_host, cmd)
 
