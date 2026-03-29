@@ -1,5 +1,9 @@
 import argparse
+import os
 import sys
+
+# MLflow's default HTTP timeout is 120s. Fail fast so CLI stays responsive.
+os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
 
 
 def main() -> None:
