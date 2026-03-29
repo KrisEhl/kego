@@ -1,0 +1,20 @@
+{
+  "id": "aldisued/birdclef-2026-perch-cnn-blend-inference",
+  "title": "BirdCLEF 2026 Perch+CNN Blend Inference",
+  "code_file": "kaggle_blend_inference.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "jaejohn/perch-meta"
+  ],
+  "competition_sources": ["birdclef-2026"],
+  "kernel_sources": [
+    "kdmitrie/bc26-tensorflow-2-20-0",
+    "aldisued/birdclef-2026-baseline-inference"
+  ],
+  "model_sources": ["google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1"]
+}
