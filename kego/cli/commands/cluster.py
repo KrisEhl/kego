@@ -50,6 +50,7 @@ def _ssh_run(ssh_host: str, cmd: str) -> int:
 def sync_repo(config: cfg_module.KegoConfig) -> int:
     """Git pull on the cluster head node. Returns 0 on success."""
     if not config.cluster.ssh_host:
+        print("Warning: ssh_host not set in kego.toml [cluster] — skipping repo sync")
         return 0
     print(f"Syncing repo on {config.cluster.ssh_host}...", flush=True)
     return _ssh_run(
