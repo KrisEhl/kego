@@ -40,8 +40,11 @@ def _cluster(args: argparse.Namespace, extra_args: list[str]) -> int:
 
 
 def _ssh_run(ssh_host: str, cmd: str) -> int:
+    # SSH non-interactive sessions don't load the shell profile, so prepend
+    # the common uv install locations to PATH explicitly.
+    full_cmd = 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && ' + cmd
     result = subprocess.run(  # noqa: S603
-        ["ssh", ssh_host, cmd],  # noqa: S607
+        ["ssh", ssh_host, full_cmd],  # noqa: S607
         text=True,
     )
     return result.returncode
