@@ -208,21 +208,20 @@ Both blend attempts timed out despite local estimates well under budget:
 | Blend v2 (Perch + 4-fold no-overlap CNN) | ~51 min | >90 min | ❌ timeout |
 | Blend v3 (Perch + 2-fold no-overlap CNN) | ~29 min | >90 min | ❌ timeout |
 
-**Root cause: memory pressure from running TF + PyTorch in the same kernel.**
+**Root cause: unknown.** Speculation: memory pressure from running TF + PyTorch in the same kernel may cause swapping in scoring env. But this is not proven — we don't have logs from the failed runs (kaggle kernels output only returns latest version's log).
 
-- Perch loads a TF SavedModel (~200MB) + keeps embeddings/scores in RAM
-- CNN loads 2–4 PyTorch checkpoints (~100MB each) + timm backbone
-- Combined RAM usage (~2–3GB) likely exhausts scoring env RAM → OS starts swapping → 10–50× slowdown
-- Each model standalone stays under RAM threshold → no swapping → completes fine
+**What we do know from kernel v4 dry-run log (20 files, 315s = 5.3 min)**:
+- TF wheels install: 71s fixed overhead
+- CNN per-file speed (scoring env): 13.4s first file (warmup), **0.8s/file** thereafter
+- For 739 real test soundscapes: CNN 1-fold = 13.4 + 738×0.8 ≈ **10 min**; CNN 2-fold ≈ 20 min
+- Perch standalone completes fine (LB 0.912) so Perch time alone is within budget
 
-**Evidence**: 2-fold no-overlap CNN (~22 min locally) should be faster than 4-fold 50%-overlap CNN (~35 min locally, LB 0.882 scored fine). Yet it still timed out when combined with Perch. The bottleneck is not compute but memory.
+**The math should have worked for blend v3** (2-fold: ~20 min CNN + ~25 min Perch = ~45 min). Yet it timed out. Without the actual v2/v3 logs we cannot confirm why.
 
-**Fix for blend v4 (kernel v3)**:
-1. After Perch inference completes, explicitly free TF objects: `del birdclassifier, infer_fn, emb_test, Z_TEST; gc.collect()`
-2. Load CNN folds one at a time (load → infer → delete → next fold) rather than keeping all in RAM
-3. `MAX_CNN_FOLDS=1` as a further safeguard (~11 min locally)
-
-**TODO**: blend v4 notebook does NOT yet implement the explicit TF memory release or fold-by-fold loading. This should be added before submitting to prevent another timeout.
+**What we did (belt-and-suspenders approach)**:
+1. Explicit TF memory release after Perch: `del birdclassifier, infer_fn` + large arrays + `gc.collect()` — may help if RAM was the issue
+2. Fold-by-fold CNN loading (load → infer → del → next) — minimises peak RAM regardless
+3. `MAX_CNN_FOLDS=1` — only 10 min CNN, leaves 80 min headroom regardless of cause
 
 ---
 
