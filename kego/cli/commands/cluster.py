@@ -47,6 +47,16 @@ def _ssh_run(ssh_host: str, cmd: str) -> int:
     return result.returncode
 
 
+def sync_repo(config: cfg_module.KegoConfig) -> int:
+    """Git pull on the cluster head node. Returns 0 on success."""
+    if not config.cluster.ssh_host:
+        return 0
+    print(f"Syncing repo on {config.cluster.ssh_host}...", flush=True)
+    return _ssh_run(
+        config.cluster.ssh_host, f"cd {config.cluster.repo_path} && git pull"
+    )
+
+
 def _start(config: cfg_module.KegoConfig) -> int:
     if not config.cluster.ssh_host:
         print("Error: ssh_host not set in kego.toml [cluster]")
@@ -70,6 +80,10 @@ def _start(config: cfg_module.KegoConfig) -> int:
         f"--num-cpus=$(expr $(nproc --all) - 2) "
         f"--resources '{{\"heavy_gpu\": 1}}'"
     )
+
+    rc = sync_repo(config)
+    if rc != 0:
+        return rc
 
     print(f"Starting Ray head on {config.cluster.ssh_host}...")
     return _ssh_run(config.cluster.ssh_host, cmd)

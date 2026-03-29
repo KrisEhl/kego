@@ -7,6 +7,7 @@ from pathlib import Path
 
 from kego.cli import config as cfg_module
 from kego.cli import experiment as exp_module
+from kego.cli.commands.cluster import sync_repo
 from kego.cli.targets import cluster as cluster_target
 from kego.cli.targets import local as local_target
 
@@ -171,6 +172,10 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
         )
 
     elif args.target == "cluster":
+        rc = sync_repo(config)
+        if rc != 0:
+            return rc
+
         resolved_folds = folds if folds is not None else [0]
 
         # Pre-create one MLflow run per fold so jobs appear immediately in kego ls.
