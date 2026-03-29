@@ -46,6 +46,8 @@ def format_table(
     exp_names: dict[str, str] | None = None,
 ) -> list[str]:
     """Format experiment runs into a table. Returns list of lines."""
+    import pandas as pd
+
     if runs.empty:
         return ["No experiments found."]
 
