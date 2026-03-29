@@ -208,20 +208,28 @@ Both blend attempts timed out despite local estimates well under budget:
 | Blend v2 (Perch + 4-fold no-overlap CNN) | ~51 min | >90 min | ❌ timeout |
 | Blend v3 (Perch + 2-fold no-overlap CNN) | ~29 min | >90 min | ❌ timeout |
 
-**Root cause: unknown.** Speculation: memory pressure from running TF + PyTorch in the same kernel may cause swapping in scoring env. But this is not proven — we don't have logs from the failed runs (kaggle kernels output only returns latest version's log).
+**Root cause: TF CPU thread oversubscription** (confirmed via BirdCLEF 2025 paper + TF GitHub issues).
 
-**What we do know from kernel v4 dry-run log (20 files, 315s = 5.3 min)**:
-- TF wheels install: 71s fixed overhead
-- CNN per-file speed (scoring env): 13.4s first file (warmup), **0.8s/file** thereafter
-- For 739 real test soundscapes: CNN 1-fold = 13.4 + 738×0.8 ≈ **10 min**; CNN 2-fold ≈ 20 min
-- Perch standalone completes fine (LB 0.912) so Perch time alone is within budget
+TF consumes ALL CPUs by default and does **not** release its thread pools after inference. When PyTorch runs after TF in the same kernel, both compete for the same 2-core Kaggle CPU → oversubscription → 2-4× slowdown. This alone explains a 45-min estimate becoming 100+ min.
 
-**The math should have worked for blend v3** (2-fold: ~20 min CNN + ~25 min Perch = ~45 min). Yet it timed out. Without the actual v2/v3 logs we cannot confirm why.
+Key facts from research:
+- `del birdclassifier; gc.collect()` does NOT free TF's internal allocator (TF never does this — documented limitation). Python references are freed but TF's thread pools remain active.
+- TFLite gives **10× speedup** over TF SavedModel: 17s/file → 1.4s/file (BirdCLEF 2025 paper, arxiv 2507.08236). 739 files × 1.4s = 17 min vs 200+ min.
+- Hardware is identical for interactive vs scoring env (2× Intel Xeon, 32GB RAM) — hardware difference is NOT the cause.
+- iopub_timeout (Kaggle's nbclient, default 4s) can silently kill cells with no output — mitigated by `print(flush=True)` in all inference loops.
 
-**What we did (belt-and-suspenders approach)**:
-1. Explicit TF memory release after Perch: `del birdclassifier, infer_fn` + large arrays + `gc.collect()` — may help if RAM was the issue
-2. Fold-by-fold CNN loading (load → infer → del → next) — minimises peak RAM regardless
-3. `MAX_CNN_FOLDS=1` — only 10 min CNN, leaves 80 min headroom regardless of cause
+**What we know from kernel v4 dry-run log (20 files, 315s total)**:
+- TF wheel install: 71s fixed
+- CNN per-file: 13.4s first (warmup), **0.8s/file** thereafter → 739 files 1-fold ≈ **10 min**
+
+**Fixes applied in blend v4 (kernel v5)**:
+1. `tf.config.threading.set_intra_op_parallelism_threads(1)` + `set_inter_op_parallelism_threads(1)` immediately after TF import (limits TF threads before they grab all CPUs)
+2. `torch.set_num_threads(2)` before CNN runs (prevents PyTorch oversubscription)
+3. `del birdclassifier, infer_fn` + `gc.collect()` (frees Python references, won't free TF allocator)
+4. Fold-by-fold CNN loading (minimises peak RAM)
+5. `MAX_CNN_FOLDS=1` (~10 min CNN, ~80 min headroom)
+
+**Future: TFLite conversion** — would give 10× Perch speedup and unlock 4-fold CNN blend. See Step 5h.
 
 ---
 
@@ -411,6 +419,27 @@ Implementation options:
 ### 🎯 Step 5 — CNN improvements (parallel / fallback)
 
 Public 0.892 CNN notebooks use several things we haven't tried:
+
+---
+
+### 🎯 Step 5h — Convert Perch to TFLite (unlock 4-fold blend within budget)
+
+**Expected: unlocks 4-fold CNN blend | No retraining | Medium effort**
+
+BirdCLEF 2025 paper (arxiv 2507.08236): TF SavedModel 17s/file → TFLite 1.4s/file (**10× speedup**).
+For 739 test files: 17 min (TFLite) vs 200+ min (SavedModel). Would bring total blend time to ~27 min with 4-fold CNN.
+
+**Current bottleneck**: `perch_v2_cpu` is a TF SavedModel. TFLite requires conversion + custom ops check.
+
+Steps:
+1. Convert `perch_v2_cpu` SavedModel → TFLite flat buffer locally
+2. Check for unsupported ops (Perch uses XLA ops — may need `TFLiteConverter` with `allow_custom_ops=True`)
+3. Upload TFLite model as Kaggle dataset
+4. Rewrite inference cell to use `tflite.Interpreter` instead of `tf.saved_model.load`
+5. Verify embeddings + logits match SavedModel outputs (max diff < 1e-4)
+6. If TFLite works: increase `MAX_CNN_FOLDS=4`, re-enable full blend
+
+**Alternative**: use `tf.lite.TFLiteConverter.from_saved_model()` — if Perch ops aren't supported in standard TFLite, try `experimental_enable_resource_variables=True` or fall back to ONNX export via `tf2onnx`.
 
 ---
 
