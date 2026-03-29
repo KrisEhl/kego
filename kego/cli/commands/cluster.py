@@ -89,7 +89,44 @@ def _start(config: cfg_module.KegoConfig) -> int:
     if rc != 0:
         return rc
 
+    print(f"Starting MLflow on {config.cluster.ssh_host}...")
+    rc = _start_mlflow(config)
+    if rc != 0:
+        return rc
+
     print(f"Starting Ray head on {config.cluster.ssh_host}...")
+    return _ssh_run(config.cluster.ssh_host, cmd)
+
+
+def _start_mlflow(config: cfg_module.KegoConfig) -> int:
+    mlflow_dir = config.cluster.mlflow_dir
+    parsed = urlparse(config.cluster.mlflow_uri)
+    mlflow_port = parsed.port or 5000
+    uv_dir = config.cluster.uv_project_dir
+
+    # Skip if already running (PID file exists and process is alive)
+    check = (
+        f"[ -f {mlflow_dir}/server.pid ] && "
+        f"kill -0 $(cat {mlflow_dir}/server.pid) 2>/dev/null"
+    )
+    result = subprocess.run(  # noqa: S603
+        ["ssh", config.cluster.ssh_host, check],  # noqa: S607
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        print("  MLflow already running — skipping")
+        return 0
+
+    cmd = (
+        f"mkdir -p {mlflow_dir}/artifacts && "
+        f"cd {uv_dir} && "
+        f"nohup uv run mlflow server "
+        f"--backend-store-uri sqlite:///{mlflow_dir}/mlflow.db "
+        f"--default-artifact-root mlflow-artifacts:/ "
+        f"--artifacts-destination {mlflow_dir}/artifacts "
+        f"--host 0.0.0.0 --port {mlflow_port} "
+        f"> {mlflow_dir}/server.log 2>&1 & echo $! > {mlflow_dir}/server.pid"
+    )
     return _ssh_run(config.cluster.ssh_host, cmd)
 
 
