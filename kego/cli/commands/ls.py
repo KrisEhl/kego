@@ -88,8 +88,6 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
     mlflow.set_tracking_uri(tracking_uri)
 
     filter_parts: list[str] = []
-    if not args.show_all:
-        filter_parts.append("tags.kego_debug != 'true'")
     if args.name:
         filter_parts.append(f"tags.`mlflow.runName` LIKE '{args.name}%'")
 
@@ -105,10 +103,14 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
     except Exception:
         print(
             f"Cannot reach MLflow at {tracking_uri} — is the cluster online?\n"
-            "  Start cluster : make cluster-start\n"
+            "  Start cluster : uv run kego cluster start\n"
             "  Test locally  : MLFLOW_TRACKING_URI=sqlite:///local.db uv run kego ls"
         )
         return 1
+
+    # Filter debug runs in Python — MLflow filter doesn't handle missing tags correctly
+    if not args.show_all and "tags.kego_debug" in runs.columns:
+        runs = runs[runs["tags.kego_debug"] != "true"]
 
     primary_metric = "metric"
     if config.competition:
