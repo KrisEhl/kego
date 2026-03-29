@@ -30,7 +30,7 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB 0.912 (Perch v2, kernel `aldisued/birdclef-2026-perch-v2-inference` v3, Mar 27)
 
-**Blend v2 pending**: `aldisued/birdclef-2026-perch-cnn-blend-v2-inference` v1 submitted Mar 29 — awaiting score.
+**Blend v3 ready**: kernel `aldisued/birdclef-2026-perch-cnn-blend-v2-inference` v2 (2-fold CNN, ~29 min) COMPLETE — submit tomorrow.
 
 **Active work**: Blend Perch v2 + CNN in a single kernel. kernel_sources approach (Step 4 v1) was a dead end — CNN preds from kernel_sources are all-zero (dry-run output). New approach: run both models in the same notebook.
 
@@ -68,7 +68,8 @@ recordings in the Pantanal wetlands, South America.
 | **Perch v2 port (kernel perch-v2-inference v3)** | **0.912** | tied with public top. Full pipeline: Bayesian priors + LogReg probes + genus proxies |
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
-| **Blend v2 (single kernel, CNN_WEIGHT=0.20)** | **pending** | kernel `aldisued/birdclef-2026-perch-cnn-blend-v2-inference` v1 submitted Mar 29 |
+| **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
+| **Blend v3 (single kernel, 2-fold CNN)** | **pending** | kernel v2 COMPLETE — submit tomorrow (slots used up Mar 29) |
 
 ### Local validation findings
 
