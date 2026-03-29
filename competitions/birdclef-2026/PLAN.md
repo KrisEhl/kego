@@ -422,7 +422,7 @@ Public 0.892 CNN notebooks use several things we haven't tried:
 
 ---
 
-### 🎯 Step 5h — Convert Perch to TFLite (unlock 4-fold blend within budget)
+### 🔬 Step 5h — Convert Perch to TFLite (unlock 4-fold blend within budget)
 
 **Expected: unlocks 4-fold CNN blend | No retraining | Medium effort**
 
@@ -431,15 +431,30 @@ For 739 test files: 17 min (TFLite) vs 200+ min (SavedModel). Would bring total 
 
 **Current bottleneck**: `perch_v2_cpu` is a TF SavedModel. TFLite requires conversion + custom ops check.
 
-Steps:
-1. Convert `perch_v2_cpu` SavedModel → TFLite flat buffer locally
-2. Check for unsupported ops (Perch uses XLA ops — may need `TFLiteConverter` with `allow_custom_ops=True`)
-3. Upload TFLite model as Kaggle dataset
-4. Rewrite inference cell to use `tflite.Interpreter` instead of `tf.saved_model.load`
-5. Verify embeddings + logits match SavedModel outputs (max diff < 1e-4)
-6. If TFLite works: increase `MAX_CNN_FOLDS=4`, re-enable full blend
+#### TFLite test results (Mar 29, kernel `aldisued/birdclef-2026-perch-tflite-conversion-test` v1)
 
-**Alternative**: use `tf.lite.TFLiteConverter.from_saved_model()` — if Perch ops aren't supported in standard TFLite, try `experimental_enable_resource_variables=True` or fall back to ONNX export via `tf2onnx`.
+| Step | Result |
+|---|---|
+| TFLite conversion | ✅ **SUCCESS** (26.7s, **407.3 MB** flat buffer) |
+| SavedModel benchmark (20 files) | ✅ 9.53s/file → **117.4 min for 739 files** (already over budget!) |
+| TFLite inference | ❌ **FAILED** — `tf.lite.Interpreter.resize_input_tensor` removed in TF 2.20 |
+
+**SavedModel discrepancy**: benchmark shows 9.53s/file but standalone Perch (LB 0.912) runs in ~6 min.
+Likely explanation: standalone uses batched inference (batch=16) so XLA is fully warm. The test benchmarked AFTER a warmup batch, so this needs further investigation.
+
+**TFLite fix**: `tf.lite.Interpreter` deprecated in TF 2.20 — `resize_input_tensor` removed. Two options:
+1. **Use `ai_edge_litert`** package (official replacement): `from ai_edge_litert.interpreter import Interpreter`. Needs `pip install ai-edge-litert` (internet-enabled kernel or bundled wheel).
+2. **Skip `resize_input_tensor`**: model has fixed input shape `[1, 160000]` so resize is unnecessary. Just call `allocate_tensors()` directly — works with deprecated `tf.lite.Interpreter`.
+
+**Fix applied** in `inference/kaggle_perch_tflite_test.ipynb` Cell 6 (Mar 29): tries `ai_edge_litert` first, falls back to `tf.lite.Interpreter` without resize. Ready to re-run (push as v2).
+
+**If TFLite speed confirmed**: upload `.tflite` file as Kaggle dataset, rewrite blend notebook Perch cell to use `ai_edge_litert.Interpreter`, set `MAX_CNN_FOLDS=4`.
+
+- [x] Convert SavedModel → TFLite (success, 407.3 MB)
+- [x] Identify TFLite inference failure root cause (`resize_input_tensor` removed in TF 2.20)
+- [x] Fix Cell 6 to use `ai_edge_litert` / skip resize
+- [ ] Push fixed test notebook as v2, verify speedup numbers
+- [ ] Upload `.tflite` as Kaggle dataset + update blend notebook with TFLite Perch
 
 ---
 
