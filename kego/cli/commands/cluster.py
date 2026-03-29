@@ -57,7 +57,8 @@ def sync_repo(config: cfg_module.KegoConfig) -> int:
         return 0
     print(f"Syncing repo on {config.cluster.ssh_host}...", flush=True)
     return _ssh_run(
-        config.cluster.ssh_host, f"cd {config.cluster.repo_path} && git pull"
+        config.cluster.ssh_host,
+        f"cd {config.cluster.repo_path} && git checkout -- uv.lock && git pull",
     )
 
 
