@@ -109,7 +109,9 @@ def _start(config: cfg_module.KegoConfig) -> int:
 
 
 def _start_mlflow(config: cfg_module.KegoConfig) -> int:
-    mlflow_dir = config.cluster.mlflow_dir
+    # Replace ~ with $HOME so bash expands it correctly in the remote command.
+    # sqlite:///~/path does NOT expand tilde (not at the start of a shell word).
+    mlflow_dir = config.cluster.mlflow_dir.replace("~/", "$HOME/")
     parsed = urlparse(config.cluster.mlflow_uri)
     mlflow_port = parsed.port or 5000
     uv_dir = config.cluster.uv_project_dir
