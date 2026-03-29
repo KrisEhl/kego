@@ -46,6 +46,9 @@ def _pre_create_runs(
                 "kego_target": "cluster",
                 "kego_debug": "false",
                 "mlflow.runName": run_name,
+                "kego_primary_metric": config.competition.primary_metric
+                if config.competition
+                else "",
             }
             # Create run via low-level client so it stays RUNNING (no context manager).
             # The cluster runner will resume it by run_id and call set_terminated().

@@ -28,23 +28,32 @@ def _resolve_metric(runs: pd.DataFrame, primary_metric: str) -> str:
     return primary_metric
 
 
+def _metric_str(row: pd.Series, fallback_metric: str) -> str:
+    """Return formatted metric value for a single run."""
+    import pandas as pd
+
+    # Prefer per-run kego_primary_metric tag, fall back to table-level resolved metric
+    metric_name = str(row.get("tags.kego_primary_metric") or fallback_metric)
+    if not metric_name:
+        metric_name = fallback_metric
+    val = row.get(f"metrics.{metric_name}")
+    return f"{val:.4f}" if val is not None and pd.notna(val) else "—"
+
+
 def format_table(
     runs: pd.DataFrame,
     primary_metric: str,
     exp_names: dict[str, str] | None = None,
 ) -> list[str]:
     """Format experiment runs into a table. Returns list of lines."""
-    import pandas as pd
-
     if runs.empty:
         return ["No experiments found."]
 
-    primary_metric = _resolve_metric(runs, primary_metric)
-    metric_col = f"metrics.{primary_metric}"
+    fallback_metric = _resolve_metric(runs, primary_metric)
 
     header = (
         f"{'ID':<8} {'NAME':<26} {'COMPETITION':<20} {'TARGET':<8}"
-        f" {primary_metric.upper():>8} {'STATUS':<10} {'AGO'}"
+        f" {'METRIC':>8} {'STATUS':<10} {'AGO'}"
     )
     sep = "-" * len(header)
     lines = [header, sep]
@@ -55,14 +64,13 @@ def format_table(
         mlflow_exp_id = str(row.get("experiment_id", ""))
         competition = (exp_names or {}).get(mlflow_exp_id, "?")[:20]
         target = str(row.get("tags.kego_target", "local"))[:8]
-        raw_metric = row.get(metric_col)
-        metric_str = f"{raw_metric:.4f}" if pd.notna(raw_metric) else "—"
+        metric = _metric_str(row, fallback_metric)
         status = str(row.get("status", "?"))[:10]
         start = row.get("start_time")
         ago = _ago(start) if start is not None and pd.notna(start) else "?"
         lines.append(
             f"{exp_id:<8} {name:<26} {competition:<20} {target:<8}"
-            f" {metric_str:>8} {status:<10} {ago}"
+            f" {metric:>8} {status:<10} {ago}"
         )
 
     return lines
