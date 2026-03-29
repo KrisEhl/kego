@@ -30,7 +30,7 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB 0.912 (Perch v2, kernel `aldisued/birdclef-2026-perch-v2-inference` v3, Mar 27)
 
-**Blend v3 ready**: kernel `aldisued/birdclef-2026-perch-cnn-blend-v2-inference` v2 (2-fold CNN, ~29 min) COMPLETE — submit tomorrow.
+**Blend v4 ready (with fix needed)**: kernel v3 (1-fold CNN) COMPLETE — but needs TF memory release added before submitting. See "Inference time budget" section for root cause.
 
 **Active work**: Blend Perch v2 + CNN in a single kernel. kernel_sources approach (Step 4 v1) was a dead end — CNN preds from kernel_sources are all-zero (dry-run output). New approach: run both models in the same notebook.
 
@@ -69,7 +69,8 @@ recordings in the Pantanal wetlands, South America.
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
-| **Blend v3 (single kernel, 2-fold CNN)** | **pending** | kernel v2 COMPLETE — submit tomorrow (slots used up Mar 29) |
+| **Blend v3 (single kernel, 2-fold CNN)** | **TIMEOUT** | kernel v2 — same memory pressure issue, ~29 min locally → >90 min scoring env |
+| **Blend v4 (single kernel, 1-fold CNN)** | **pending** | kernel v3 COMPLETE — needs TF memory release fix before submitting |
 
 ### Local validation findings
 
@@ -195,6 +196,33 @@ Key insights from field literature (see `research-lit.md`):
 2. Circular TTA doubles inference time — disabled (`tta=False`), keep as opt-in
 
 **Circular TTA**: do NOT re-enable unless timing confirmed safe with a headroom test. v21 scored 0.882 — the public 0.892 uses TTA and fits within 90 min. The previous timeouts (v18/v19) were caused by `rglob` + B1 backbone, both fixed. TTA is the main untried gain — see Step 5b.
+
+#### Blend kernel timeout analysis (Mar 29) — IMPORTANT
+
+Both blend attempts timed out despite local estimates well under budget:
+
+| Kernel | Local runtime | Scoring env | Result |
+|---|---|---|---|
+| Perch v2 standalone | ~7 min | ~30 min | ✅ scores fine |
+| CNN standalone (4-fold, 50% overlap) | ~35 min | ~50 min | ✅ LB 0.882 |
+| Blend v2 (Perch + 4-fold no-overlap CNN) | ~51 min | >90 min | ❌ timeout |
+| Blend v3 (Perch + 2-fold no-overlap CNN) | ~29 min | >90 min | ❌ timeout |
+
+**Root cause: memory pressure from running TF + PyTorch in the same kernel.**
+
+- Perch loads a TF SavedModel (~200MB) + keeps embeddings/scores in RAM
+- CNN loads 2–4 PyTorch checkpoints (~100MB each) + timm backbone
+- Combined RAM usage (~2–3GB) likely exhausts scoring env RAM → OS starts swapping → 10–50× slowdown
+- Each model standalone stays under RAM threshold → no swapping → completes fine
+
+**Evidence**: 2-fold no-overlap CNN (~22 min locally) should be faster than 4-fold 50%-overlap CNN (~35 min locally, LB 0.882 scored fine). Yet it still timed out when combined with Perch. The bottleneck is not compute but memory.
+
+**Fix for blend v4 (kernel v3)**:
+1. After Perch inference completes, explicitly free TF objects: `del birdclassifier, infer_fn, emb_test, Z_TEST; gc.collect()`
+2. Load CNN folds one at a time (load → infer → delete → next fold) rather than keeping all in RAM
+3. `MAX_CNN_FOLDS=1` as a further safeguard (~11 min locally)
+
+**TODO**: blend v4 notebook does NOT yet implement the explicit TF memory release or fold-by-fold loading. This should be added before submitting to prevent another timeout.
 
 ---
 
