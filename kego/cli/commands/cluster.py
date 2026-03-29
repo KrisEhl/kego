@@ -116,10 +116,10 @@ def _start_mlflow(config: cfg_module.KegoConfig) -> int:
     mlflow_port = parsed.port or 5000
     uv_dir = config.cluster.uv_project_dir
 
-    # Skip if already running (PID file exists and process is alive)
+    # Skip if already running (port is bound), clean up stale PID file if not
     check = (
-        f"[ -f {mlflow_dir}/server.pid ] && "
-        f"kill -0 $(cat {mlflow_dir}/server.pid) 2>/dev/null"
+        f"fuser 5000/tcp > /dev/null 2>&1 || "
+        f"{{ rm -f {mlflow_dir}/server.pid; false; }}"
     )
     result = subprocess.run(  # noqa: S603
         ["ssh", config.cluster.ssh_host, check],  # noqa: S607
