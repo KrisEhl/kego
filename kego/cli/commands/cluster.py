@@ -90,7 +90,6 @@ def _start(config: cfg_module.KegoConfig) -> int:
     if rc != 0:
         return rc
 
-    print(f"Starting MLflow on {config.cluster.ssh_host}...")
     rc = _start_mlflow(config)
     if rc != 0:
         return rc
@@ -102,10 +101,10 @@ def _start(config: cfg_module.KegoConfig) -> int:
         capture_output=True,
     )
     if result.returncode == 0:
-        print("Ray head already running — skipping")
+        print("Ray    : already running")
         return 0
 
-    print(f"Starting Ray head on {config.cluster.ssh_host}...")
+    print("Ray    : starting...")
     return _ssh_run(config.cluster.ssh_host, cmd)
 
 
@@ -125,9 +124,10 @@ def _start_mlflow(config: cfg_module.KegoConfig) -> int:
         capture_output=True,
     )
     if result.returncode == 0:
-        print("  MLflow already running — skipping")
+        print("MLflow : already running")
         return 0
 
+    print("MLflow : starting...")
     cmd = (
         f"mkdir -p {mlflow_dir}/artifacts && "
         f"cd {uv_dir} && "
