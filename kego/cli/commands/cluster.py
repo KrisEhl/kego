@@ -44,7 +44,7 @@ def _ssh_run(ssh_host: str, cmd: str) -> int:
     # the common uv install locations to PATH explicitly.
     full_cmd = 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH" && ' + cmd
     result = subprocess.run(  # noqa: S603
-        ["ssh", ssh_host, full_cmd],  # noqa: S607
+        ["ssh", "-n", ssh_host, full_cmd],  # noqa: S607
         text=True,
     )
     return result.returncode
