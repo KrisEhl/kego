@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Quantum feature extraction experiment using Kipu Quantum Rimay"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "kego",
     "lightgbm>=4.0.0",
     "pandas>=2.0.0",
     "numpy>=1.26.0",
@@ -13,3 +14,6 @@ dependencies = [
     "planqk-api-sdk>=1.9.3",
     "ipykernel>=7.2.0",
 ]
+
+[tool.uv.sources]
+kego = { path = "../../..", editable = true }
