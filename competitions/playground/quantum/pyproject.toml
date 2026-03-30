@@ -11,4 +11,5 @@ dependencies = [
     "planqk-quantum>=2.6.0",
     "planqk-service-sdk>=1.4.0",
     "planqk-api-sdk>=1.9.3",
+    "ipykernel>=7.2.0",
 ]
