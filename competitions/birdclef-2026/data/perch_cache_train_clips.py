@@ -54,6 +54,11 @@ CLIP_SAMPLES = SR * 5
 BATCH_SIZE = 32  # clips per infer_tf call — tune if OOM
 SAVE_EVERY = 500  # checkpoint to disk every N clips
 
+# Use a separate output file when running with Perch v2 (1536-dim) vs v4 (1280-dim)
+if PERCH_MODEL_DIR and Path(PERCH_MODEL_DIR).exists():
+    OUT_NPZ = DATA / "perch_train_cache_v2.npz"
+    print(f"Using Perch v2 model → output: {OUT_NPZ}")
+
 # ── load competition species ───────────────────────────────────────────────────
 taxonomy = pd.read_csv(TAXONOMY_CSV)
 competition_species = taxonomy["primary_label"].astype(str).tolist()

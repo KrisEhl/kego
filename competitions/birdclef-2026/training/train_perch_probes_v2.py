@@ -44,7 +44,11 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
 DATA = Path(os.environ.get("KEGO_PATH_DATA", "data")) / "birdclef" / "birdclef-2026"
-CACHE_NPZ = DATA / "perch_train_cache.npz"
+# Prefer v2 cache (Perch v2, 1536-dim) if available; fall back to v4 cache (1280-dim)
+CACHE_NPZ = DATA / "perch_train_cache_v2.npz"
+if not CACHE_NPZ.exists():
+    CACHE_NPZ = DATA / "perch_train_cache.npz"
+    print(f"v2 cache not found, using: {CACHE_NPZ}")
 OUT_PKL = DATA / "perch_probes_v2.pkl"
 
 PCA_DIMS = 64
