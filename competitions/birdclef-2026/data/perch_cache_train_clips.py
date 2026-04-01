@@ -71,9 +71,25 @@ if PERCH_MODEL_DIR and Path(PERCH_MODEL_DIR).exists():
     print(f"\nLoading Perch from local SavedModel: {PERCH_MODEL_DIR}")
     t0 = time.time()
     perch_model = tf.saved_model.load(PERCH_MODEL_DIR)
-    perch_label_csv = Path(PERCH_MODEL_DIR) / "assets" / "label.csv"
-    perch_labels_df = pd.read_csv(perch_label_csv)
-    perch_labels = perch_labels_df.iloc[:, 0].astype(str).tolist()
+    assets_dir = Path(PERCH_MODEL_DIR) / "assets"
+    if (assets_dir / "labels.csv").exists():
+        # Perch v2: labels are inat2024_fsd50k scientific names
+        perch_labels_df = pd.read_csv(assets_dir / "labels.csv")
+        perch_labels = perch_labels_df.iloc[:, 0].astype(str).tolist()
+        # Map competition species by scientific_name (not ebird code)
+        perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
+        taxonomy_sci = taxonomy["scientific_name"].astype(str).tolist()
+        comp_to_perch = np.array(
+            [perch_to_idx.get(sci, -1) for sci in taxonomy_sci], dtype=np.int32
+        )
+    else:
+        # Perch v4: labels are ebird codes
+        perch_labels_df = pd.read_csv(assets_dir / "label.csv")
+        perch_labels = perch_labels_df.iloc[:, 0].astype(str).tolist()
+        perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
+        comp_to_perch = np.array(
+            [perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32
+        )
 else:
     import tensorflow_hub as hub
 
@@ -92,23 +108,37 @@ else:
         # first line may be header "ebird2021,comment" — skip if so
         lines = [l.strip() for l in f if l.strip()]
     perch_labels = [l.split(",")[0] for l in lines if not l.startswith("ebird")]
+    perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
+    comp_to_perch = np.array(
+        [perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32
+    )
 
 print(f"Loaded in {time.time() - t0:.1f}s")
 
 n_perch = len(perch_labels)
-perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
 print(f"Perch labels: {n_perch}")
-
-comp_to_perch = np.array(
-    [perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32
-)
 perch_coverage = comp_to_perch >= 0
 print(f"Direct Perch mapping: {perch_coverage.sum()} / {n_species} competition species")
 print(f"Loaded in {time.time() - t0:.1f}s")
 
-# smoke test + get embedding dim
+# smoke test + get embedding dim; handle both infer_tf (v4) and serving_default (v2)
 _test = tf.zeros([1, CLIP_SAMPLES], dtype=tf.float32)
-_logits, _emb = perch_model.infer_tf(_test)
+try:
+    _logits, _emb = perch_model.infer_tf(_test)
+
+    def _infer(x):
+        logits, embs = perch_model.infer_tf(x)
+        return logits.numpy(), embs.numpy()
+except (AttributeError, TypeError):
+    _infer_fn = perch_model.signatures["serving_default"]
+    _out = _infer_fn(inputs=_test)
+    _logits, _emb = _out["label"], _out["embedding"]
+
+    def _infer(x):
+        out = _infer_fn(inputs=x)
+        return out["label"].numpy(), out["embedding"].numpy()
+
+
 EMB_DIM = _emb.shape[-1]
 print(f"Embedding dim: {EMB_DIM}  |  logit dim: {_logits.shape[-1]}")
 
@@ -188,9 +218,7 @@ def flush_batch():
         else:
             padded.append(np.pad(y, (0, CLIP_SAMPLES - len(y))))
     x = tf.constant(np.stack(padded), dtype=tf.float32)
-    raw_logits, embs = perch_model.infer_tf(x)
-    raw_logits = raw_logits.numpy()
-    embs = embs.numpy()
+    raw_logits, embs = _infer(x)
     cp = logits_to_comp_probs(raw_logits)
     for j in range(len(batch_clip_ids)):
         all_clip_ids.append(batch_clip_ids[j])
