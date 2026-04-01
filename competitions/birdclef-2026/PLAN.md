@@ -70,7 +70,8 @@ recordings in the Pantanal wetlands, South America.
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
 | **Blend v3 (single kernel, 2-fold CNN)** | **TIMEOUT** | kernel v2 — same memory pressure issue, ~29 min locally → >90 min scoring env |
-| **Blend v4 (single kernel, 1-fold CNN)** | **pending** | kernel v3 COMPLETE — needs TF memory release fix before submitting |
+| **Blend v4 attempt 1 (Mar 30 07:19 UTC)** | **TIMEOUT** | kernel v3 — COMPLETE but blank score = timed out in scoring env |
+| **Blend v4 attempt 2 (Mar 30 18:48 UTC)** | **TIMEOUT** | TF threads capped + parallel I/O + memory release — still blank score |
 
 ### Local validation findings
 
@@ -422,7 +423,7 @@ Public 0.892 CNN notebooks use several things we haven't tried:
 
 ---
 
-### ❌ Step 5h — Convert Perch to TFLite — DEAD END (no speedup)
+### ❌ Step 5h — Convert Perch to TFLite — DEAD END (confirmed Mar 30)
 
 **Expected: unlocks 4-fold CNN blend | No retraining | Medium effort**
 
@@ -431,7 +432,7 @@ For 739 test files: 17 min (TFLite) vs 200+ min (SavedModel). Would bring total 
 
 **Current bottleneck**: `perch_v2_cpu` is a TF SavedModel. TFLite requires conversion + custom ops check.
 
-#### TFLite test results — DEAD END (Mar 29, v3 COMPLETE)
+#### TFLite attempt 1 — no speedup (Mar 29, v3 COMPLETE)
 
 | Step | Result |
 |---|---|
@@ -441,15 +442,47 @@ For 739 test files: 17 min (TFLite) vs 200+ min (SavedModel). Would bring total 
 | Speedup | **0.9× (actually SLOWER)** |
 | Max logit diff | 0.000280 ✅ |
 
-**Root cause of no speedup**: Perch v2 uses XLA/TF-specific ops that have no native TFLite equivalents → conversion requires `SELECT_TF_OPS`. This means TF op kernels execute inside TFLite — same compute path, just with TFLite wrapper overhead. XNNPACK delegate is loaded but can't accelerate SELECT_TF_OPS kernels. The 10× speedup from BirdCLEF 2025 paper was on models using only native BUILTINS ops.
+Root cause: conversion used only `TFLITE_BUILTINS + SELECT_TF_OPS` with **no quantization**. TF op kernels still run inside TFLite wrapper — same compute path. XNNPACK cannot accelerate SELECT_TF_OPS kernels.
 
-**TFLite is a dead end for Perch v2.** There is no alternative speedup path via TFLite, ONNX (blocked), or OpenVINO (no internet install).
+#### TFLite attempt 2 — with `Optimize.DEFAULT` quantization (Mar 30, PENDING)
 
-**Remaining mystery**: standalone Perch (LB 0.912) runs in ~6 min for 739 files (0.49s/file), but benchmark shows 8.80s/file. 18× discrepancy unexplained. Possible causes: test set may be smaller than 739 files, different hardware node, or different batching strategy in the public kernel. This discrepancy is important for blend timing estimates.
+**Key finding from research (Mar 30)**: DS@GT BirdCLEF 2025 code (`compile.py`) used exactly:
+```python
+converter.optimizations = [tf.lite.Optimize.DEFAULT]   # ← this was missing from attempt 1
+converter.target_spec.supported_ops = [TFLITE_BUILTINS, SELECT_TF_OPS]
+```
+`Optimize.DEFAULT` applies float16/int8 weight quantization — this is what drives their 10× speedup, not the TFLite format itself.
 
-- [x] Convert SavedModel → TFLite (success, 407.3 MB)
-- [x] Fix TFLite inference API for TF 2.20 (skip resize, find output by shape)
-- [x] Benchmark: **no speedup** — TFLite dead end confirmed
+**Important caveat**: DS@GT used Perch v1 (Keras model, `from_keras_model()`). We must use `from_saved_model()` for Perch v2. Whether `Optimize.DEFAULT` gives the same benefit with `SELECT_TF_OPS` on v2 is unknown.
+
+**Test notebook**: `inference/kaggle_perch_tflite_test.ipynb` (Cell 3 updated to add `Optimize.DEFAULT`)
+**Kernel**: `aldisued/birdclef-2026-perch-tflite-conversion-test` v2 (PENDING)
+
+Expected outcomes:
+- If quantization works: model size shrinks (<200MB), per-file time drops to ≤3s/file → blend viable
+- If quantization fails / same speed: TFLite dead end confirmed for Perch v2
+
+**Parallel benchmark findings (Mar 30)**:
+Running Perch and CNN in parallel Python threads works (zero overhead, CNN fully hidden).
+BUT: TF at half cores = 12.87s/file → 127 min extrap. Doesn't fit.
+Parallel approach is only viable if Perch first gets faster via quantized TFLite.
+
+#### TFLite attempt 2 results (Mar 30, v2 COMPLETE) — DEAD END CONFIRMED
+
+| | Attempt 1 | Attempt 2 (+Optimize.DEFAULT) |
+|---|---|---|
+| Model size | 407 MB | 376 MB (−8%) |
+| Speedup | 0.9× | 0.9× |
+| Max logit diff | 0.000280 ✅ | **2.499 ❌** |
+
+`Optimize.DEFAULT` barely shrunk the model — float16 quantization did not apply to SELECT_TF_OPS kernels (they run through TF runtime regardless). The 8% that did get quantized introduced large numerical errors (max diff 2.5 logits). **No path to TFLite speedup for Perch v2 exists via this route.**
+
+**TFLite is definitively a dead end for Perch v2.** The model requires SELECT_TF_OPS which bypasses all TFLite optimization. Only a JAX-source conversion (chirp/export_utils.py) could produce a native TFLite model — but that requires the JAX checkpoint, not the Kaggle SavedModel.
+
+- [x] Convert SavedModel → TFLite attempt 1 (no quantization — 0.9× speedup)
+- [x] Research: DS@GT used `Optimize.DEFAULT` — but for Perch v1 Keras model, not v2 SavedModel
+- [x] Convert SavedModel → TFLite attempt 2 (+Optimize.DEFAULT — 0.9× speedup, large numerical error)
+- [x] **DEAD END CONFIRMED** — no TFLite speedup path for Perch v2 SavedModel
 
 ---
 
@@ -473,6 +506,129 @@ Build `P(species | site, hour)` from `train_soundscapes_labels.csv`:
 
 **C. Ablation to run first: raw embeddings without PCA**
 Literature notes PCA can hurt rare classes. Try `LogReg` directly on standardized 1280-dim embeddings (no PCA reduction) for the per-class probes. If better on OOF AP, retrain probes and update artifacts.
+
+---
+
+---
+
+### 🎯 Step 10 — Perch → CNN knowledge distillation (Perch soft labels for CNN training)
+
+**Expected: close the 0.882→0.912 gap | Requires precompute + retraining | High priority**
+
+**Core idea**: Use Perch v2 (LB 0.912, better teacher) to generate soft labels on all 739 training soundscapes. Mix those into CNN training. At inference: pure CNN, no Perch needed.
+
+**Why this is different from soundscape-v9 (which failed)**:
+- v9 teacher: CNN (0.882) — weaker than student, noisy labels
+- This teacher: Perch (0.912) — stronger than student, much better signal
+- v9 training: separate pretraining stage → catastrophic forgetting
+- This: mixed into regular training loop (no pretraining stage)
+
+**Loss design**:
+- XC clips: `BCE(pred, hard_label)` as before
+- Soundscape windows (all 739 × 12): `KL(pred, perch_soft / T_perch)` only
+- `T_perch ≈ 1.5` to soften Perch's spiky predictions
+- `p_soundscape` = fraction of soundscape batches in each step (single tunable param)
+
+**Tuning plan**:
+1. Grid `p_soundscape ∈ {0.05, 0.15, 0.30}` × 10-epoch runs → pick best sc_cmap(held)
+2. Full 30-epoch run at best ratio
+
+**Precompute script**: `training/precompute_perch_soundscapes.py`
+- Outputs: `perch_soundscape_cache/perch_sc_scores.npy` (N×234), `perch_sc_embeddings.npy` (N×1536), `perch_sc_meta.parquet`
+- Runtime: ~2.3h on cluster CPU (739 files × 11s/file)
+
+**Cluster setup** (run once):
+```bash
+# Download Perch model
+kaggle models instances versions download \
+  google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1 \
+  -p ~/perch_v2_cpu --untar
+
+# Install TF (use existing wheel if available, else pip)
+pip install tensorflow-cpu==2.20.0
+
+# Run precompute (background, log to file)
+KEGO_PATH_DATA=/home/kristian/projects/kego/data \
+PERCH_MODEL_DIR=~/perch_v2_cpu \
+nohup uv run python competitions/birdclef-2026/training/precompute_perch_soundscapes.py \
+  > /tmp/perch_precompute.log 2>&1 &
+echo $! > /tmp/perch_precompute.pid
+```
+
+- [x] Download Perch model to cluster (`~/perch_v2_cpu/`)
+- [x] Precompute done — `perch_pseudo_labels_soft.npz` already exists with 127,896 windows (10,658 files × 12), soft probs float32, 158/234 species covered
+- [x] Add `--p-soundscape` + `--perch-temp` to train_cnn.py; `train_epoch_mixed` interleaves Perch KD batches in Stage-2 loop (Apr 1)
+- [ ] Grid search p_soundscape (3 × 10-epoch fold-0 runs) — p05 + p15 running on GPU 0/1 (Apr 1)
+- [ ] Full 30-epoch run at best p_soundscape
+- [ ] Submit and compare vs LB 0.912
+
+**Grid search results** (fold 0, 10 epochs, sc_cmap(held), ALL 127,896 windows):
+| p_soundscape | sc_cmap@10ep | Notes |
+|---|---|---|
+| 0.05 | **0.519** | best epoch 9 |
+| 0.15 | **0.501** | best epoch 9 |
+| 0.30 | **0.504** | best epoch 10 |
+
+**Root cause of low sc_cmap**: 97.5% of Perch windows are silent background (max_prob < 0.05). KD batches from these windows teach "predict zero for everything" → global suppression. Even at p=0.05, 95% of batch steps are XC, but the Perch suppression signal counteracts learning. p05-full at 30 epochs stuck at 0.52 with no upward trend (killed at epoch 14).
+
+**Signal distribution**:
+- max_prob ≥ 0.05: 3,146 windows (2.5%)
+- max_prob ≥ 0.10: 1,307 windows (1.0%)
+- max_prob ≥ 0.30: 370 windows (0.3%)
+
+**Round 2: signal-filtered KD** (min_prob=0.1 → 1,307 windows, Apr 1):
+| p_soundscape | sc_cmap@best | Notes |
+|---|---|---|
+| 0.15 | **0.538** (ep20) | killed at ep21 — no upward trend |
+| 0.30 | **0.475** (ep14) | killed at ep19 — worse |
+
+**DEAD END CONFIRMED** (Apr 1): Both all-windows (0.52) and signal-filtered (0.54) KD runs far below v7 baseline (0.976) with no convergence toward it. Root cause: Perch soft labels cover only 158/234 species and the soundscape distribution is fundamentally different from XC clip distribution. KD signal doesn't help the model generalize from XC → soundscape inference.
+
+→ **Step 10 and Step 11 are both dead ends. Moving on.**
+
+---
+
+### 🎯 Step 11 — Perch embedding supervision for CNN (auxiliary distillation head)
+
+**Expected: complementary to Step 10 | Requires precompute (same data) + retraining**
+
+**Core idea**: Add an auxiliary head to CNN that predicts Perch's 1536-dim embeddings during training. Forces CNN internal representations to be "Perch-like" without needing Perch at inference time. Uses the same precomputed cache as Step 10.
+
+**Architecture**:
+```
+mel → CNN encoder → feature map
+                  ├→ GEMPool → AttSED → class probs   (main head, BCE)
+                  └→ GAP → Linear(1536) → emb pred     (aux head, MSE vs Perch emb)
+```
+Loss: `BCE(pred, label) + λ_emb × MSE(emb_pred, perch_emb)`
+
+Aux head is dropped at inference. The constraint forces the encoder to learn Perch's feature space, especially for non-Aves species where Perch excels.
+
+**λ_emb tuning**: start at 0.1 (aux head shouldn't dominate). Tune via sc_cmap(held).
+
+**Can combine with Step 10**: use both soft labels AND embedding supervision simultaneously.
+
+- [ ] Precompute done (shared with Step 10)
+- [ ] Add aux embedding head to BirdModelBaseline in train_cnn.py
+- [ ] Add `--perch-emb-supervision λ` flag
+- [ ] Train and evaluate
+
+---
+
+### ❌ Step 12 — EfficientNet-B3 backbone (v7 config) — DEAD END
+
+**Result: sc_cmap(held) = 0.568 (fold 0) — far below v7 B0 baseline 0.976. Killed after fold 0.**
+
+Same config as soundscape-v7 but larger backbone: `tf_efficientnet_b3.ns_jft_in1k` (12M params vs B0's 4M). Previous B3 run (LB 0.776) used wrong mel config — hypothesis was HTK+soundscape labels would fix it.
+
+**Root cause**: B3 (12M params) overfits more aggressively to XC clips than B0 (4M params), losing soundscape generalization. WarmRestarts T_0=5 causes sc_cmap oscillation. Fold 0 early-stopped at epoch 23, best sc_cmap = **0.568** (vs v7 = 0.976).
+
+| Fold | Best sc_cmap | Epoch |
+|------|-------------|-------|
+| fold 0 | 0.568 | 13 (early stop at 23) |
+| fold 2 | ~0.543 | 14 (killed at 18) |
+
+Conclusion: Larger backbone ≠ better soundscape generalization. B0 NoisyStudent features transfer better to bird audio. Do not retry B3/B4.
 
 ---
 

@@ -958,6 +958,81 @@ def train_epoch(
     return total_loss / len(loader)
 
 
+def train_epoch_mixed(
+    model: nn.Module,
+    xc_loader: DataLoader,
+    perch_loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+    p_soundscape: float = 0.15,
+    perch_temp: float = 1.5,
+    mixup_alpha: float = 1.0,
+    label_smoothing: float = 0.05,
+    sed: bool = False,
+    baseline: bool = False,
+) -> float:
+    """Train one epoch interleaving XC (BCE) and Perch soft-label (KL) batches.
+
+    Each step: with prob p_soundscape draw from perch_loader (KL loss),
+    otherwise from xc_loader (BCE loss). Perch probs are divided by T before
+    computing KL to soften spiky predictions.
+    """
+    model.train()
+    total_loss = 0.0
+    perch_iter = iter(perch_loader)
+    n_steps = len(xc_loader)
+    rng = np.random.default_rng()
+    xc_iter = iter(xc_loader)
+
+    for _ in range(n_steps):
+        if rng.random() < p_soundscape:
+            try:
+                x, y_soft = next(perch_iter)
+            except StopIteration:
+                perch_iter = iter(perch_loader)
+                x, y_soft = next(perch_iter)
+            x, y_soft = x.to(device), y_soft.to(device)
+            out = model(x)
+            # KL(CNN || Perch/T): treat Perch probs as soft targets
+            # log_p(CNN) vs q(Perch/T) — use BCE with temperature-scaled targets
+            t = perch_temp
+            y_t = (y_soft / t).clamp(0.0, 1.0)
+            # baseline check MUST come before sed (baseline sets is_prob_model=True)
+            if baseline:
+                clip_probs, frame_logits = out  # baseline returns (probs, frame_logits)
+                # Clip-level soft label loss + frame-level soft label loss
+                frame_y = y_t.unsqueeze(-1).expand_as(frame_logits)
+                loss = 0.5 * F.binary_cross_entropy(
+                    clip_probs.clamp(1e-7, 1 - 1e-7), y_t
+                ) + 0.5 * F.binary_cross_entropy_with_logits(frame_logits, frame_y)
+            elif sed:
+                clip_probs = out  # SED model returns probs directly
+                loss = F.binary_cross_entropy(clip_probs.clamp(1e-7, 1 - 1e-7), y_t)
+            else:
+                loss = F.binary_cross_entropy_with_logits(out, y_t)
+        else:
+            try:
+                x, y = next(xc_iter)
+            except StopIteration:
+                xc_iter = iter(xc_loader)
+                x, y = next(xc_iter)
+            x, y = x.to(device), y.to(device)
+            x, y = mixup(x, y, alpha=mixup_alpha)
+            out = model(x)
+            if baseline:
+                loss = _dual_loss(out, y, label_smoothing)
+            else:
+                y_smooth = y * (1 - label_smoothing) + label_smoothing / 2
+                loss = _bce(out, y_smooth, sed)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+
+    return total_loss / n_steps
+
+
 @torch.no_grad()
 def val_epoch(
     model: nn.Module,
@@ -1124,6 +1199,20 @@ def main():
         "Recommended: 0.1 (keeps ~1%% of windows with real signal, drops empty noise windows).",
     )
     parser.add_argument(
+        "--p-soundscape",
+        type=float,
+        default=0.0,
+        help="Fraction of training steps that draw from Perch soft-label soundscapes instead of "
+        "XC clips (KL distillation). 0 = disabled. Try 0.05, 0.15, 0.30. Requires --perch-npz.",
+    )
+    parser.add_argument(
+        "--perch-temp",
+        type=float,
+        default=1.5,
+        help="Temperature for Perch soft-label targets in KL distillation (default 1.5). "
+        "Higher values soften Perch's spiky predictions.",
+    )
+    parser.add_argument(
         "--soundscape-labels",
         action="store_true",
         help="Include train_soundscapes_labels.csv in training. A fraction of soundscapes "
@@ -1186,6 +1275,26 @@ def main():
         "Sets backbone to hgnetv2_b0.ssld_stage2_ft_in1k. Model head follows other flags: "
         "plain BirdModel by default, BirdModelBaseline (GEMFreqPool+SED) with --baseline. "
         "Requires separate spec cache (specs_cache_hgnetv2/). Run precompute_specs.py --hgnetv2 first.",
+    )
+    parser.add_argument(
+        "--resume-from",
+        type=str,
+        default="",
+        help="Path to a pre-trained checkpoint (.pt) to resume from. "
+        "Loads model weights only (not optimizer state).",
+    )
+    parser.add_argument(
+        "--finetune-sc",
+        action="store_true",
+        help="Fine-tune a pre-trained checkpoint on labeled soundscape segments only "
+        "(no XC data). Requires --resume-from, --soundscape-labels, and --soundscape-val-frac > 0. "
+        "Skips XC dataset building for speed. Use --lr to set fine-tune learning rate (e.g. 1e-5).",
+    )
+    parser.add_argument(
+        "--finetune-sc-epochs",
+        type=int,
+        default=10,
+        help="Number of soundscape fine-tuning epochs (default 10, used with --finetune-sc).",
     )
     args = parser.parse_args()
     if args.smoke:
@@ -1339,21 +1448,28 @@ def main():
         else:
             print("WARNING: spec cache not found — bg noise disabled")
 
-    train_ds = BirdDataset(
-        train_df,
-        species_to_idx,
-        n_species,
-        audio_dir,
-        augment=True,
-        bg_specs=bg_specs,
-        bg_noise_p=args.bg_noise_p,
-        gain_aug=args.gain_aug,
-        gain_db=args.gain_db,
-        **ds_kwargs,
-    )
-    val_ds = BirdDataset(
-        val_df, species_to_idx, n_species, audio_dir, augment=False, **ds_kwargs
-    )
+    if not args.finetune_sc:
+        train_ds = BirdDataset(
+            train_df,
+            species_to_idx,
+            n_species,
+            audio_dir,
+            augment=True,
+            bg_specs=bg_specs,
+            bg_noise_p=args.bg_noise_p,
+            gain_aug=args.gain_aug,
+            gain_db=args.gain_db,
+            **ds_kwargs,
+        )
+        val_ds = BirdDataset(
+            val_df, species_to_idx, n_species, audio_dir, augment=False, **ds_kwargs
+        )
+    else:
+        # Finetune-SC mode: skip XC dataset (will train on soundscapes only below)
+        from torch.utils.data import TensorDataset
+
+        train_ds = TensorDataset(torch.zeros(1), torch.zeros(1))  # placeholder
+        val_ds = TensorDataset(torch.zeros(1), torch.zeros(1))  # placeholder
 
     # Labeled soundscape segments (train_soundscapes_labels.csv)
     sc_val_loader = None
@@ -1504,6 +1620,105 @@ def main():
     else:
         model = BirdModel(args.backbone, n_species).to(device)
 
+    # Load pre-trained checkpoint weights if requested
+    if args.resume_from:
+        ckpt = torch.load(args.resume_from, map_location=device)
+        model.load_state_dict(ckpt["model"])
+        print(f"Loaded checkpoint: {args.resume_from} (epoch {ckpt.get('epoch', '?')})")
+
+    # ── Finetune-SC mode: train only on labeled soundscapes ──────────────────
+    if args.finetune_sc:
+        if not args.resume_from:
+            raise ValueError("--finetune-sc requires --resume-from <checkpoint.pt>")
+        if sc_val_loader is None:
+            raise ValueError(
+                "--finetune-sc requires --soundscape-labels and --soundscape-val-frac > 0"
+            )
+
+        ft_best_path = (
+            OUT / f"{args.tag}_fold{args.fold}.pt"
+            if args.tag
+            else OUT / f"soundscape-ft_fold{args.fold}.pt"
+        )
+        ft_optimizer = torch.optim.AdamW(
+            model.parameters(), lr=args.lr, weight_decay=1e-4
+        )
+        ft_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            ft_optimizer, T_max=args.finetune_sc_epochs, eta_min=1e-6
+        )
+
+        sc_only_loader = DataLoader(
+            sc_ds,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.workers,
+            pin_memory=True,
+            drop_last=True,
+        )
+
+        is_prob_model = args.sed or args.baseline or args.birdset
+        use_dual_loss = args.baseline or args.birdset
+        ft_best_metric = float("inf")
+        print(
+            f"\n── Soundscape fine-tuning: {len(sc_ds)} segs, {args.finetune_sc_epochs} epochs, lr={args.lr} ──"
+        )
+
+        for epoch in range(1, args.finetune_sc_epochs + 1):
+            t0 = time.time()
+            train_loss = train_epoch(
+                model,
+                sc_only_loader,
+                ft_optimizer,
+                device,
+                sed=is_prob_model,
+                baseline=use_dual_loss,
+            )
+            ft_scheduler.step()
+            sc_cmap = eval_soundscape_cmAP(
+                model, sc_val_loader, device, n_species, args.baseline
+            )
+            elapsed = time.time() - t0
+            improvement_metric = -sc_cmap
+            marker = " *" if improvement_metric < ft_best_metric else ""
+            print(
+                f"Epoch {epoch:03d}/{args.finetune_sc_epochs} | train={train_loss:.4f} sc_cmap={sc_cmap:.4f} | {elapsed:.0f}s{marker}",
+                flush=True,
+            )
+            if improvement_metric < ft_best_metric:
+                ft_best_metric = improvement_metric
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model": model.state_dict(),
+                        "backbone": args.backbone,
+                        "baseline": args.baseline,
+                        "sed": args.sed,
+                        "n_mels": n_mels_cfg,
+                        "n_fft": n_fft_cfg,
+                        "hop_length": hop_length_cfg,
+                        "minmax_norm": minmax_norm,
+                        "htk": args.htk,
+                        "fmin": fmin_cfg,
+                        "tag": args.tag,
+                        "dual_loss": use_dual_loss,
+                        "hard_labels": args.hard_labels,
+                        "freq_mask": freq_mask,
+                        "time_mask": time_mask,
+                        "n_freq_masks": args.n_freq_masks,
+                        "n_time_masks": args.n_time_masks,
+                        "gain_aug": args.gain_aug,
+                        "gain_db": args.gain_db,
+                        "birdset": args.birdset,
+                        "seed": args.seed,
+                        "fold": args.fold,
+                        "n_folds": args.n_folds,
+                    },
+                    ft_best_path,
+                )
+
+        print(f"\nBest sc_cmap: {-ft_best_metric:.4f} → {ft_best_path}")
+        return
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     if args.warm_restarts:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -1531,7 +1746,8 @@ def main():
         ckpt_name = "efficientnet_b1" if args.birdset else args.backbone
         best_path = OUT / f"{ckpt_name}{suffix}_fold{args.fold}.pt"
 
-    # ── Stage 1: Perch soft-label pretraining ──────────────────────────────────
+    # ── Perch loader (shared by Stage-1 pretraining and p_soundscape mixing) ───
+    perch_loader: DataLoader | None = None
     if args.perch_npz:
         soundscape_dir = DATA / "train_soundscapes"
         if args.hgnetv2:
@@ -1573,6 +1789,9 @@ def main():
             pin_memory=True,
             drop_last=True,
         )
+
+    # ── Stage 1: Perch soft-label pretraining (only when p_soundscape == 0) ───
+    if perch_loader is not None and args.perch_epochs > 0 and args.p_soundscape == 0:
         print(
             f"\n── Stage 1: Perch pretraining — {len(perch_ds)} windows, "
             f"{args.perch_epochs} epochs ──"
@@ -1596,22 +1815,41 @@ def main():
                 flush=True,
             )
         print("── Stage 1 done. Starting stage 2 (XC fine-tuning) ──\n")
+    elif perch_loader is not None and args.p_soundscape > 0:
+        print(
+            f"\n── Perch KD mixing enabled: p_soundscape={args.p_soundscape}, "
+            f"T={args.perch_temp}, {len(perch_ds)} windows ──\n"
+        )
 
     # ── Stage 2: XC hard-label fine-tuning (with early stopping) ───────────────
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
         is_prob_model = args.sed or args.baseline or args.birdset
         use_dual_loss = args.baseline or args.birdset
-        train_loss = train_epoch(
-            model,
-            train_loader,
-            optimizer,
-            device,
-            mixup_alpha=args.mixup_alpha,
-            sed=is_prob_model,
-            baseline=use_dual_loss,
-            ce_loss=args.ce_loss,
-        )
+        if perch_loader is not None and args.p_soundscape > 0:
+            train_loss = train_epoch_mixed(
+                model,
+                train_loader,
+                perch_loader,
+                optimizer,
+                device,
+                p_soundscape=args.p_soundscape,
+                perch_temp=args.perch_temp,
+                mixup_alpha=args.mixup_alpha,
+                sed=is_prob_model,
+                baseline=use_dual_loss,
+            )
+        else:
+            train_loss = train_epoch(
+                model,
+                train_loader,
+                optimizer,
+                device,
+                mixup_alpha=args.mixup_alpha,
+                sed=is_prob_model,
+                baseline=use_dual_loss,
+                ce_loss=args.ce_loss,
+            )
         val_loss, ml_above, ml_top2 = val_epoch(
             model,
             val_loader,
@@ -1683,6 +1921,8 @@ def main():
                     "perch_npz": args.perch_npz,
                     "perch_epochs": args.perch_epochs,
                     "perch_min_prob": args.perch_min_prob,
+                    "p_soundscape": args.p_soundscape,
+                    "perch_temp": args.perch_temp,
                     "soundscape_labels": args.soundscape_labels,
                     "soundscape_val_frac": args.soundscape_val_frac,
                     "htk": args.htk,
