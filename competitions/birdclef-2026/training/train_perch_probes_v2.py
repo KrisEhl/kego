@@ -55,6 +55,9 @@ PCA_DIMS = 64
 LOGREG_C = 1.0  # more data → less regularisation needed vs C=0.25 before
 MIN_POSITIVES = 10  # minimum positive clips to train a probe
 N_FOLDS = 5
+# Include raw Perch prob as feature alongside PCA dims.
+# Without this, probes use only PCA (38.6% variance) and score below raw Perch.
+INCLUDE_PERCH_LOGIT = True
 
 # ── load cache ────────────────────────────────────────────────────────────────
 print(f"Loading cache: {CACHE_NPZ}")
@@ -82,6 +85,14 @@ print(
     f"  Explained variance: {pca.explained_variance_ratio_.sum():.3f}  ({time.time() - t0:.1f}s)"
 )
 
+# ── build feature matrix (PCA dims + raw Perch prob) ─────────────────────────
+# Including raw Perch prob ensures probe ≥ raw Perch; without it, PCA alone
+# captures only 38.6% variance and probes score below Perch.
+if INCLUDE_PERCH_LOGIT:
+    print(f"Features: PCA({PCA_DIMS}) + 1 Perch prob per class = {PCA_DIMS + 1} dims")
+else:
+    print(f"Features: PCA({PCA_DIMS}) only")
+
 # ── train probes ──────────────────────────────────────────────────────────────
 print(
     f"\nTraining probes (C={LOGREG_C}, {N_FOLDS}-fold stratified, min_pos={MIN_POSITIVES})..."
@@ -100,11 +111,19 @@ for sp_idx, sp in enumerate(species):
         probes[sp] = None
         continue
 
+    # Build per-species feature matrix: PCA + (optionally) raw Perch prob
+    if INCLUDE_PERCH_LOGIT:
+        X_sp = np.concatenate(
+            [X, perch_probs[:, sp_idx : sp_idx + 1].astype(np.float32)], axis=1
+        )
+    else:
+        X_sp = X
+
     oof_sp = np.zeros(n_clips, dtype=np.float32)
     trained_folds = []
 
-    for train_idx, val_idx in skf.split(X, y):
-        X_tr, X_val = X[train_idx], X[val_idx]
+    for train_idx, val_idx in skf.split(X_sp, y):
+        X_tr, X_val = X_sp[train_idx], X_sp[val_idx]
         y_tr, y_val = y[train_idx], y[val_idx]
         if y_tr.sum() < 2:
             oof_sp[val_idx] = perch_probs[val_idx, sp_idx]
@@ -130,7 +149,7 @@ for sp_idx, sp in enumerate(species):
             solver="lbfgs",
             random_state=42,
         )
-        clf_final.fit(X, y)
+        clf_final.fit(X_sp, y)
         probes[sp] = clf_final
         n_trained += 1
     else:
@@ -190,6 +209,7 @@ out = {
     "clip_ids": clip_ids,
     "pca_dims": PCA_DIMS,
     "logreg_c": LOGREG_C,
+    "include_perch_logit": INCLUDE_PERCH_LOGIT,
 }
 with open(OUT_PKL, "wb") as f:
     pickle.dump(out, f)
