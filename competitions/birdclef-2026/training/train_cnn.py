@@ -1296,6 +1296,12 @@ def main():
         default=10,
         help="Number of soundscape fine-tuning epochs (default 10, used with --finetune-sc).",
     )
+    parser.add_argument(
+        "--finetune-sc-head-only",
+        action="store_true",
+        help="When --finetune-sc is set, freeze the backbone (encoder) and only fine-tune "
+        "the head (GEMFreqPool + AttentionSEDHead). Prevents catastrophic forgetting of XC features.",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.epochs = 2
@@ -1640,9 +1646,19 @@ def main():
             if args.tag
             else OUT / f"soundscape-ft_fold{args.fold}.pt"
         )
-        ft_optimizer = torch.optim.AdamW(
-            model.parameters(), lr=args.lr, weight_decay=1e-4
-        )
+        # Optionally freeze backbone (encoder) and fine-tune head only
+        if args.finetune_sc_head_only:
+            for param in model.encoder.parameters():
+                param.requires_grad = False
+            ft_params = [p for p in model.parameters() if p.requires_grad]
+            print(
+                f"Head-only fine-tuning: backbone frozen, "
+                f"{sum(p.numel() for p in ft_params):,} trainable params"
+            )
+        else:
+            ft_params = model.parameters()
+
+        ft_optimizer = torch.optim.AdamW(ft_params, lr=args.lr, weight_decay=1e-4)
         ft_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             ft_optimizer, T_max=args.finetune_sc_epochs, eta_min=1e-6
         )
@@ -1658,10 +1674,16 @@ def main():
 
         is_prob_model = args.sed or args.baseline or args.birdset
         use_dual_loss = args.baseline or args.birdset
-        ft_best_metric = float("inf")
+
+        # Evaluate before any fine-tuning to confirm baseline sc_cmap
+        sc_cmap_start = eval_soundscape_cmAP(
+            model, sc_val_loader, device, is_prob=is_prob_model
+        )
         print(
             f"\n── Soundscape fine-tuning: {len(sc_ds)} segs, {args.finetune_sc_epochs} epochs, lr={args.lr} ──"
         )
+        print(f"Starting sc_cmap (no fine-tuning): {sc_cmap_start:.4f}")
+        ft_best_metric = float("inf")
 
         for epoch in range(1, args.finetune_sc_epochs + 1):
             t0 = time.time()
