@@ -30,9 +30,7 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB 0.912 (Perch v2, kernel `aldisued/birdclef-2026-perch-v2-inference` v3, Mar 27)
 
-**Blend v4 ready (with fix needed)**: kernel v3 (1-fold CNN) COMPLETE — but needs TF memory release added before submitting. See "Inference time budget" section for root cause.
-
-**Active work**: Blend Perch v2 + CNN in a single kernel. kernel_sources approach (Step 4 v1) was a dead end — CNN preds from kernel_sources are all-zero (dry-run output). New approach: run both models in the same notebook.
+**Active work (Apr 1)**: Step 14 — XC-trained Perch probes. Perch v2 embeddings computing for all 35,549 XC clips on cluster (~1h). After completion: train probes, upload dataset, update inference notebook, submit.
 
 ### Results
 
@@ -629,6 +627,56 @@ Same config as soundscape-v7 but larger backbone: `tf_efficientnet_b3.ns_jft_in1
 | fold 2 | ~0.543 | 14 (killed at 18) |
 
 Conclusion: Larger backbone ≠ better soundscape generalization. B0 NoisyStudent features transfer better to bird audio. Do not retry B3/B4.
+
+---
+
+### ❌ Step 13 — Soundscape fine-tuning stage (post-XC, soundscape-only) — DEAD END
+
+**Result: sc_cmap degrades from 0.9484 → best 0.9530 (ep1) then 0.93 range. Below v7's 0.976. Dead end.**
+
+Hypothesis: after full v7 training (XC+soundscape mixed), fine-tune on ONLY labeled soundscape segments at low LR to adapt the model to the soundscape distribution.
+
+Variants tested (fold 0 only, Apr 1):
+| Variant | LR | Best sc_cmap | Notes |
+|---|---|---|---|
+| Full model | 1e-5 | 0.9409 | Degrades steadily |
+| Full model | 5e-6 | 0.9361 | Degrades steadily |
+| Head-only (backbone frozen) | 1e-4 | 0.9530 (ep1) | Instantly degrades after ep1 |
+
+**Starting sc_cmap from v7 checkpoint (no fine-tuning): 0.9484**. v7 training reported 0.976 — gap is likely due to BN running stats context difference between training and fresh eval runs.
+
+**Root cause**: The 52 training soundscapes are ALREADY in v7 mixed training — no new information. Fine-tuning on them produces overfitting to specific recording conditions (station S08, S09, etc.), hurting generalization to the 14 held-out files. Even head-only mode peaks at epoch 1 then overfits immediately (head has 2.2M params vs only 1,180 training segments).
+
+**Conclusion**: Soundscape fine-tuning is fundamentally limited by data volume. With only 52 files, the model memorizes recording environment rather than species patterns. The approach would only work with many more labeled soundscapes.
+
+---
+
+### 🎯 Step 14 — XC-trained Perch probes (all 206 species)
+
+**Expected: +0.005–0.020 LB | No CNN retraining | Currently running**
+
+Current Perch pipeline trains per-class probes on 708 soundscape windows (59 files × 12 windows), covering only 52/234 species. The other 182 species use raw Perch logits only.
+
+**Approach**: Compute Perch v2 embeddings for all 35,549 XC training clips → train per-class LogReg probes for all 206 species with ≥10 positive examples. Apply these as an additional post-processing step for species not covered by soundscape probes.
+
+**Key difference from soundscape probes**:
+- Soundscape probes: 708 rows, 43-dim features (PCA + temporal context + prior + prototype cosine)
+- XC probes: 35,549 clips, 64-dim PCA features only (no temporal context — XC clips are isolated)
+- Alpha = 0.30 (lower than soundscape 0.40 due to domain shift: XC ≠ soundscape)
+
+**Workflow**:
+1. `data/perch_cache_train_clips.py` (PERCH_MODEL_DIR=~/perch_v2_cpu) → `perch_train_cache_v2.npz` (35549×1536)
+2. `training/train_perch_probes_v2.py` → `perch_probes_v2.pkl` (probes for ~190/206 species)
+3. Upload pkl as Kaggle dataset `aldisued/birdclef2026-perch-xc-probes`
+4. Inference notebook: load pkl, apply XC probes for uncovered classes → submit
+
+**Status** (Apr 1):
+- [x] Scripts updated for Perch v2 compatibility (scientific_name label matching, serving_default API)
+- [x] Cache computation running on cluster: ~1h ETA (~8.5 clips/s, 900/35549 at ~12:25)
+- [x] Inference notebook updated with XC probe application cell (cell 19b)
+- [ ] Train probes after cache done (~20-30 min)
+- [ ] Upload to Kaggle dataset
+- [ ] Push kernel, submit
 
 ---
 
