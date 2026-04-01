@@ -1675,7 +1675,7 @@ def main():
             )
             ft_scheduler.step()
             sc_cmap = eval_soundscape_cmAP(
-                model, sc_val_loader, device, n_species, args.baseline
+                model, sc_val_loader, device, is_prob=is_prob_model
             )
             elapsed = time.time() - t0
             improvement_metric = -sc_cmap
