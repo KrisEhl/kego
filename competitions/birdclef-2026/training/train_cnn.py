@@ -134,6 +134,33 @@ def make_melspec(
     return librosa.power_to_db(mel, ref=np.max).astype(np.float32)
 
 
+def make_pcen(
+    y: np.ndarray,
+    sr: int = SR,
+    n_mels: int = N_MELS,
+    n_fft: int = N_FFT,
+    hop_length: int = HOP_LENGTH,
+    fmin: int = FMIN,
+    htk: bool = False,
+) -> np.ndarray:
+    """PCEN (Per-Channel Energy Normalization) from raw audio.
+
+    Suppresses stationary background noise; enhances transient bird calls.
+    Needs raw mel power spectrum — cannot be derived from the dB-scale cache.
+    """
+    mel = librosa.feature.melspectrogram(
+        y=y,
+        sr=sr,
+        n_mels=n_mels,
+        hop_length=hop_length,
+        n_fft=n_fft,
+        fmin=fmin,
+        fmax=FMAX,
+        htk=htk,
+    )
+    return librosa.pcen(mel * (2**31), sr=sr, hop_length=hop_length).astype(np.float32)
+
+
 def spec_to_tensor(spec: np.ndarray) -> torch.Tensor:
     """Z-score + ImageNet normalisation (default pipeline)."""
     spec = (spec - spec.mean()) / (spec.std() + 1e-6)
@@ -157,6 +184,16 @@ def spec_to_tensor_birdset(spec: np.ndarray) -> torch.Tensor:
     s_min, s_max = spec.min(), spec.max()
     spec = (spec - s_min) / (s_max - s_min + 1e-7)
     return torch.from_numpy(spec[np.newaxis]).float()  # (1, n_mels, time)
+
+
+def spec_to_tensor_pcen(spec: np.ndarray, pcen: np.ndarray) -> torch.Tensor:
+    """Stack [log-mel, PCEN, log-mel] with per-channel min-max norm (matches v7 baseline)."""
+    s_min, s_max = spec.min(), spec.max()
+    spec_n = (spec - s_min) / (s_max - s_min + 1e-7)
+    p_min, p_max = pcen.min(), pcen.max()
+    pcen_n = (pcen - p_min) / (p_max - p_min + 1e-7)
+    img = np.stack([spec_n, pcen_n, spec_n], axis=0)
+    return torch.from_numpy(img).float()
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +290,61 @@ def load_spec_crop(
     return spec
 
 
+def load_spec_and_pcen_crop(
+    filename: str,
+    augment: bool = False,
+    n_mels: int = N_MELS,
+    n_fft: int = N_FFT,
+    hop_length: int = HOP_LENGTH,
+    freq_mask: int = 20,
+    time_mask: int = 30,
+    n_freq_masks: int = 1,
+    n_time_masks: int = 1,
+    fmin: int = FMIN,
+    htk: bool = False,
+    gain_aug: bool = False,
+    gain_db: float = 12.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Load log-mel + PCEN from raw audio (always reads disk; PCEN needs raw mel power).
+
+    Returns (spec_logmel, spec_pcen) both shaped (n_mels, clip_frames).
+    PCEN is gain-invariant by design — gain_aug is applied only to log-mel.
+    """
+    clip_frames = CLIP_SAMPLES // hop_length
+    path = DATA / "train_audio" / filename
+    try:
+        y = load_audio(path)
+        y = crop_or_pad(y)
+    except Exception:
+        zeros = np.zeros((n_mels, clip_frames), dtype=np.float32)
+        return zeros, zeros
+    spec = make_melspec(
+        y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
+    )
+    pcen_spec = make_pcen(
+        y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
+    )
+    if augment:
+        if gain_aug:
+            spec = gain_augment(spec, max_db=gain_db)
+            # PCEN is gain-invariant — skip gain_aug for PCEN channel
+        spec = specaugment(
+            spec,
+            freq_mask=freq_mask,
+            time_mask=time_mask,
+            n_freq_masks=n_freq_masks,
+            n_time_masks=n_time_masks,
+        )
+        pcen_spec = specaugment(
+            pcen_spec,
+            freq_mask=freq_mask,
+            time_mask=time_mask,
+            n_freq_masks=n_freq_masks,
+            n_time_masks=n_time_masks,
+        )
+    return spec, pcen_spec
+
+
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
@@ -283,6 +375,7 @@ class BirdDataset(Dataset):
         htk: bool = False,
         gain_aug: bool = False,
         gain_db: float = 12.0,
+        pcen: bool = False,
     ):
         self.df = df.reset_index(drop=True)
         self.species_to_idx = species_to_idx
@@ -306,6 +399,7 @@ class BirdDataset(Dataset):
         self.htk = htk
         self.gain_aug = gain_aug
         self.gain_db = gain_db
+        self.pcen = pcen
 
     def __len__(self) -> int:
         return len(self.df)
@@ -328,34 +422,52 @@ class BirdDataset(Dataset):
 
     def __getitem__(self, idx: int):
         row = self.df.iloc[idx]
-        spec = load_spec_crop(
-            row["filename"],
-            augment=self.augment,
-            cache_dir=self.cache_dir,
-            n_mels=self.n_mels,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            freq_mask=self.freq_mask,
-            time_mask=self.time_mask,
-            n_freq_masks=self.n_freq_masks,
-            n_time_masks=self.n_time_masks,
-            fmin=self.fmin,
-            htk=self.htk,
-            gain_aug=self.gain_aug,
-            gain_db=self.gain_db,
-        )
-        if (
-            self.augment
-            and self.bg_specs is not None
-            and np.random.random() < self.bg_noise_p
-        ):
-            spec = add_background_noise(spec, self.bg_specs)
-        if self.birdset_norm:
-            x = spec_to_tensor_birdset(spec)
-        elif self.minmax_norm:
-            x = spec_to_tensor_minmax(spec)
+        if self.pcen:
+            spec, pcen_spec = load_spec_and_pcen_crop(
+                row["filename"],
+                augment=self.augment,
+                n_mels=self.n_mels,
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                freq_mask=self.freq_mask,
+                time_mask=self.time_mask,
+                n_freq_masks=self.n_freq_masks,
+                n_time_masks=self.n_time_masks,
+                fmin=self.fmin,
+                htk=self.htk,
+                gain_aug=self.gain_aug,
+                gain_db=self.gain_db,
+            )
+            x = spec_to_tensor_pcen(spec, pcen_spec)
         else:
-            x = spec_to_tensor(spec)
+            spec = load_spec_crop(
+                row["filename"],
+                augment=self.augment,
+                cache_dir=self.cache_dir,
+                n_mels=self.n_mels,
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                freq_mask=self.freq_mask,
+                time_mask=self.time_mask,
+                n_freq_masks=self.n_freq_masks,
+                n_time_masks=self.n_time_masks,
+                fmin=self.fmin,
+                htk=self.htk,
+                gain_aug=self.gain_aug,
+                gain_db=self.gain_db,
+            )
+            if (
+                self.augment
+                and self.bg_specs is not None
+                and np.random.random() < self.bg_noise_p
+            ):
+                spec = add_background_noise(spec, self.bg_specs)
+            if self.birdset_norm:
+                x = spec_to_tensor_birdset(spec)
+            elif self.minmax_norm:
+                x = spec_to_tensor_minmax(spec)
+            else:
+                x = spec_to_tensor(spec)
         label = self._make_label(row)
         return x, torch.from_numpy(label)
 
@@ -488,6 +600,7 @@ class SoundscapeLabelsDataset(Dataset):
         htk: bool = False,
         gain_aug: bool = False,
         gain_db: float = 12.0,
+        pcen: bool = False,
     ):
         self.df = df.reset_index(drop=True)
         self.soundscape_dir = soundscape_dir
@@ -508,6 +621,7 @@ class SoundscapeLabelsDataset(Dataset):
         self.htk = htk
         self.gain_aug = gain_aug
         self.gain_db = gain_db
+        self.pcen = pcen
 
     def __len__(self) -> int:
         return len(self.df)
@@ -530,31 +644,61 @@ class SoundscapeLabelsDataset(Dataset):
         row = self.df.iloc[idx]
         start_sec = self._parse_seconds(str(row["start"]))
 
-        if self.cache_dir is not None:
-            stem = Path(str(row["filename"])).stem
-            cache_path = self.cache_dir / f"{stem}.npy"
-            if cache_path.exists():
-                full_spec = np.load(cache_path).astype(np.float32)
-                start_frame = int(start_sec * SR / self.hop_length)
-                spec = full_spec[:, start_frame : start_frame + self.clip_frames]
-                if spec.shape[1] < self.clip_frames:
-                    spec = np.pad(spec, ((0, 0), (0, self.clip_frames - spec.shape[1])))
+        if self.pcen:
+            spec, pcen_spec = self._load_spec_and_pcen_from_audio(
+                row["filename"], start_sec
+            )
+            if self.augment:
+                if self.gain_aug:
+                    spec = gain_augment(spec, max_db=self.gain_db)
+                    # PCEN is gain-invariant — skip gain_aug for PCEN channel
+                spec = specaugment(
+                    spec,
+                    freq_mask=self.freq_mask,
+                    time_mask=self.time_mask,
+                    n_freq_masks=self.n_freq_masks,
+                    n_time_masks=self.n_time_masks,
+                )
+                pcen_spec = specaugment(
+                    pcen_spec,
+                    freq_mask=self.freq_mask,
+                    time_mask=self.time_mask,
+                    n_freq_masks=self.n_freq_masks,
+                    n_time_masks=self.n_time_masks,
+                )
+            x = spec_to_tensor_pcen(spec, pcen_spec)
+        else:
+            if self.cache_dir is not None:
+                stem = Path(str(row["filename"])).stem
+                cache_path = self.cache_dir / f"{stem}.npy"
+                if cache_path.exists():
+                    full_spec = np.load(cache_path).astype(np.float32)
+                    start_frame = int(start_sec * SR / self.hop_length)
+                    spec = full_spec[:, start_frame : start_frame + self.clip_frames]
+                    if spec.shape[1] < self.clip_frames:
+                        spec = np.pad(
+                            spec, ((0, 0), (0, self.clip_frames - spec.shape[1]))
+                        )
+                else:
+                    spec = self._load_from_audio(row["filename"], start_sec)
             else:
                 spec = self._load_from_audio(row["filename"], start_sec)
-        else:
-            spec = self._load_from_audio(row["filename"], start_sec)
 
-        if self.augment:
-            if self.gain_aug:
-                spec = gain_augment(spec, max_db=self.gain_db)
-            spec = specaugment(
-                spec,
-                freq_mask=self.freq_mask,
-                time_mask=self.time_mask,
-                n_freq_masks=self.n_freq_masks,
-                n_time_masks=self.n_time_masks,
+            if self.augment:
+                if self.gain_aug:
+                    spec = gain_augment(spec, max_db=self.gain_db)
+                spec = specaugment(
+                    spec,
+                    freq_mask=self.freq_mask,
+                    time_mask=self.time_mask,
+                    n_freq_masks=self.n_freq_masks,
+                    n_time_masks=self.n_time_masks,
+                )
+            x = (
+                spec_to_tensor_minmax(spec)
+                if self.minmax_norm
+                else spec_to_tensor(spec)
             )
-        x = spec_to_tensor_minmax(spec) if self.minmax_norm else spec_to_tensor(spec)
         return x, torch.from_numpy(self._make_label(row["primary_label"]))
 
     def _load_from_audio(self, filename: str, start_sec: int) -> np.ndarray:
@@ -574,6 +718,37 @@ class SoundscapeLabelsDataset(Dataset):
             fmin=self.fmin,
             htk=self.htk,
         )
+
+    def _load_spec_and_pcen_from_audio(
+        self, filename: str, start_sec: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Load log-mel + PCEN from audio (always from disk; PCEN needs raw mel power)."""
+        path = self.soundscape_dir / filename
+        zeros = np.zeros((self.n_mels, self.clip_frames), dtype=np.float32)
+        try:
+            y, _ = librosa.load(
+                path, sr=SR, mono=True, offset=float(start_sec), duration=5.0
+            )
+        except Exception:
+            return zeros, zeros
+        y = crop_or_pad(y)
+        spec = make_melspec(
+            y,
+            n_mels=self.n_mels,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            fmin=self.fmin,
+            htk=self.htk,
+        )
+        pcen_spec = make_pcen(
+            y,
+            n_mels=self.n_mels,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            fmin=self.fmin,
+            htk=self.htk,
+        )
+        return spec, pcen_spec
 
 
 class PerchDataset(Dataset):
@@ -1257,6 +1432,12 @@ def main():
         help="Max gain in dB for gain augmentation (default 12.0)",
     )
     parser.add_argument(
+        "--pcen",
+        action="store_true",
+        help="Use PCEN as 2nd input channel: stack [log-mel, PCEN, log-mel]. "
+        "Always reads audio from disk (bypasses spec cache — PCEN needs raw mel power).",
+    )
+    parser.add_argument(
         "--ce-loss",
         action="store_true",
         help="Use cross-entropy loss instead of BCE. Applies softmax over classes "
@@ -1425,7 +1606,12 @@ def main():
         secondary_weight=secondary_weight,
         fmin=fmin_cfg,
         htk=htk_cfg,
+        pcen=args.pcen,
     )
+    if args.pcen:
+        print(
+            "PCEN mode: input = [log-mel, PCEN, log-mel] — spec cache bypassed, reading audio from disk"
+        )
     # Background noise: preload all specs into RAM once before workers fork.
     # Workers inherit the array copy-on-write (Linux fork) — zero disk I/O per sample.
     bg_specs: np.ndarray | None = None
@@ -1529,6 +1715,7 @@ def main():
             htk=htk_cfg,
             gain_aug=args.gain_aug,
             gain_db=args.gain_db,
+            pcen=args.pcen,
         )
         train_ds = ConcatDataset([train_ds, sc_ds])
         n_sc_train_files = sc_train_labels["filename"].nunique()
@@ -1550,6 +1737,7 @@ def main():
                 cache_dir=sc_cache,
                 fmin=fmin_cfg,
                 htk=htk_cfg,
+                pcen=args.pcen,
             )
             sc_val_loader = DataLoader(
                 sc_val_ds,

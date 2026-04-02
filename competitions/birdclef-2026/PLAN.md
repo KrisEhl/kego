@@ -30,7 +30,7 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB 0.912 (Perch v2, kernel `aldisued/birdclef-2026-perch-v2-inference` v3, Mar 27)
 
-**Active work (Apr 1)**: Step 14 — XC-trained Perch probes. Perch v2 embeddings computing for all 35,549 XC clips on cluster (~1h). After completion: train probes, upload dataset, update inference notebook, submit.
+**Active work (Apr 2)**: Step 7 — PCEN 2-channel CNN (`soundscape-v12-pcen`). Step 14 (XC probes) confirmed dead end: OOF mean AP 0.548 vs Perch 0.749 (delta -0.201). XC embeddings can't overcome domain shift (close-up XC → ambient soundscape). PCEN implemented in `train_cnn.py --pcen`, launching 4-fold training on cluster.
 
 ### Results
 
@@ -651,32 +651,27 @@ Variants tested (fold 0 only, Apr 1):
 
 ---
 
-### 🎯 Step 14 — XC-trained Perch probes (all 206 species)
+### ❌ Step 14 — XC-trained Perch probes (all 206 species) — DEAD END (Apr 1)
 
-**Expected: +0.005–0.020 LB | No CNN retraining | Currently running**
+**Expected: +0.005–0.020 LB | Actual: OOF mean AP 0.548 vs Perch baseline 0.749 (delta -0.201)**
 
-Current Perch pipeline trains per-class probes on 708 soundscape windows (59 files × 12 windows), covering only 52/234 species. The other 182 species use raw Perch logits only.
+**Results**:
 
-**Approach**: Compute Perch v2 embeddings for all 35,549 XC training clips → train per-class LogReg probes for all 206 species with ≥10 positive examples. Apply these as an additional post-processing step for species not covered by soundscape probes.
+| Variant | OOF mean AP | vs Perch | Notes |
+|---|---|---|---|
+| Perch v2 (baseline) | **0.749** | — | reference: raw logits on XC data |
+| XC probes (PCA-only, 64-dim) | 0.549 | -0.200 | LogReg on PCA of 1536-dim emb |
+| XC probes (PCA + Perch logit, 65-dim) | 0.548 | -0.201 | adding raw logit made no difference |
 
-**Key difference from soundscape probes**:
-- Soundscape probes: 708 rows, 43-dim features (PCA + temporal context + prior + prototype cosine)
-- XC probes: 35,549 clips, 64-dim PCA features only (no temporal context — XC clips are isolated)
-- Alpha = 0.30 (lower than soundscape 0.40 due to domain shift: XC ≠ soundscape)
+**Root causes**:
+1. **Domain shift**: XC clips = close-up, single-species recordings. Soundscape windows = ambient, multi-species PAM. LogReg trained on XC embeddings has a different decision boundary than needed for soundscape predictions.
+2. **Perch already captures the signal**: Perch v2 embeddings encode species identity optimally — a LogReg probe on top adds noise. The soundscape probes work because they use 43-dim features including temporal context + site priors; XC probes use only raw PCA (64-dim), missing the key discriminative features.
+3. **Only 4/181 species showed positive delta**: 177 species were hurt; bottom 2: yebcar -0.70, 43435 -0.70.
 
-**Workflow**:
-1. `data/perch_cache_train_clips.py` (PERCH_MODEL_DIR=~/perch_v2_cpu) → `perch_train_cache_v2.npz` (35549×1536)
-2. `training/train_perch_probes_v2.py` → `perch_probes_v2.pkl` (probes for ~190/206 species)
-3. Upload pkl as Kaggle dataset `aldisued/birdclef2026-perch-xc-probes`
-4. Inference notebook: load pkl, apply XC probes for uncovered classes → submit
-
-**Status** (Apr 1):
-- [x] Scripts updated for Perch v2 compatibility (scientific_name label matching, serving_default API)
-- [x] Cache computation running on cluster: ~1h ETA (~8.5 clips/s, 900/35549 at ~12:25)
-- [x] Inference notebook updated with XC probe application cell (cell 19b)
-- [ ] Train probes after cache done (~20-30 min)
-- [ ] Upload to Kaggle dataset
-- [ ] Push kernel, submit
+**Infrastructure built** (reusable):
+- `data/perch_cache_train_clips.py` — computes Perch v2 embeddings for all 35,549 XC clips → `perch_train_cache_v2.npz`
+- `training/train_perch_probes_v2.py` — trains XC probes; fixed Perch v2 API (serving_default, labels.csv/scientific_name mapping)
+- `inference/kaggle_perch_v2_inference.ipynb` cell 19b — XC probe application code (remove from kernel)
 
 ---
 
@@ -691,13 +686,29 @@ Build species-species conditional probability from labeled training soundscapes 
 
 ---
 
-### Step 7 — PCEN + log-mel 2-channel input (medium priority)
+### 🔄 Step 7 — PCEN + log-mel 2-channel input — IN PROGRESS (Apr 2)
 
-**Expected: +0.005–0.015 LB | Requires retraining**
+**Expected: +0.005–0.015 LB | Requires retraining (~4h on cluster)**
 
-Add a second input channel: PCEN (Per-Channel Energy Normalization) alongside log-mel. PCEN is specifically designed for PAM recordings with variable background noise — suppresses stationary noise, enhances transient events. Consistent recommendation in ecoacoustics literature.
+Add a second input channel: PCEN (Per-Channel Energy Normalization) alongside log-mel. PCEN suppresses stationary background noise (rain, wind, insects) and enhances transient bird calls — ideal for Pantanal PAM recordings. Consistent recommendation in ecoacoustics literature.
 
-Implementation: `torchaudio.transforms.PCEN` applied to the same mel filterbank, concatenated with log-mel as channel dim → 2-channel input to EfficientNet.
+**Implementation** (`train_cnn.py --pcen`):
+- `make_pcen(y, ...)` → `librosa.pcen(mel * (2**31), sr=sr, hop_length=hop_length)` — computes from raw mel power spectrum
+- `spec_to_tensor_pcen(spec, pcen)` → stacks `[log-mel, PCEN, log-mel]` as 3 channels, per-channel min-max norm
+- `load_spec_and_pcen_crop(filename, ...)` — always loads from audio (PCEN can't be derived from dB cache)
+- `BirdDataset` + `SoundscapeLabelsDataset` accept `--pcen` flag
+- Model: keep `in_chans=3`, no architecture change — pretrained weights fully reusable
+
+**Training command** (same as v7 + `--pcen`):
+```bash
+--baseline --soundscape-labels --htk --warm-restarts --gain-aug --pcen --tag soundscape-v12-pcen
+```
+
+**Note**: training bypasses spec cache (PCEN needs raw mel power) → ~14× slower I/O than v7. Expect ~8–10h per fold on cluster.
+
+- [ ] Launch 4-fold training on cluster
+- [ ] Evaluate sc_cmap(held) vs v7 baseline 0.9762
+- [ ] Upload checkpoints, submit
 
 ---
 
