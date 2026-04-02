@@ -41,6 +41,8 @@ from train_cnn import (
     N_MELS,
     N_MELS_BASELINE,
     N_MELS_HGNETV2,
+    PCEN_CACHE_DIR_BASELINE_HTK,
+    PCEN_SOUNDSCAPE_CACHE_DIR_BASELINE_HTK,
     SOUNDSCAPE_CACHE_DIR_BASELINE_HTK,
     SOUNDSCAPE_CACHE_DIR_HGNETV2,
     SR,
@@ -50,6 +52,69 @@ SOUNDSCAPE_CACHE_DIR = DATA / "specs_cache_soundscape_224"
 
 MAX_DURATION = 30.0  # seconds; longer XC clips are truncated (soundscapes: no cap)
 CACHE_DIR = DATA / "specs_cache"
+
+
+def compute_and_save_pcen(args: tuple) -> tuple[str, bool, str]:
+    """Worker: load audio, compute PCEN, save as float16 npy."""
+    (
+        filename,
+        audio_dir,
+        cache_dir,
+        n_mels,
+        n_fft,
+        hop_length,
+        cap_duration,
+        fmin,
+        htk,
+        is_soundscape,
+    ) = args
+    src = audio_dir / filename
+    stem = Path(filename).stem
+    subdir = Path(filename).parent if not is_soundscape else Path(".")
+    dst = (
+        cache_dir / subdir / f"{stem}.npy"
+        if not is_soundscape
+        else cache_dir / f"{stem}.npy"
+    )
+
+    if dst.exists():
+        return filename, True, "cached"
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        info = sf.info(src)
+        if cap_duration is not None:
+            max_frames = int(cap_duration * info.samplerate)
+            frames_to_read = min(info.frames, max_frames)
+        else:
+            frames_to_read = info.frames
+
+        y, file_sr = sf.read(
+            src, frames=frames_to_read, dtype="float32", always_2d=False
+        )
+        if y.ndim == 2:
+            y = y.mean(axis=1)
+
+        if file_sr != SR:
+            y = librosa.resample(y, orig_sr=file_sr, target_sr=SR)
+
+        mel = librosa.feature.melspectrogram(
+            y=y,
+            sr=SR,
+            n_mels=n_mels,
+            hop_length=hop_length,
+            n_fft=n_fft,
+            fmin=fmin,
+            fmax=FMAX,
+            htk=htk,
+        )
+        pcen = librosa.pcen(mel * (2**31), sr=SR, hop_length=hop_length).astype(
+            np.float16
+        )
+        np.save(dst, pcen)
+        return filename, True, "ok"
+    except Exception as e:
+        return filename, False, str(e)
 
 
 def compute_and_save(args: tuple) -> tuple[str, bool, str]:
@@ -136,6 +201,12 @@ def main() -> None:
         "Use with --soundscapes to also cache train_soundscapes/.",
     )
     parser.add_argument(
+        "--pcen",
+        action="store_true",
+        help="Compute PCEN specs instead of log-mel. Only valid with --baseline --htk. "
+        "Saves to specs_cache_pcen_224_htk/ (XC) or specs_cache_pcen_soundscape_224_htk/ (soundscapes).",
+    )
+    parser.add_argument(
         "--check",
         action="store_true",
         help="Only report cache completeness, don't compute",
@@ -195,35 +266,75 @@ def main() -> None:
         filenames = train["filename"].tolist()
         cap_duration = MAX_DURATION
 
+    is_soundscape = args.soundscapes and not args.hgnetv2
+
+    # PCEN mode: redirect cache_dir to PCEN paths
+    if args.pcen:
+        if not (args.baseline and args.htk):
+            print("ERROR: --pcen only supported with --baseline --htk")
+            return
+        if is_soundscape:
+            cache_dir = PCEN_SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
+        else:
+            cache_dir = PCEN_CACHE_DIR_BASELINE_HTK
+
     if args.check:
-        cached = sum(
-            1
-            for f in filenames
-            if (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()
-        )
+        if is_soundscape:
+            cached = sum(
+                1 for f in filenames if (cache_dir / f"{Path(f).stem}.npy").exists()
+            )
+        else:
+            cached = sum(
+                1
+                for f in filenames
+                if (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()
+            )
         print(f"Cache: {cached}/{len(filenames)} files ({cached / len(filenames):.1%})")
         if cached < len(filenames):
-            missing = [
-                f
-                for f in filenames
-                if not (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()
-            ]
+            if is_soundscape:
+                missing = [
+                    f
+                    for f in filenames
+                    if not (cache_dir / f"{Path(f).stem}.npy").exists()
+                ]
+            else:
+                missing = [
+                    f
+                    for f in filenames
+                    if not (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()
+                ]
             print(f"Missing: {missing[:5]}{'...' if len(missing) > 5 else ''}")
         return
 
     cache_dir.mkdir(parents=True, exist_ok=True)
+    worker_fn = compute_and_save_pcen if args.pcen else compute_and_save
     tasks = [
         (f, audio_dir, cache_dir, n_mels, n_fft, hop_length, cap_duration, fmin, htk)
+        if not args.pcen
+        else (
+            f,
+            audio_dir,
+            cache_dir,
+            n_mels,
+            n_fft,
+            hop_length,
+            cap_duration,
+            fmin,
+            htk,
+            is_soundscape,
+        )
         for f in filenames
     ]
 
-    print(f"Computing specs for {len(tasks)} files with {args.workers} workers...")
+    print(
+        f"Computing {'PCEN' if args.pcen else 'log-mel'} specs for {len(tasks)} files with {args.workers} workers..."
+    )
     print(f"n_mels={n_mels}, n_fft={n_fft}, hop={hop_length}, fmin={fmin}, htk={htk}")
     print(f"Output: {cache_dir}")
 
     ok = skipped = errors = 0
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(compute_and_save, t): t[0] for t in tasks}
+        futures = {pool.submit(worker_fn, t): t[0] for t in tasks}
         with tqdm(total=len(tasks), unit="file") as pbar:
             for fut in as_completed(futures):
                 _, success, msg = fut.result()

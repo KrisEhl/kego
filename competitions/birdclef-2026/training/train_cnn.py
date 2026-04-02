@@ -61,6 +61,9 @@ CACHE_DIR_BASELINE = DATA / "specs_cache_224"
 FMIN_HTK = 0
 CACHE_DIR_BASELINE_HTK = DATA / "specs_cache_224_htk"
 SOUNDSCAPE_CACHE_DIR_BASELINE_HTK = DATA / "specs_cache_soundscape_224_htk"
+# PCEN cache — precomputed by precompute_specs.py --baseline --htk --pcen
+PCEN_CACHE_DIR_BASELINE_HTK = DATA / "specs_cache_pcen_224_htk"
+PCEN_SOUNDSCAPE_CACHE_DIR_BASELINE_HTK = DATA / "specs_cache_pcen_soundscape_224_htk"
 
 # BirdSet config — EfficientNet-B1 pretrained on 9,736 Xeno-Canto species
 N_MELS_BIRDSET = 256
@@ -293,6 +296,8 @@ def load_spec_crop(
 def load_spec_and_pcen_crop(
     filename: str,
     augment: bool = False,
+    cache_dir: Path = CACHE_DIR,
+    pcen_cache_dir: Path | None = None,
     n_mels: int = N_MELS,
     n_fft: int = N_FFT,
     hop_length: int = HOP_LENGTH,
@@ -305,25 +310,63 @@ def load_spec_and_pcen_crop(
     gain_aug: bool = False,
     gain_db: float = 12.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Load log-mel + PCEN from raw audio (always reads disk; PCEN needs raw mel power).
+    """Load log-mel + PCEN for a training clip.
+
+    Fast path: loads both from precomputed caches (same speed as standard log-mel training).
+    Slow fallback: computes from raw audio when either cache is missing.
 
     Returns (spec_logmel, spec_pcen) both shaped (n_mels, clip_frames).
     PCEN is gain-invariant by design — gain_aug is applied only to log-mel.
     """
     clip_frames = CLIP_SAMPLES // hop_length
-    path = DATA / "train_audio" / filename
-    try:
-        y = load_audio(path)
-        y = crop_or_pad(y)
-    except Exception:
-        zeros = np.zeros((n_mels, clip_frames), dtype=np.float32)
-        return zeros, zeros
-    spec = make_melspec(
-        y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
+    stem = Path(filename).stem
+    subdir = Path(filename).parent
+
+    # Try fast path: both specs from cache
+    mel_cache_path = cache_dir / subdir / f"{stem}.npy"
+    pcen_cache_path = (
+        pcen_cache_dir / subdir / f"{stem}.npy" if pcen_cache_dir is not None else None
     )
-    pcen_spec = make_pcen(
-        y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
-    )
+
+    if (
+        mel_cache_path.exists()
+        and pcen_cache_path is not None
+        and pcen_cache_path.exists()
+    ):
+        spec = np.load(mel_cache_path).astype(np.float32)
+        pcen_spec = np.load(pcen_cache_path).astype(np.float32)
+        for arr in (spec, pcen_spec):
+            t = arr.shape[1]
+            if t > clip_frames:
+                # both arrays use the same random crop for temporal alignment
+                break
+        if spec.shape[1] > clip_frames:
+            start = np.random.randint(0, spec.shape[1] - clip_frames + 1)
+            spec = spec[:, start : start + clip_frames]
+            pcen_spec = pcen_spec[:, start : start + clip_frames]
+        else:
+            if spec.shape[1] < clip_frames:
+                spec = np.pad(spec, ((0, 0), (0, clip_frames - spec.shape[1])))
+            if pcen_spec.shape[1] < clip_frames:
+                pcen_spec = np.pad(
+                    pcen_spec, ((0, 0), (0, clip_frames - pcen_spec.shape[1]))
+                )
+    else:
+        # Slow fallback: compute from audio
+        path = DATA / "train_audio" / filename
+        try:
+            y = load_audio(path)
+            y = crop_or_pad(y)
+        except Exception:
+            zeros = np.zeros((n_mels, clip_frames), dtype=np.float32)
+            return zeros, zeros
+        spec = make_melspec(
+            y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
+        )
+        pcen_spec = make_pcen(
+            y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
+        )
+
     if augment:
         if gain_aug:
             spec = gain_augment(spec, max_db=gain_db)
@@ -376,6 +419,7 @@ class BirdDataset(Dataset):
         gain_aug: bool = False,
         gain_db: float = 12.0,
         pcen: bool = False,
+        pcen_cache_dir: Path | None = None,
     ):
         self.df = df.reset_index(drop=True)
         self.species_to_idx = species_to_idx
@@ -400,6 +444,7 @@ class BirdDataset(Dataset):
         self.gain_aug = gain_aug
         self.gain_db = gain_db
         self.pcen = pcen
+        self.pcen_cache_dir = pcen_cache_dir
 
     def __len__(self) -> int:
         return len(self.df)
@@ -426,6 +471,8 @@ class BirdDataset(Dataset):
             spec, pcen_spec = load_spec_and_pcen_crop(
                 row["filename"],
                 augment=self.augment,
+                cache_dir=self.cache_dir,
+                pcen_cache_dir=self.pcen_cache_dir,
                 n_mels=self.n_mels,
                 n_fft=self.n_fft,
                 hop_length=self.hop_length,
@@ -596,6 +643,7 @@ class SoundscapeLabelsDataset(Dataset):
         n_freq_masks: int = 2,
         n_time_masks: int = 2,
         cache_dir: Path | None = None,
+        pcen_cache_dir: Path | None = None,
         fmin: int = FMIN,
         htk: bool = False,
         gain_aug: bool = False,
@@ -616,6 +664,7 @@ class SoundscapeLabelsDataset(Dataset):
         self.n_freq_masks = n_freq_masks
         self.n_time_masks = n_time_masks
         self.cache_dir = cache_dir
+        self.pcen_cache_dir = pcen_cache_dir
         self.clip_frames = CLIP_SAMPLES // hop_length
         self.fmin = fmin
         self.htk = htk
@@ -645,9 +694,7 @@ class SoundscapeLabelsDataset(Dataset):
         start_sec = self._parse_seconds(str(row["start"]))
 
         if self.pcen:
-            spec, pcen_spec = self._load_spec_and_pcen_from_audio(
-                row["filename"], start_sec
-            )
+            spec, pcen_spec = self._load_spec_and_pcen(row["filename"], start_sec)
             if self.augment:
                 if self.gain_aug:
                     spec = gain_augment(spec, max_db=self.gain_db)
@@ -719,12 +766,47 @@ class SoundscapeLabelsDataset(Dataset):
             htk=self.htk,
         )
 
-    def _load_spec_and_pcen_from_audio(
+    def _load_spec_and_pcen(
         self, filename: str, start_sec: int
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Load log-mel + PCEN from audio (always from disk; PCEN needs raw mel power)."""
-        path = self.soundscape_dir / filename
+        """Load log-mel + PCEN for a soundscape segment.
+
+        Fast path: slice from precomputed PCEN cache (specs_cache_pcen_soundscape_224_htk/).
+        Fallback: compute both from raw audio.
+        """
+        stem = Path(str(filename)).stem
+        start_frame = int(start_sec * SR / self.hop_length)
         zeros = np.zeros((self.n_mels, self.clip_frames), dtype=np.float32)
+
+        mel_cache_path = (
+            self.cache_dir / f"{stem}.npy" if self.cache_dir is not None else None
+        )
+        pcen_cache_path = (
+            self.pcen_cache_dir / f"{stem}.npy"
+            if self.pcen_cache_dir is not None
+            else None
+        )
+
+        if (
+            mel_cache_path is not None
+            and mel_cache_path.exists()
+            and pcen_cache_path is not None
+            and pcen_cache_path.exists()
+        ):
+            full_spec = np.load(mel_cache_path).astype(np.float32)
+            full_pcen = np.load(pcen_cache_path).astype(np.float32)
+            spec = full_spec[:, start_frame : start_frame + self.clip_frames]
+            pcen_spec = full_pcen[:, start_frame : start_frame + self.clip_frames]
+            if spec.shape[1] < self.clip_frames:
+                spec = np.pad(spec, ((0, 0), (0, self.clip_frames - spec.shape[1])))
+            if pcen_spec.shape[1] < self.clip_frames:
+                pcen_spec = np.pad(
+                    pcen_spec, ((0, 0), (0, self.clip_frames - pcen_spec.shape[1]))
+                )
+            return spec, pcen_spec
+
+        # Fallback: compute from audio
+        path = self.soundscape_dir / filename
         try:
             y, _ = librosa.load(
                 path, sr=SR, mono=True, offset=float(start_sec), duration=5.0
@@ -1607,10 +1689,13 @@ def main():
         fmin=fmin_cfg,
         htk=htk_cfg,
         pcen=args.pcen,
+        pcen_cache_dir=PCEN_CACHE_DIR_BASELINE_HTK if args.pcen and args.htk else None,
     )
     if args.pcen:
+        pcen_cache_exists = PCEN_CACHE_DIR_BASELINE_HTK.exists() if args.htk else False
         print(
-            "PCEN mode: input = [log-mel, PCEN, log-mel] — spec cache bypassed, reading audio from disk"
+            f"PCEN mode: input = [log-mel, PCEN, log-mel] | "
+            f"PCEN cache: {'✓ ' + str(PCEN_CACHE_DIR_BASELINE_HTK.name) if pcen_cache_exists else '✗ missing — computing on-the-fly (slow)'}"
         )
     # Background noise: preload all specs into RAM once before workers fork.
     # Workers inherit the array copy-on-write (Linux fork) — zero disk I/O per sample.
@@ -1677,6 +1762,13 @@ def main():
         else:
             sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE
         sc_cache = sc_cache_candidate if sc_cache_candidate.exists() else None
+        sc_pcen_cache = (
+            PCEN_SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
+            if args.pcen
+            and args.htk
+            and PCEN_SOUNDSCAPE_CACHE_DIR_BASELINE_HTK.exists()
+            else None
+        )
 
         # Stratified holdout by station (prevents leakage: model no longer trains+evals same files)
         val_frac = args.soundscape_val_frac
@@ -1711,6 +1803,7 @@ def main():
             n_freq_masks=args.n_freq_masks,
             n_time_masks=args.n_time_masks,
             cache_dir=sc_cache,
+            pcen_cache_dir=sc_pcen_cache,
             fmin=fmin_cfg,
             htk=htk_cfg,
             gain_aug=args.gain_aug,
@@ -1735,6 +1828,7 @@ def main():
                 hop_length=hop_length_cfg,
                 minmax_norm=minmax_norm,
                 cache_dir=sc_cache,
+                pcen_cache_dir=sc_pcen_cache,
                 fmin=fmin_cfg,
                 htk=htk_cfg,
                 pcen=args.pcen,
