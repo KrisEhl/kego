@@ -30,7 +30,7 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB 0.912 (Perch v2, kernel `aldisued/birdclef-2026-perch-v2-inference` v3, Mar 27)
 
-**Active work (Apr 2)**: Step 7 — PCEN 2-channel CNN (`soundscape-v12-pcen`). Step 14 (XC probes) confirmed dead end: OOF mean AP 0.548 vs Perch 0.749 (delta -0.201). XC embeddings can't overcome domain shift (close-up XC → ambient soundscape). PCEN implemented in `train_cnn.py --pcen`, launching 4-fold training on cluster.
+**Active work (Apr 2)**: Steps 7 and 14 both dead ends. Step 7 (PCEN) sc_cmap 0.587–0.607 vs v7 0.976 (-0.37). Step 14 (XC probes) OOF -0.201. Next: Step 5g (per-class calibration, no retraining) or Step 4 (Perch+CNN blend).
 
 ### Results
 
@@ -686,29 +686,25 @@ Build species-species conditional probability from labeled training soundscapes 
 
 ---
 
-### 🔄 Step 7 — PCEN + log-mel 2-channel input — IN PROGRESS (Apr 2)
+### ❌ Step 7 — PCEN + log-mel 2-channel input — DEAD END (Apr 2)
 
-**Expected: +0.005–0.015 LB | Requires retraining (~4h on cluster)**
+**Expected: +0.005–0.015 LB | Actual: sc_cmap 0.587–0.607 vs v7 0.976 (delta -0.37)**
 
-Add a second input channel: PCEN (Per-Channel Energy Normalization) alongside log-mel. PCEN suppresses stationary background noise (rain, wind, insects) and enhances transient bird calls — ideal for Pantanal PAM recordings. Consistent recommendation in ecoacoustics literature.
+**Results (4-fold, soundscape-v12-pcen)**:
 
-**Implementation** (`train_cnn.py --pcen`):
-- `make_pcen(y, ...)` → `librosa.pcen(mel * (2**31), sr=sr, hop_length=hop_length)` — computes from raw mel power spectrum
-- `spec_to_tensor_pcen(spec, pcen)` → stacks `[log-mel, PCEN, log-mel]` as 3 channels, per-channel min-max norm
-- `load_spec_and_pcen_crop(filename, ...)` — always loads from audio (PCEN can't be derived from dB cache)
-- `BirdDataset` + `SoundscapeLabelsDataset` accept `--pcen` flag
-- Model: keep `in_chans=3`, no architecture change — pretrained weights fully reusable
+| Fold | Best sc_cmap | Epoch | Notes |
+|---|---|---|---|
+| 0 | 0.587 | 9 | early stopped ep19 |
+| 1 | 0.607 | 34 | 2 runs wrote to same log (fold launch conflict) |
+| 2 | ~0.47 | 5 | killed early — same trajectory |
+| 3 | — | — | not launched |
 
-**Training command** (same as v7 + `--pcen`):
-```bash
---baseline --soundscape-labels --htk --warm-restarts --gain-aug --pcen --tag soundscape-v12-pcen
-```
+**Root cause**: The `[log-mel, PCEN, log-mel]` design fails because:
+1. **PCEN is too different from log-mel**: After min-max norm, PCEN has sparser, more peaked patterns vs. log-mel's smooth dB representation. The EfficientNet pretrained on [mel, mel, mel] struggles to adapt the PCEN channel fast enough.
+2. **Channels 0 and 2 are identical**: gradient from two identical channels pulls the model toward "predict from log-mel only" — PCEN in ch1 is downweighted by the optimizer.
+3. **Note**: caching was also a challenge — on-the-fly PCEN decode is ~14× slower than cache. Added `precompute_specs.py --pcen` + PCEN cache dirs to `train_cnn.py` to fix I/O. Infrastructure reusable.
 
-**Note**: training bypasses spec cache (PCEN needs raw mel power) → ~14× slower I/O than v7. Expect ~8–10h per fold on cluster.
-
-- [ ] Launch 4-fold training on cluster
-- [ ] Evaluate sc_cmap(held) vs v7 baseline 0.9762
-- [ ] Upload checkpoints, submit
+**What might work instead**: train with PCEN as the ONLY input `[PCEN, PCEN, PCEN]` or use frequency-weighted blend; don't mix with log-mel in same forward pass.
 
 ---
 
