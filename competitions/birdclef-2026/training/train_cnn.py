@@ -1547,6 +1547,15 @@ def main():
         "Loads model weights only (not optimizer state).",
     )
     parser.add_argument(
+        "--pretrained-backbone",
+        type=str,
+        default="",
+        help="Path to a backbone-only state dict saved by pretrain_cnn.py. "
+        "Initialises BirdModelBaseline.encoder weights before fine-tuning "
+        "(replaces ImageNet init with cross-species bird-audio init). "
+        "Only valid with --baseline.",
+    )
+    parser.add_argument(
         "--finetune-sc",
         action="store_true",
         help="Fine-tune a pre-trained checkpoint on labeled soundscape segments only "
@@ -1913,6 +1922,19 @@ def main():
         ckpt = torch.load(args.resume_from, map_location=device)
         model.load_state_dict(ckpt["model"])
         print(f"Loaded checkpoint: {args.resume_from} (epoch {ckpt.get('epoch', '?')})")
+
+    # Load backbone-only weights from pretrain_cnn.py (cross-species pre-training)
+    if args.pretrained_backbone:
+        if not args.baseline:
+            raise ValueError("--pretrained-backbone requires --baseline")
+        backbone_sd = torch.load(args.pretrained_backbone, map_location=device)
+        missing, unexpected = model.encoder.load_state_dict(backbone_sd, strict=False)
+        print(
+            f"Loaded pre-trained backbone: {args.pretrained_backbone}  "
+            f"missing={len(missing)} unexpected={len(unexpected)}"
+        )
+        if missing:
+            print(f"  Missing keys (new head params, expected): {missing[:5]}")
 
     # ── Finetune-SC mode: train only on labeled soundscapes ──────────────────
     if args.finetune_sc:
