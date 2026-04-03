@@ -200,8 +200,8 @@ Key insights from field literature (see `research-lit.md`):
 - [x] Implement 5-way archetypes in notebook
 - [x] Implement MLP probes in notebook
 - [x] Write tuning script (`eval/tune_perch_smoothing.py`)
-- [ ] Run tuning on cluster, update notebook α values
-- [ ] Push Kaggle kernel v4, submit
+- [x] Run tuning on cluster, update notebook α values
+- [x] Push Kaggle kernel v4, submit (pending score, Apr 3)
 
 ---
 
