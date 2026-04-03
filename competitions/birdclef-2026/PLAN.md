@@ -30,7 +30,7 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB 0.912 (Perch v2, kernel `aldisued/birdclef-2026-perch-v2-inference` v3, Mar 27)
 
-**Active work (Apr 2)**: Steps 7 and 14 both dead ends. Step 7 (PCEN) sc_cmap 0.587–0.607 vs v7 0.976 (-0.37). Step 14 (XC probes) OOF -0.201. Next: Step 5g (per-class calibration, no retraining) or Step 4 (Perch+CNN blend).
+**Active work (Apr 3)**: Step 15 (cross-species pre-training) dead end — sc_cmap 0.714 vs 0.976. All training-based improvement paths exhausted. Only remaining options are Perch post-processing improvements (5-way smoothing archetypes, MLP probes).
 
 ### Results
 
@@ -144,6 +144,53 @@ Key insights from field literature (see `research-lit.md`):
 ---
 
 ## Next steps (ordered by expected impact)
+
+### ❌ Step 15 — Cross-species pre-training on BirdCLEF 2021-2024 — DEAD END (Apr 3)
+
+**Expected: +0.010–0.030 LB | Requires pre-training + fine-tuning | High priority**
+
+**Hypothesis**: Perch's advantage over our CNN comes from being trained on 10,932 bird species — rich cross-species representations. Pre-training our B0 backbone on 2021-2024 combined data (~900 species, ~120K clips) before v7 fine-tuning should close part of this gap.
+
+| Year | Clips | Species | Audio dir |
+|------|-------|---------|-----------|
+| 2021 | 62,874 | 397 | `train_short_audio/` |
+| 2022 | ~15,000 | 152 | `train_audio/` |
+| 2023 | ~16,900 | 264 | `train_audio/` |
+| 2024 | ~24,459 | 182 | `train_audio/` |
+| **Total** | **~120K** | **~900 unique** | — |
+
+**Pipeline**:
+1. `precompute_pretrain_specs.py` — HTK mel cache for all 4 years (same config as v7). Running on cluster, ~1.5h.
+2. `pretrain_cnn.py` — multi-class CrossEntropy on primary label, 15 epochs, saves backbone-only weights.
+3. `train_cnn.py --baseline --htk --soundscape-labels --pretrained-backbone outputs/pretrain-v1_best_backbone.pt` — v7 fine-tune from pre-trained init instead of ImageNet.
+
+**Why CrossEntropy (not BCE)**: pre-training only needs one label per clip (primary species). BCE requires knowing all species present — we only have reliable primary labels across all years.
+
+**Key precedent**: BirdCLEF 2025 top teams used exactly this 2021-2024 pre-training → 2025 fine-tuning approach.
+
+- [x] Download 2021-2024 data (Apr 3)
+- [x] Precompute HTK specs for all 4 years (~1.5h)
+- [x] Pre-train B0: 15 epochs, 926 species, 119K clips, final val_acc=0.360
+- [x] Fine-tune fold 0: sc_cmap(held) = **0.7135** vs v7 0.9762 — delta **-0.2627**
+- [x] **DEAD END** — pipeline stopped, folds 1-3 not run
+
+**Root cause**: Same catastrophic forgetting pattern as all prior pre-training attempts (pseudo-labels 0.69, Perch KD 0.54, B3 0.57). ImageNet NoisyStudent init (`tf_efficientnet_b0.ns_jft_in1k`) was trained on 300M+ images with noisy student distillation — richer low-level features than 119K XC clips can provide. XC pre-training overwrites these features; 30-epoch fine-tuning at LR=1e-3 cannot recover them.
+
+**Why Perch doesn't have this problem**: Perch uses Perch embeddings as *features*, not as a pre-trained CNN backbone. The CNN backbone still starts from ImageNet. Our approach tried to replace the backbone init, which hurts.
+
+**Do not retry** with same architecture. Only viable retry: frozen backbone for first N epochs + lower LR — but this is risky and the expected gain is marginal.
+
+---
+
+### Remaining fallback options (low priority)
+
+| Option | Expected gain | Notes |
+|---|---|---|
+| **5-way acoustic archetypes for Perch smoothing** | +0.003–0.008 | Pure Perch notebook change |
+| **MLP probes for Perch** | +0.003–0.010 | Replace LogReg, retrain probes |
+| **Tune Perch smoothing α** | +0.002–0.005 | Grid-search on 14 held-out soundscapes |
+
+---
 
 ### ❌ Step 9 — Pseudo-Label Pipeline — DEAD END (Mar 28)
 
@@ -376,42 +423,45 @@ See Step 5a above. v34 kernel ready to submit.
 
 ---
 
-### 🎯 Step 5g — Per-class calibration on 66 labeled soundscapes (next after v34 LB)
+### ❌ Step 5g — Per-class calibration on labeled soundscapes — DEAD END (Apr 2)
 
-**Expected: +0.005–0.020 LB | No retraining | High priority**
+**Result: OOF cmAP delta = -0.0004 (essentially zero). Not worth pursuing.**
 
-Learn per-class temperature T_c on OOF predictions from the 66 labeled soundscapes, maximizing per-class AP. Apply as `sigmoid(logit / T_c)` in inference. Particularly valuable for the 28 zero-shot species and 76 non-Aves classes.
+Script: `eval/calibrate_perch_temps.py` — runs 5-fold GroupKFold OOF on 59 labeled soundscapes (708 windows), optimises T_c per class with Brent's method (log-T bounds [-2, 2] → T ∈ [0.135, 7.389]).
 
-Implementation options:
-- Grid-search T_c ∈ [0.5, 2.0] per class using `eval_oof.py` soundscape predictions
-- Apply as a 234-element vector baked into the inference notebook
+| Metric | Value |
+|---|---|
+| OOF cmAP (no T) | 0.5397 (71 classes with ≥1 positive) |
+| OOF cmAP (per-class T) | 0.5393 |
+| Delta | **-0.0004** |
+| Median T_c | 7.389 (hitting upper bound) |
 
-**When to run**: after v34 LB result confirms HGNetV2 blend helps. If blend helps, calibrate the 8-model ensemble. If neutral, calibrate soundscape-v7 alone.
+**Root causes**:
+- Only 71/234 classes have any positives in the 59 labeled soundscapes → 163 classes get T_c=1.0 (no signal)
+- 132–144 val samples per fold, very few positives per class → optimizer hits upper bound (T=7.389) for most calibrated classes
+- When ranking is already correct, temperature scaling is a rank-preserving no-op
+- Perch probe OOF scores are well-calibrated enough that there is no systematic over/underconfidence to correct
+
+**Do not retry**: increasing labeled data or reducing PCA dims won't overcome the fundamental sparsity — 59 soundscapes covers only ~30% of target species.
 
 ---
 
-### 🎯 Step 4 — Perch v2 + CNN ensemble blend
+### ❌ Step 4 — Perch v2 + CNN ensemble blend — DEAD END (confirmed Apr 2)
 
-**Expected: +0.005–0.020 LB on top of 0.912 | No retraining required**
+All same-kernel blend attempts timed out in scoring env. No viable path remains:
 
-**Approach**: Run both models in the SAME notebook. `kernel_sources` approach is a dead end — it loads dry-run (all-zero) outputs, not scoring-env outputs.
+| Approach | Result |
+|---|---|
+| kernel_sources | Bug: loads dry-run zeros → same as Perch alone |
+| Single kernel, 4-fold CNN | Timeout (blend v2) |
+| Single kernel, 2-fold CNN | Timeout (blend v3) |
+| TF thread caps + 1-fold CNN | Timeout (blend v4, v5) |
+| TFLite for Perch (10× speedup) | Dead end — SELECT_TF_OPS bypasses XNNPACK, 0.9× speedup |
+| Parallel Perch+CNN threads | TF at half cores = 12.87s/file → 127 min, doesn't fit |
 
-**Timing**: Perch ~7 min + CNN 4-fold no-overlap ~44 min = ~51 min total, fits 90-min budget.
+**Root cause**: TF consumes all CPUs and doesn't release thread pools. PyTorch then competes → 2-4× slowdown. No fix exists for Perch v2 SavedModel (requires JAX checkpoint for native TFLite). Code Competition = no external blending.
 
-**Blend formula**: `final = (1 - CNN_WEIGHT) × perch_probs + CNN_WEIGHT × cnn_probs`
-
-- [x] Build blend v2 notebook (`inference/kaggle_blend_v2_inference.ipynb`)
-  - Perch v2 full pipeline → `perch_submission`
-  - CNN soundscape-v7 (4-fold, no overlap = 12 windows/file)
-  - Blend: 0.80 × Perch + 0.20 × CNN
-- [x] Push kernel `aldisued/birdclef-2026-perch-cnn-blend-v2-inference` v1
-- [x] Submit Mar 29 — **awaiting score**
-- [ ] If score > 0.912: iterate on CNN_WEIGHT (try 0.30, 0.40)
-- [ ] If score ≤ 0.912: debug CNN inference output (check cnn_rows populated, probs non-zero)
-
-**Dead end documented**: `kernel_sources` loads OUTPUT FILES from last manual kernel run (dry-run → all zeros). Any blend using kernel_sources is `α × perch + (1-α) × 0 = α × perch` — ranking-preserving → same cmAP.
-
-**Local α calibration not reliable**: raw Perch logits (from jaejohn/perch-meta) give cmAP 0.35 vs CNN 0.95 on labeled soundscapes. This is incomparable to the final Perch pipeline (LB 0.912). Use LB submissions to calibrate α iteratively.
+**Do not retry**.
 
 ---
 
@@ -484,32 +534,19 @@ Parallel approach is only viable if Perch first gets faster via quantized TFLite
 
 ---
 
-### 🎯 Step 5 — Per-class calibration + site×hour prior (post-processing only)
+### ❌ Step 5 — Per-class calibration + Perch probe ablations — DEAD END (Apr 2)
 
-**Expected: +0.005–0.020 LB | No retraining | Medium-high priority**
+Per-class temperature calibration (Part A → Step 5g) confirmed dead end: OOF delta = -0.0004.
+Site×hour Bayesian prior (Part B) already implemented in Perch v2 pipeline (LB 0.912).
+Raw embeddings without PCA (Part C): not tested, but given calibration failure the expected gain is minimal.
 
-Two orthogonal improvements, both using the 66 labeled soundscapes as calibration set:
-
-**A. Per-class temperature scaling**
-Learn a per-class temperature T_c such that `sigmoid(logit / T_c)` maximizes AP on OOF predictions. Currently using global T=1.0. Literature shows per-class calibration is consistently valuable in long-tail multilabel ecology.
-- Implementation: after getting predictions on 66 soundscapes (OOF), optimize T_c per class with Brent's method or grid search
-- Especially useful for the 76 zero-shot / weak-shot non-bird species
-
-**B. Site×hour Bayesian prior**
-Build `P(species | site, hour)` from `train_soundscapes_labels.csv`:
-- Extract site code (e.g., `SN01`) and hour from filename timestamp
-- Count species occurrences per (site, hour) bin → normalize
-- Apply as additive prior: `preds += β × prior(site, hour)` (β ≈ 0.05–0.15)
-- This is the "Bayesian site×hour prior" used by public 0.9+ notebooks
-
-**C. Ablation to run first: raw embeddings without PCA**
-Literature notes PCA can hurt rare classes. Try `LogReg` directly on standardized 1280-dim embeddings (no PCA reduction) for the per-class probes. If better on OOF AP, retrain probes and update artifacts.
+**Do not retry any of these**.
 
 ---
 
 ---
 
-### 🎯 Step 10 — Perch → CNN knowledge distillation (Perch soft labels for CNN training)
+### ❌ Step 10 — Perch → CNN knowledge distillation (Perch soft labels for CNN training) — DEAD END (Apr 1)
 
 **Expected: close the 0.882→0.912 gap | Requires precompute + retraining | High priority**
 
@@ -586,30 +623,9 @@ echo $! > /tmp/perch_precompute.pid
 
 ---
 
-### 🎯 Step 11 — Perch embedding supervision for CNN (auxiliary distillation head)
+### ❌ Step 11 — Perch embedding supervision for CNN (auxiliary distillation head) — DEAD END (Apr 1)
 
-**Expected: complementary to Step 10 | Requires precompute (same data) + retraining**
-
-**Core idea**: Add an auxiliary head to CNN that predicts Perch's 1536-dim embeddings during training. Forces CNN internal representations to be "Perch-like" without needing Perch at inference time. Uses the same precomputed cache as Step 10.
-
-**Architecture**:
-```
-mel → CNN encoder → feature map
-                  ├→ GEMPool → AttSED → class probs   (main head, BCE)
-                  └→ GAP → Linear(1536) → emb pred     (aux head, MSE vs Perch emb)
-```
-Loss: `BCE(pred, label) + λ_emb × MSE(emb_pred, perch_emb)`
-
-Aux head is dropped at inference. The constraint forces the encoder to learn Perch's feature space, especially for non-Aves species where Perch excels.
-
-**λ_emb tuning**: start at 0.1 (aux head shouldn't dominate). Tune via sc_cmap(held).
-
-**Can combine with Step 10**: use both soft labels AND embedding supervision simultaneously.
-
-- [ ] Precompute done (shared with Step 10)
-- [ ] Add aux embedding head to BirdModelBaseline in train_cnn.py
-- [ ] Add `--perch-emb-supervision λ` flag
-- [ ] Train and evaluate
+Deprioritized when Step 10 (same data, same root cause) confirmed dead. KD signal doesn't help the CNN close the XC→soundscape domain gap — same fundamental issue as Step 10.
 
 ---
 
