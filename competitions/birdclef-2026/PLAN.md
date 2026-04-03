@@ -182,13 +182,26 @@ Key insights from field literature (see `research-lit.md`):
 
 ---
 
-### Remaining fallback options (low priority)
+### Step 16 — Perch post-processing improvements (Apr 3)
 
-| Option | Expected gain | Notes |
-|---|---|---|
-| **5-way acoustic archetypes for Perch smoothing** | +0.003–0.008 | Pure Perch notebook change |
-| **MLP probes for Perch** | +0.003–0.010 | Replace LogReg, retrain probes |
-| **Tune Perch smoothing α** | +0.002–0.005 | Grid-search on 14 held-out soundscapes |
+**In progress** — three changes to `kaggle_perch_v2_inference.ipynb`:
+
+1. **5-way acoustic archetypes** (implemented) — replace binary texture/event smoothing with 5 groups:
+   - Amphibia → α=0.40 (continuous background chorus)
+   - Insecta → α=0.35 (texture)
+   - Aves proxy/unmapped → α=0.20 (uncertain bird calls)
+   - Aves directly-mapped → α=0.10 (event birds)
+   - Mammalia/Reptilia → α=0.05 (rare transients)
+
+2. **MLP probes** (implemented) — replace `LogisticRegression` with `MLPClassifier(hidden=(64,))` on same 41-43 features; `predict_proba` logit-transformed for blending consistency.
+
+3. **Tune smoothing α** — `eval/tune_perch_smoothing.py` grid-searches 108 configs on 59 labeled soundscapes (GroupKFold by site, cmAP metric). Run on cluster to get best α values, then bake into notebook.
+
+- [x] Implement 5-way archetypes in notebook
+- [x] Implement MLP probes in notebook
+- [x] Write tuning script (`eval/tune_perch_smoothing.py`)
+- [ ] Run tuning on cluster, update notebook α values
+- [ ] Push Kaggle kernel v4, submit
 
 ---
 
