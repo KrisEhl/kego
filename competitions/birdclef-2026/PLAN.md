@@ -30,9 +30,20 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB 0.912 (Perch v5, kernel `aldisued/birdclef-2026-perch-v2-inference` v5, Apr 3)
 
-**Active work (Apr 4)**: Research complete (3-agent deep dive). ProtoSSM confirmed as the path to 0.924+. Two parallel tracks launched:
-- **Step 17**: ProtoSSM in artifact mode (train locally → upload weights → run at inference). Confirmed +0.008–0.012 by multiple competitors at 0.924+.
-- **Step 18**: Perch ONNX benchmark (`yuriygreben/birdclef26-perch-onnx`, tf2onnx path). If 3x+ speedup, unlocks CNN blend.
+**Active work (Apr 4)**:
+- **v6 kernel** pushed: V18 probe params (PCA 128, min_pos 5, C=0.75, α=0.45) + extended Aves proxies + rank-aware post-processing. LB pending.
+- **v8 kernel** pushed: ProtoSSM integration (50/50 blend with probes). OOF cmAP=0.5452 (5-fold). LB pending.
+- **Step 18 COMPLETE**: Perch ONNX = **7.98x speedup** (1.99s/file vs 15.87s/file). 739 files: **24 min** (vs 195 min TF). Unlocks CNN blend with 66 min to spare. → Planning Perch ONNX + CNN blend (Step 19).
+
+**Step 17 results (ProtoSSM v1)**:
+- 5-fold OOF cmAP = 0.5452 (per-fold: 0.5548, 0.3614, 0.7403, 0.5888, trained on ~17-29 classes/fold)
+- Full retrain on 708 windows done in 24 min. Checkpoint: `aldisued/birdclef2026-protossm-v1`
+
+**Step 18 results (Perch ONNX benchmark v5)**:
+- Speedup: **7.98×** (train_soundscapes, 20 files, TF 2.20.0 vs onnxruntime 1.21.0)
+- ONNX = 1.99s/file → 24 min for 739 files (fits in 90-min budget with 66 min remaining)
+- TF = 15.87s/file → 195 min (way over budget on its own)
+- Model: `yuriygreben/birdclef26-perch-onnx/perch_v2_no_dft.onnx` (tf2onnx conversion)
 
 ### Results
 
@@ -803,30 +814,55 @@ Train the ProtoSSM architecture locally on the 708-window perch-meta cache, seri
 
 ---
 
-### 🎯 Step 18 — Perch ONNX benchmark (Apr 4)
+### ✅ Step 18 — Perch ONNX benchmark (Apr 4) — CONFIRMED 7.98x SPEEDUP
 
-**Expected: if ≥3x speedup, unlocks CNN blend (+0.010–0.020 LB) | Low effort (1 day)**
+**Result**: ONNX = **7.98x faster** than TF SavedModel (Apr 4, benchmark v5)
+- TF SavedModel: 15.87s/file → 195 min for 739 files (way over 90-min budget)
+- ONNX Runtime: 1.99s/file → **24 min for 739 files** (66 min remaining)
+- Model: `yuriygreben/birdclef26-perch-onnx/perch_v2_no_dft.onnx` (tf2onnx)
+- Embedding similarity: TBD (comparison code had shape bug, fixed in v6)
 
-Test `yuriygreben/birdclef26-perch-onnx` (pre-converted `tf2onnx` model, 381MB) vs TF SavedModel speed on identical soundscapes. This is distinct from dead ends:
-- TFLite: dead end (0.9x, SELECT_TF_OPS bypasses XNNPACK)
-- CNN ONNX: dead end (ONNX slower than PyTorch for PyTorch models)
-- **Perch ONNX**: UNTESTED — ONNX RT may have real advantage for TF→ONNX converted models
+**Key insight**: ONNX Perch alone takes 24 min. This leaves 66 min for CNN inference.
+A 1-fold CNN takes ~10 min → Perch ONNX + 1-fold CNN blend easily fits.
 
-**Speedup claim** (Milan Joshi v40+): 9x. Conservative estimate: 3–5x.
+- [x] Create benchmark Kaggle notebook `aldisued/birdclef-2026-perch-onnx-benchmark`
+- [x] Run benchmark v5 (20 soundscapes, TF 2.20 vs onnxruntime 1.21) → 7.98x
+- [ ] Fix embedding cosine sim comparison (v6 kernel running)
+- [ ] Build Perch ONNX + CNN blend kernel (Step 19)
 
-If confirmed:
-- 3x speedup: 85 min → 28 min, frees 57 min for 4-fold CNN blend
-- 5x speedup: 85 min → 17 min, frees 68 min (very comfortable)
-- 9x speedup: 85 min → 10 min, frees 75 min
+---
 
-**Test plan**:
-1. Create benchmark kernel: attach `yuriygreben/birdclef26-perch-onnx` + onnxruntime wheels + 20 soundscapes
-2. Time ONNX inference vs TF SavedModel inference on same files
-3. Verify output similarity (cosine sim of embeddings > 0.999)
+### 🎯 Step 19 — ONNX Perch + CNN blend (Apr 4) — NEW
 
-- [ ] Create benchmark Kaggle notebook `aldisued/birdclef-2026-perch-onnx-bench`
-- [ ] Run benchmark (20 soundscapes, time both backends)
-- [ ] If speedup ≥ 3x: adapt main inference kernel to use ONNX Perch + 1-fold CNN blend
+**Expected: +0.010–0.020 LB | Medium effort (1-2 days)**
+
+ONNX confirmed at 7.98x speedup. Budget:
+- ONNX Perch: 24 min
+- 1-fold CNN (v7): ~10 min
+- ProtoSSM (50k params): ~1 min
+- Total: ~35 min (55 min headroom)
+
+**Plan**:
+1. Create new blend kernel based on `kaggle_perch_v2_inference.ipynb` (the ONNX-Perch version)
+2. Remove TF SavedModel → replace with ONNX runtime inference (use `aldisued/onnxruntime-121-cp312-linux` + `yuriygreben/birdclef26-perch-onnx`)
+3. After Perch ONNX: run 1-fold CNN (soundscape-v7, best fold) → generate CNN scores
+4. Blend: 0.7 × Perch-ONNX-pipeline + 0.3 × CNN (starting point; tune with local validation)
+5. ProtoSSM already integrated (v8 kernel); reuse
+
+**Timing estimate per 739 files** (90-min budget):
+- ONNX Perch inference: 24 min
+- Probe training + inference: ~5 min (same as before)
+- ProtoSSM inference: ~1 min
+- 1-fold CNN load + inference: ~10 min
+- Total: ~40 min
+
+**Risk**: Kaggle scoring env may be slower than benchmark env (different hardware).
+Benchmark used train_soundscapes (66 files, 20 sampled); test may have 739+ files.
+
+- [ ] Create `kaggle_blend_perch_onnx.ipynb` based on v8 inference notebook
+- [ ] Replace TF Perch with ONNX Perch
+- [ ] Add 1-fold CNN inference (load from `aldisued/birdclef2026-soundscape-v7`)
+- [ ] Push and test timing (submit only if COMPLETE in benchmark)
 
 ---
 
