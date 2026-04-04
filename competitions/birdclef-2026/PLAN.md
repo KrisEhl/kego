@@ -28,9 +28,11 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB 0.912 (Perch v2, kernel `aldisued/birdclef-2026-perch-v2-inference` v3, Mar 27)
+### Current best: LB 0.912 (Perch v5, kernel `aldisued/birdclef-2026-perch-v2-inference` v5, Apr 3)
 
-**Active work (Apr 3)**: Step 15 (cross-species pre-training) dead end — sc_cmap 0.714 vs 0.976. All training-based improvement paths exhausted. Only remaining options are Perch post-processing improvements (5-way smoothing archetypes, MLP probes).
+**Active work (Apr 4)**: Research complete (3-agent deep dive). ProtoSSM confirmed as the path to 0.924+. Two parallel tracks launched:
+- **Step 17**: ProtoSSM in artifact mode (train locally → upload weights → run at inference). Confirmed +0.008–0.012 by multiple competitors at 0.924+.
+- **Step 18**: Perch ONNX benchmark (`yuriygreben/birdclef26-perch-onnx`, tf2onnx path). If 3x+ speedup, unlocks CNN blend.
 
 ### Results
 
@@ -131,17 +133,45 @@ Same B0 NoisyStudent backbone, but with inference improvements:
 - 224 mel, n_fft=2048, hop=512, fmin=0, fmax=16k, **HTK mel scale**, **slaney norm**, top_db=80
 - Per-clip min-max normalization to [0, 1]
 
-### What 0.920–0.937 teams are likely doing (not yet public)
+### What 0.920–0.937 teams are doing (confirmed Apr 4)
 
-The literature and competition pattern point to: **calibrated Perch + fine-tuned CNN ensemble, with per-class threshold learning and site/time priors**. The jump from 0.912 to 0.937 is most likely per-class calibration + co-occurrence priors + a stronger CNN (B3/B4 or EfficientNetV2) — not just a bigger backbone.
+**Score ladder** (confirmed from research):
 
-Key insights from field literature (see `research-lit.md`):
-- The biggest jump is **not** a larger CNN. It is a calibrated ensemble of Perch + CNN + structured priors.
-- Per-class calibration (Platt scaling / temperature per class) on the 66 labeled soundscapes is high-value, zero training cost.
-- Temporal post-processing is **not a hack** — it reflects genuine biological structure. More acoustic archetypes (transient/repetitive/chorus/continuous/rare) outperform a binary texture/event split.
-- PCEN as a second input channel alongside log-mel is a consistent literature recommendation for noisy field recordings.
-- Co-occurrence priors (species PMI from training soundscapes) can fix borderline detections.
-- Pseudo-labeling only helps when the teacher has confident positives — confirmed by our own 0.746 result.
+| Approach | LB |
+|---|---|
+| Our Perch v5 (LogReg probes + Bayesian priors + 5-way smoothing) | 0.912 |
+| ProtoSSM v18 (`dingjiarun/pantanal-distill-birdclef2026-improvement-a4dc68`) | ~0.924+ |
+| Kamongi V22 (ProtoSSM + YAMNet + XC train embeddings + sonotype boost) | ~0.928 |
+| Milan Joshi v72+ (Perch ONNX + ProtoSSM + EfficientNet-B0 blend) | unknown |
+
+**The ProtoSSM architecture** (documented in `research-protossm.md`) is the confirmed source of the 0.912→0.924 jump:
+- 4-layer bidirectional Mamba-style SSM (d_model=320) on top of frozen Perch 1536-dim embeddings
+- Trains on only 708 windows (59 labeled soundscapes × 12 windows) — fits in ~5 min CPU
+- Gated per-class fusion: each of 234 species learns α to blend prototype similarity vs raw Perch logit
+- ResidualSSM second pass (2-layer BiSSM on residuals)
+- 5-shift temporal TTA, rank-aware post-processing (file_max^0.4), adaptive delta smoothing
+- Per-class thresholds from OOF (234 hardcoded values)
+- **Key timing constraint**: must run in artifact mode — train weights offline, load in scoring kernel in <5s
+
+**Delta breakdown** (0.912 → 0.924+):
+
+| Change | Est. gain |
+|---|---|
+| ProtoSSM BiSSM temporal modeling | +0.008–0.012 |
+| ResidualSSM second pass | +0.002–0.004 |
+| Probe improvements (PCA 128, min_pos 5, 143 features) | +0.002–0.003 |
+| Aves genus proxies (extend to unmapped Aves) | +0.001 |
+| Rank-aware post-processing + adaptive delta smoothing | +0.002 |
+| Per-class thresholds from OOF | +0.002 |
+
+**Perch ONNX** (`yuriygreben/birdclef26-perch-onnx`): `tf2onnx` conversion reported 9x faster than TF SavedModel (Milan Joshi v40+). If confirmed ≥3x, unlocks CNN blend (drops Perch from 85 min → 10–28 min). Pre-converted model on Kaggle — just needs a benchmark kernel. Note: TFLite (SELECT_TF_OPS, 0.9x) and CNN ONNX (slower than PyTorch) are both dead ends — this is a different path (TF model → ONNX RT).
+
+Key insights from Apr 4 research (3-agent deep dive — see `research-protossm.md`):
+- The biggest jump is **ProtoSSM** (temporal SSM), not probe tuning or post-processing
+- Co-occurrence PMI prior (+0.008–0.018 est.) is the best no-training improvement
+- Per-class Platt scaling (bias+scale) is untested and potentially significant — different from per-class temperature (dead end)
+- Probe feature expansion (143 vs 41 features, std_base + interaction terms) is cheap and confirmed by ProtoSSM V18
+- XC train audio embeddings for probe training (Kamongi V22 technique) gives more positives for rare classes
 
 ---
 
@@ -747,6 +777,56 @@ Build species-species conditional probability from labeled training soundscapes 
 **Expected: +0.02–0.05 LB | Training: ~8–12h | Medium risk**
 
 BirdCLEF 2021/2022/2023/2024 datasets (~117K clips, all public on Kaggle). Pretrain → fine-tune on 2026. Large effort; defer until Perch ensemble approach is validated. Note: BirdSet XCL pretraining already failed (LB 0.782), suggesting label mismatch with Pantanal is the bottleneck, not data volume. Multi-year BirdCLEF is more geographically aligned and worth testing.
+
+---
+
+### 🎯 Step 17 — ProtoSSM in artifact mode (Apr 4)
+
+**Expected: +0.008–0.012 LB | Confirmed by competitors at 0.924+ | Medium effort (2–3 days)**
+
+Train the ProtoSSM architecture locally on the 708-window perch-meta cache, serialize weights, upload as Kaggle dataset, load in scoring kernel in <5s. Full architecture documented in `research-protossm.md`.
+
+**Architecture**: 4-layer bidirectional SSM (d_model=320, d_state=32), TemporalCrossAttention, 2 prototypes/class, gated per-class fusion (prototype sim vs Perch logit), taxonomic aux head. Input: 1536-dim Perch embeddings × 12 windows per file.
+
+**Training**: AdamW lr=8e-4, OneCycleLR + CosineAnnealingWarmRestarts, 80 epochs, focal BCE (γ=2.5) + 0.15×KD + 0.1×taxonomic aux, Mixup β(0.4), SWA from epoch 65%, 5-fold GroupKFold by site.
+
+**Scoring kernel budget**: Perch live inference ~85 min + ProtoSSM artifact load+inference ~2–3 min = ~88 min total.
+
+**Data**: `jaejohn/perch-meta` cache (already downloaded: `data/perch-meta/`) — 59 soundscapes × 12 windows = 708 rows.
+
+- [ ] Implement `training/train_protossm.py` (architecture + training loop)
+- [ ] Train on cluster: 5-fold GroupKFold by site, serialize `model.state_dict()` + probe_models
+- [ ] Validate sc_cmap(held) locally on 14 held-out soundscapes
+- [ ] Upload weights as Kaggle dataset `aldisued/birdclef2026-protossm-v1`
+- [ ] Modify inference notebook to load ProtoSSM artifact + run test inference
+- [ ] Submit and compare LB
+
+---
+
+### 🎯 Step 18 — Perch ONNX benchmark (Apr 4)
+
+**Expected: if ≥3x speedup, unlocks CNN blend (+0.010–0.020 LB) | Low effort (1 day)**
+
+Test `yuriygreben/birdclef26-perch-onnx` (pre-converted `tf2onnx` model, 381MB) vs TF SavedModel speed on identical soundscapes. This is distinct from dead ends:
+- TFLite: dead end (0.9x, SELECT_TF_OPS bypasses XNNPACK)
+- CNN ONNX: dead end (ONNX slower than PyTorch for PyTorch models)
+- **Perch ONNX**: UNTESTED — ONNX RT may have real advantage for TF→ONNX converted models
+
+**Speedup claim** (Milan Joshi v40+): 9x. Conservative estimate: 3–5x.
+
+If confirmed:
+- 3x speedup: 85 min → 28 min, frees 57 min for 4-fold CNN blend
+- 5x speedup: 85 min → 17 min, frees 68 min (very comfortable)
+- 9x speedup: 85 min → 10 min, frees 75 min
+
+**Test plan**:
+1. Create benchmark kernel: attach `yuriygreben/birdclef26-perch-onnx` + onnxruntime wheels + 20 soundscapes
+2. Time ONNX inference vs TF SavedModel inference on same files
+3. Verify output similarity (cosine sim of embeddings > 0.999)
+
+- [ ] Create benchmark Kaggle notebook `aldisued/birdclef-2026-perch-onnx-bench`
+- [ ] Run benchmark (20 soundscapes, time both backends)
+- [ ] If speedup ≥ 3x: adapt main inference kernel to use ONNX Perch + 1-fold CNN blend
 
 ---
 
