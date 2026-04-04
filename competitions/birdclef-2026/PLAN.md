@@ -28,16 +28,17 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB **0.913** (Perch v9 ProtoSSM v2 + V18 probes + rank-aware, kernel `aldisued/birdclef-2026-perch-v2-inference` v9, Apr 4)
+### Current best: LB **0.913** (kernel v11, pending v13 submission Apr 5)
 
 **Active work (Apr 4)**:
 - **Step 17 + V18 DONE**: LB **0.913** (+0.001) — ProtoSSM 50/50 blend + V18 probes + rank-aware post-proc.
 - **Step 19 DONE**: LB **0.913** — ONNX Perch + ProtoSSM (no CNN). ONNX logits confirmed equivalent to TF.
 - **Step 19 v1 (with CNN) TIMEOUT**: scoring env too slow for ONNX + CNN combined (~90+ min).
 - **Step 18 COMPLETE**: Perch ONNX = **7.98x speedup** (1.99s/file vs 15.87s/file). 739 files: **24 min** (vs 195 min TF).
-- **Step 20 DONE**: ProtoSSM v2 (ResidualSSM) = LB **0.913** — same as v1. ResidualSSM dead end on 708 windows (too small dataset for correction network to learn).
+- **Step 20 DONE**: ProtoSSM v2 (ResidualSSM integrated) = LB **0.913** — same as v1. Input was (logits-perch, 234) only — missing emb context.
 - **Step 21 DONE**: Co-occurrence PMI boost (weight=0.20, threshold=0.5) = LB **0.913** — dead end. Station-specific ecology doesn't generalize.
-- **Step 22 READY** (kernel v11 COMPLETE, submit tomorrow): Probe features 139→143 (+std_v, diff_mean, window_pos, delta_prev). Hit daily submission limit.
+- **Step 22 DONE**: Probe features 139→143 (+std_v, diff_mean, window_pos, delta_prev). In kernel v12/v13.
+- **Step 23 TRAINED** (Apr 4): ResidualSSMv3 (competitor-matched) — OOF cmAP **0.7629** (vs 0.5452 ProtoSSM alone). Submit kernel v13 on Apr 5. Dataset: `aldisued/birdclef2026-protossm-v3`.
 
 **Step 17 results (ProtoSSM v1)**:
 - 5-fold OOF cmAP = 0.5452 (per-fold: 0.5548, 0.3614, 0.7403, 0.5888, trained on ~17-29 classes/fold)
