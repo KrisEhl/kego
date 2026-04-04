@@ -1,8 +1,8 @@
-"""Train ProtoSSM v5 on Perch embeddings from 59 labeled soundscapes.
+"""Train ProtoSSM v2 on Perch embeddings from 59 labeled soundscapes.
 
 Architecture: 4-layer bidirectional Selective SSM (Mamba-style) with prototype
-classification head and gated Perch fusion. Trained on 708 windows (59 files × 12)
-from labeled soundscapes.
+classification head, gated Perch fusion, and optional ResidualSSM second pass.
+Trained on 708 windows (59 files × 12) from labeled soundscapes.
 
 Usage:
     # Local train mode (80 epochs, 5-fold CV, best weights):
@@ -62,6 +62,12 @@ N_SITES = 20
 DROPOUT = 0.12
 N_WINDOWS = 12
 N_CLASSES = 234
+
+# ResidualSSM second pass (v2 addition)
+USE_RESIDUAL_SSM = True
+D_RESIDUAL = 128
+D_STATE_RESIDUAL = 16
+DROPOUT_RESIDUAL = 0.20
 
 # Training — shared
 LR = 8e-4
@@ -288,6 +294,48 @@ class BidirectionalSSMBlock(nn.Module):
         return self.merge_norm(merged + residual)
 
 
+class ResidualSSM(nn.Module):
+    """2-layer BiSSM on first-pass residuals for temporal correction.
+
+    Takes (logits - perch_logits) as input, learns corrections via a lightweight
+    BiSSM sequence model. Output projection is zero-initialized so training starts
+    as identity (no correction at epoch 0).
+    """
+
+    def __init__(
+        self,
+        n_classes: int,
+        d_residual: int = D_RESIDUAL,
+        d_state: int = D_STATE_RESIDUAL,
+        dropout: float = DROPOUT_RESIDUAL,
+    ):
+        super().__init__()
+        self.in_proj = nn.Sequential(
+            nn.Linear(n_classes, d_residual),
+            nn.LayerNorm(d_residual),
+            nn.Dropout(dropout),
+        )
+        self.ssm1 = BidirectionalSSMBlock(d_residual, d_state, dropout)
+        self.ssm2 = BidirectionalSSMBlock(d_residual, d_state, dropout)
+        self.out_proj = nn.Linear(d_residual, n_classes)
+        # Zero-init: starts as no-op, gradient pulls toward useful corrections
+        nn.init.zeros_(self.out_proj.weight)
+        nn.init.zeros_(self.out_proj.bias)
+
+    def forward(self, residual: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            residual: (T, n_classes) first-pass logits minus perch_logits
+
+        Returns:
+            (T, n_classes) correction delta to add to logits
+        """
+        h = self.in_proj(residual)  # (T, d_residual)
+        h = self.ssm1(h)  # (T, d_residual)
+        h = self.ssm2(h)  # (T, d_residual)
+        return self.out_proj(h)  # (T, n_classes)
+
+
 class TemporalCrossAttention(nn.Module):
     """Multi-head self-attention over the T=12 time axis."""
 
@@ -315,7 +363,7 @@ class TemporalCrossAttention(nn.Module):
 
 
 class ProtoSSM(nn.Module):
-    """ProtoSSM v5 — bidirectional SSM with prototype classification head.
+    """ProtoSSM v2 — bidirectional SSM with prototype classification head + optional ResidualSSM.
 
     Processes a single soundscape file's 12 windows at a time.
     """
@@ -333,12 +381,14 @@ class ProtoSSM(nn.Module):
         dropout: float = DROPOUT,
         n_classes: int = N_CLASSES,
         n_tax_groups: int = 5,
+        has_residual_ssm: bool = USE_RESIDUAL_SSM,
     ):
         super().__init__()
         self.d_model = d_model
         self.n_classes = n_classes
         self.n_prototypes = n_prototypes
         self.n_tax_groups = n_tax_groups
+        self.has_residual_ssm = has_residual_ssm
 
         # Metadata embeddings (site + hour → meta_dim)
         self.site_embed = nn.Embedding(n_sites + 1, meta_dim // 2, padding_idx=0)
@@ -376,6 +426,10 @@ class ProtoSSM(nn.Module):
 
         # Taxonomic auxiliary head (5 groups)
         self.tax_head = nn.Linear(d_model, n_tax_groups)
+
+        # ResidualSSM second pass (v2 addition)
+        if has_residual_ssm:
+            self.residual_ssm = ResidualSSM(n_classes)
 
         self.dropout = nn.Dropout(dropout)
 
@@ -426,6 +480,12 @@ class ProtoSSM(nn.Module):
         # Gated fusion with Perch logits
         alpha = torch.sigmoid(self.fusion_alpha)  # (n_classes,)
         logits = alpha * sim + (1 - alpha) * perch_logits  # (T, n_classes)
+
+        # ResidualSSM second pass: correct logits based on temporal residual pattern
+        if self.has_residual_ssm:
+            residual = logits - perch_logits  # (T, n_classes)
+            delta = self.residual_ssm(residual)  # (T, n_classes)
+            logits = logits + delta
 
         # Taxonomic aux head (mean over time)
         aux_logits = self.tax_head(h.mean(0))  # (n_tax_groups,)
@@ -876,6 +936,9 @@ def main() -> None:
         "mode": args.mode,
         "epochs": TRAIN_EPOCHS if args.mode == "train" else SUBMIT_EPOCHS,
         "seed": args.seed,
+        "has_residual_ssm": USE_RESIDUAL_SSM,
+        "d_residual": D_RESIDUAL,
+        "d_state_residual": D_STATE_RESIDUAL,
     }
 
     # -----------------------------------------------------------------------
