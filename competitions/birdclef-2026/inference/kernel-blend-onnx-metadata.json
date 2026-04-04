@@ -10,12 +10,12 @@
   "enable_internet": false,
   "dataset_sources": [
     "jaejohn/perch-meta",
+    "aldisued/birdclef2026-protossm-v2",
     "aldisued/birdclef2026-protossm-v1",
-    "aldisued/birdclef2026-soundscape-v7",
     "yuriygreben/birdclef26-perch-onnx",
     "aldisued/onnxruntime-121-cp312-linux"
   ],
   "competition_sources": ["birdclef-2026"],
   "kernel_sources": [],
-  "model_sources": []
+  "model_sources": ["google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1"]
 }
