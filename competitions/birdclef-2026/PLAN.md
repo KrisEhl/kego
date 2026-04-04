@@ -64,6 +64,8 @@ recordings in the Pantanal wetlands, South America.
 | **v35: 4-fold v7 + 4-fold HGNetV2-Baseline blend** | **TIMEOUT** | 8 models too slow for scoring env (COMPLETE, blank score) — reverted to 4×v7 for v36 |
 | **v36: 4-fold v7 only** | **pending** | reverted to proven config; kernel COMPLETE; submit when slot available |
 | **Perch v2 port (kernel perch-v2-inference v3)** | **0.912** | tied with public top. Full pipeline: Bayesian priors + LogReg probes + genus proxies |
+| **Perch v4 (MLP probes + 5-way archetypes)** | **TIMEOUT** | MLP adds seconds; scoring env barely fits in 90 min → blank score |
+| **Perch v5 (5-way archetypes + LogReg)** | **0.912** | 5-way archetypes neutral — same score as v3 |
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
@@ -201,7 +203,10 @@ Key insights from field literature (see `research-lit.md`):
 - [x] Implement MLP probes in notebook
 - [x] Write tuning script (`eval/tune_perch_smoothing.py`)
 - [x] Run tuning on cluster, update notebook α values
-- [x] Push Kaggle kernel v4, submit (pending score, Apr 3)
+- [x] Push Kaggle kernel v4 (MLP probes) — **TIMEOUT** (blank score, >90 min in scoring env)
+- [x] Push Kaggle kernel v5 (LogReg probes) — **LB 0.912** — tied with baseline. 5-way archetypes neutral.
+
+**Conclusion**: 5-way archetypes = neutral (same 0.912). MLP probes timed out in scoring env (scoring env barely fits within 90 min with LogReg). All Perch post-processing improvements exhausted.
 
 ---
 
