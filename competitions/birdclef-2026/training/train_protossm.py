@@ -1,8 +1,13 @@
-"""Train ProtoSSM v2 on Perch embeddings from 59 labeled soundscapes.
+"""Train ProtoSSM v3 on Perch embeddings from 59 labeled soundscapes.
 
 Architecture: 4-layer bidirectional Selective SSM (Mamba-style) with prototype
-classification head, gated Perch fusion, and optional ResidualSSM second pass.
-Trained on 708 windows (59 files × 12) from labeled soundscapes.
+classification head, gated Perch fusion. Stage 2 trains a separate ResidualSSMv3
+correction module that takes concat(emb, proto_probs) → correction delta.
+
+Based on competitor analysis (dingjiarun): ResidualSSM v3 is a 1-layer BiSSM on
+concat(emb 1536, proto_probs 234) = 1770 dims. Trained separately on frozen
+ProtoSSM predictions. Applied at inference as: probe_scores + 0.35 * correction.
+ProtoSSM output is discarded (weight=0.0) — only ResidualSSM correction is used.
 
 Usage:
     # Local train mode (80 epochs, 5-fold CV, best weights):
@@ -13,15 +18,16 @@ Usage:
 
     # Custom output path:
     uv run python competitions/birdclef-2026/training/train_protossm.py \\
-        --mode train --output outputs/protossm_v2.pt
+        --mode train --output outputs/protossm_v3.pt
 
-Output (outputs/protossm_v1.pt by default):
+Output (outputs/protossm_v3.pt by default):
     {
-        'model_state_dict': OrderedDict,
-        'oof_scores':       (708, 234) float32  -- only in train mode,
-        'config':           dict,
-        'species_names':    list[str],
-        'site_to_idx':      dict[str, int],
+        'model_state_dict':         OrderedDict,  -- ProtoSSM (no ResidualSSM)
+        'residual_ssm_state_dict':  OrderedDict,  -- ResidualSSMv3
+        'oof_scores':               (708, 234) float32  -- only in train mode,
+        'config':                   dict,
+        'species_names':            list[str],
+        'site_to_idx':              dict[str, int],
     }
 """
 
@@ -63,11 +69,12 @@ DROPOUT = 0.12
 N_WINDOWS = 12
 N_CLASSES = 234
 
-# ResidualSSM second pass (v2 addition)
-USE_RESIDUAL_SSM = True
+# ResidualSSMv3 (separate stage-2 module, not embedded in ProtoSSM)
 D_RESIDUAL = 128
 D_STATE_RESIDUAL = 16
 DROPOUT_RESIDUAL = 0.20
+RESIDUAL_V3_EPOCHS = 30
+RESIDUAL_V3_LR = 3e-4
 
 # Training — shared
 LR = 8e-4
@@ -294,45 +301,47 @@ class BidirectionalSSMBlock(nn.Module):
         return self.merge_norm(merged + residual)
 
 
-class ResidualSSM(nn.Module):
-    """2-layer BiSSM on first-pass residuals for temporal correction.
+class ResidualSSMv3(nn.Module):
+    """1-layer BiSSM correction module (Stage 2, trained separately from ProtoSSM).
 
-    Takes (logits - perch_logits) as input, learns corrections via a lightweight
-    BiSSM sequence model. Output projection is zero-initialized so training starts
-    as identity (no correction at epoch 0).
+    Input: concat(emb 1536, proto_probs 234) = 1770 dims.
+    Output: correction delta (n_classes) to add (with weight 0.35) to probe scores.
+    Output projection is zero-initialized so training starts as no-op.
+
+    Architecture mirrors competitor approach (dingjiarun): uses full Perch embedding
+    context alongside ProtoSSM softmax outputs for temporal correction.
     """
 
     def __init__(
         self,
-        n_classes: int,
-        d_residual: int = D_RESIDUAL,
+        d_emb: int = D_INPUT,
+        n_classes: int = N_CLASSES,
+        d_model: int = D_RESIDUAL,
         d_state: int = D_STATE_RESIDUAL,
         dropout: float = DROPOUT_RESIDUAL,
     ):
         super().__init__()
         self.in_proj = nn.Sequential(
-            nn.Linear(n_classes, d_residual),
-            nn.LayerNorm(d_residual),
+            nn.Linear(d_emb + n_classes, d_model),
+            nn.LayerNorm(d_model),
             nn.Dropout(dropout),
         )
-        self.ssm1 = BidirectionalSSMBlock(d_residual, d_state, dropout)
-        self.ssm2 = BidirectionalSSMBlock(d_residual, d_state, dropout)
-        self.out_proj = nn.Linear(d_residual, n_classes)
-        # Zero-init: starts as no-op, gradient pulls toward useful corrections
+        self.ssm = BidirectionalSSMBlock(d_model, d_state, dropout)
+        self.out_proj = nn.Linear(d_model, n_classes)
         nn.init.zeros_(self.out_proj.weight)
         nn.init.zeros_(self.out_proj.bias)
 
-    def forward(self, residual: torch.Tensor) -> torch.Tensor:
+    def forward(self, emb: torch.Tensor, proto_probs: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            residual: (T, n_classes) first-pass logits minus perch_logits
+            emb:         (T, d_emb)    Perch embeddings
+            proto_probs: (T, n_classes) ProtoSSM sigmoid output
 
         Returns:
-            (T, n_classes) correction delta to add to logits
+            (T, n_classes) correction delta
         """
-        h = self.in_proj(residual)  # (T, d_residual)
-        h = self.ssm1(h)  # (T, d_residual)
-        h = self.ssm2(h)  # (T, d_residual)
+        h = self.in_proj(torch.cat([emb, proto_probs], dim=-1))  # (T, d_model)
+        h = self.ssm(h)  # (T, d_model)
         return self.out_proj(h)  # (T, n_classes)
 
 
@@ -363,9 +372,10 @@ class TemporalCrossAttention(nn.Module):
 
 
 class ProtoSSM(nn.Module):
-    """ProtoSSM v2 — bidirectional SSM with prototype classification head + optional ResidualSSM.
+    """ProtoSSM v3 — bidirectional SSM with prototype classification head.
 
     Processes a single soundscape file's 12 windows at a time.
+    ResidualSSM correction is now a separate stage-2 module (ResidualSSMv3).
     """
 
     def __init__(
@@ -381,14 +391,12 @@ class ProtoSSM(nn.Module):
         dropout: float = DROPOUT,
         n_classes: int = N_CLASSES,
         n_tax_groups: int = 5,
-        has_residual_ssm: bool = USE_RESIDUAL_SSM,
     ):
         super().__init__()
         self.d_model = d_model
         self.n_classes = n_classes
         self.n_prototypes = n_prototypes
         self.n_tax_groups = n_tax_groups
-        self.has_residual_ssm = has_residual_ssm
 
         # Metadata embeddings (site + hour → meta_dim)
         self.site_embed = nn.Embedding(n_sites + 1, meta_dim // 2, padding_idx=0)
@@ -426,10 +434,6 @@ class ProtoSSM(nn.Module):
 
         # Taxonomic auxiliary head (5 groups)
         self.tax_head = nn.Linear(d_model, n_tax_groups)
-
-        # ResidualSSM second pass (v2 addition)
-        if has_residual_ssm:
-            self.residual_ssm = ResidualSSM(n_classes)
 
         self.dropout = nn.Dropout(dropout)
 
@@ -480,12 +484,6 @@ class ProtoSSM(nn.Module):
         # Gated fusion with Perch logits
         alpha = torch.sigmoid(self.fusion_alpha)  # (n_classes,)
         logits = alpha * sim + (1 - alpha) * perch_logits  # (T, n_classes)
-
-        # ResidualSSM second pass: correct logits based on temporal residual pattern
-        if self.has_residual_ssm:
-            residual = logits - perch_logits  # (T, n_classes)
-            delta = self.residual_ssm(residual)  # (T, n_classes)
-            logits = logits + delta
 
         # Taxonomic aux head (mean over time)
         aux_logits = self.tax_head(h.mean(0))  # (n_tax_groups,)
@@ -814,6 +812,79 @@ def train_model(
 
 
 # ---------------------------------------------------------------------------
+# Stage 2: ResidualSSMv3 training
+# ---------------------------------------------------------------------------
+
+
+def train_residual_ssm_v3(
+    residual_ssm: ResidualSSMv3,
+    emb: np.ndarray,
+    proto_probs: np.ndarray,
+    labels: np.ndarray,
+    all_batches: list[dict],
+    file_to_rows: dict[str, list[int]],
+    epochs: int = RESIDUAL_V3_EPOCHS,
+    verbose: bool = True,
+) -> ResidualSSMv3:
+    """Train ResidualSSMv3 on frozen ProtoSSM predictions.
+
+    Trains the correction module to predict (labels - proto_probs) for each
+    soundscape file as a sequence, learning temporal correction patterns.
+
+    Args:
+        residual_ssm:  ResidualSSMv3 instance
+        emb:           (N, 1536) all Perch embeddings
+        proto_probs:   (N, 234) ProtoSSM sigmoid predictions (precomputed)
+        labels:        (N, 234) ground-truth multi-hot labels
+        all_batches:   file-level batch list (for iteration order)
+        file_to_rows:  filename → list[int] row indices
+        epochs:        training epochs
+        verbose:       print progress
+
+    Returns:
+        trained ResidualSSMv3
+    """
+    optimizer = torch.optim.AdamW(
+        residual_ssm.parameters(), lr=RESIDUAL_V3_LR, weight_decay=1e-4
+    )
+    rng = np.random.default_rng(42)
+    n_files = len(all_batches)
+
+    for epoch in range(1, epochs + 1):
+        residual_ssm.train()
+        losses = []
+        idxs = rng.permutation(n_files)
+
+        for i in idxs:
+            batch = all_batches[i]
+            row_idx = file_to_rows[batch["filename"]]
+
+            emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)  # (T, 1536)
+            proto_t = torch.tensor(
+                proto_probs[row_idx], dtype=torch.float32
+            )  # (T, 234)
+            labels_t = torch.tensor(labels[row_idx], dtype=torch.float32)  # (T, 234)
+
+            correction = residual_ssm(emb_t, proto_t)  # (T, 234)
+            target = labels_t - proto_t  # residual to learn
+            loss = F.mse_loss(correction, target)
+
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(residual_ssm.parameters(), 1.0)
+            optimizer.step()
+            losses.append(loss.item())
+
+        if verbose and epoch % 5 == 0:
+            print(
+                f"  [ResidualSSMv3] Epoch {epoch:3d}/{epochs}"
+                f"  loss={float(np.mean(losses)):.5f}"
+            )
+
+    return residual_ssm
+
+
+# ---------------------------------------------------------------------------
 # OOF evaluation
 # ---------------------------------------------------------------------------
 
@@ -848,7 +919,7 @@ def predict_batches(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Train ProtoSSM v5 on Perch soundscape embeddings"
+        description="Train ProtoSSM v3 on Perch soundscape embeddings"
     )
     parser.add_argument(
         "--mode",
@@ -858,7 +929,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default="outputs/protossm_v1.pt",
+        default="outputs/protossm_v3.pt",
         help="Output checkpoint path",
     )
     parser.add_argument(
@@ -881,7 +952,7 @@ def main() -> None:
     np.random.seed(args.seed)
 
     t_start = time.time()
-    print(f"[ProtoSSM v5 | mode={args.mode}]")
+    print(f"[ProtoSSM v3 | mode={args.mode}]")
     print(f"Data root: {DATA_ROOT}")
 
     # -----------------------------------------------------------------------
@@ -936,10 +1007,18 @@ def main() -> None:
         "mode": args.mode,
         "epochs": TRAIN_EPOCHS if args.mode == "train" else SUBMIT_EPOCHS,
         "seed": args.seed,
-        "has_residual_ssm": USE_RESIDUAL_SSM,
+        "has_residual_ssm": False,
+        "has_residual_ssm_v3": True,
         "d_residual": D_RESIDUAL,
         "d_state_residual": D_STATE_RESIDUAL,
     }
+
+    # Row-index lookup: filename → list of row positions in emb/logits/labels arrays
+    file_to_rows: dict[str, list[int]] = {}
+    for i, fn in enumerate(filenames):
+        if fn not in file_to_rows:
+            file_to_rows[fn] = []
+        file_to_rows[fn].append(i)
 
     # -----------------------------------------------------------------------
     # Training
@@ -951,8 +1030,10 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if args.mode == "submit":
-        # ----- Submit mode: train on full dataset, no CV -----
-        print(f"\n--- Submit mode: training on all {len(all_batches)} files ---")
+        # ----- Submit mode: 2-stage training on full dataset -----
+        print(
+            f"\n--- Submit mode: Stage 1 — ProtoSSM on all {len(all_batches)} files ---"
+        )
         print(f"Epochs={epochs}, patience={patience}")
 
         model = ProtoSSM(n_tax_groups=len(group_names))
@@ -970,12 +1051,34 @@ def main() -> None:
             verbose=True,
         )
 
+        # Collect in-sample proto predictions for Stage 2
+        print("\n--- Stage 1 complete — collecting proto predictions ---")
+        proto_probs_train = predict_batches(model, all_batches)  # (708, 234)
+        print(
+            f"Proto probs: {proto_probs_train.shape}, mean={proto_probs_train.mean():.4f}"
+        )
+
+        # Stage 2: train ResidualSSMv3 on frozen ProtoSSM predictions
+        print(f"\n--- Stage 2 — ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs) ---")
+        residual_ssm = ResidualSSMv3()
+        residual_ssm = train_residual_ssm_v3(
+            residual_ssm=residual_ssm,
+            emb=emb,
+            proto_probs=proto_probs_train,
+            labels=labels,
+            all_batches=all_batches,
+            file_to_rows=file_to_rows,
+            epochs=RESIDUAL_V3_EPOCHS,
+            verbose=True,
+        )
+
         t_total = time.time() - t_start
         print(f"\nTotal time: {t_total:.1f}s ({t_total / 60:.1f}min)")
 
         torch.save(
             {
                 "model_state_dict": model.state_dict(),
+                "residual_ssm_state_dict": residual_ssm.state_dict(),
                 "config": config,
                 "species_names": species_list,
                 "site_to_idx": site_to_idx,
@@ -991,10 +1094,6 @@ def main() -> None:
 
         # Build file-level arrays for GroupKFold
         file_list = [b["filename"] for b in all_batches]
-        file_sites = [
-            b["filename"].split("_")[3] if "_" in b["filename"] else "UNK"
-            for b in all_batches
-        ]
         # Use the actual site from batch dict
         file_sites = [sites[filenames == fn][0] for fn in file_list]
 
@@ -1005,12 +1104,8 @@ def main() -> None:
 
         # OOF scores stored per-row (708 windows total)
         oof_scores = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
-        # Row index for each file-batch
-        file_to_rows: dict[str, list[int]] = {}
-        for i, fn in enumerate(filenames):
-            if fn not in file_to_rows:
-                file_to_rows[fn] = []
-            file_to_rows[fn].append(i)
+        # OOF proto probs for ResidualSSMv3 Stage 2 training
+        oof_proto_probs = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
 
         fold_models = []
         fold_val_aps = []
@@ -1049,13 +1144,13 @@ def main() -> None:
                 verbose=True,
             )
 
-            # OOF predictions
+            # OOF proto predictions (for Stage 2 ResidualSSMv3 training)
             val_preds = predict_batches(model, batches_vl)
-            # Place back into OOF array
+            # Place back into OOF arrays
             val_row_idx = []
             for b in batches_vl:
                 val_row_idx.extend(file_to_rows[b["filename"]])
-            oof_scores[val_row_idx] = val_preds
+            oof_proto_probs[val_row_idx] = val_preds
 
             # Quick per-fold cmAP on classes with positives in val set
             val_labels = labels[val_row_idx]
@@ -1081,10 +1176,51 @@ def main() -> None:
             )
 
         if fold_val_aps:
-            print(f"\nOOF cmAP across folds: {np.mean(fold_val_aps):.4f}")
+            print(f"\nOOF cmAP across folds (ProtoSSM): {np.mean(fold_val_aps):.4f}")
+
+        # Stage 2: train ResidualSSMv3 on OOF proto predictions (no data leakage)
+        print(f"\n--- Stage 2 (OOF): ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs) ---")
+        print(f"OOF proto probs shape: {oof_proto_probs.shape}")
+        residual_ssm_oof = ResidualSSMv3()
+        residual_ssm_oof = train_residual_ssm_v3(
+            residual_ssm=residual_ssm_oof,
+            emb=emb,
+            proto_probs=oof_proto_probs,
+            labels=labels,
+            all_batches=all_batches,
+            file_to_rows=file_to_rows,
+            epochs=RESIDUAL_V3_EPOCHS,
+            verbose=True,
+        )
+
+        # OOF evaluation with ResidualSSMv3 correction (weight=0.35)
+        oof_corrected = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
+        residual_ssm_oof.eval()
+        with torch.no_grad():
+            for batch in all_batches:
+                row_idx = file_to_rows[batch["filename"]]
+                emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)
+                proto_t = torch.tensor(oof_proto_probs[row_idx], dtype=torch.float32)
+                correction = residual_ssm_oof(emb_t, proto_t).numpy()
+                oof_corrected[row_idx] = oof_proto_probs[row_idx] + 0.35 * correction
+
+        # Evaluate corrected OOF
+        all_labels = labels
+        active_cls_all = np.where(all_labels.sum(0) > 0)[0]
+        if len(active_cls_all) > 0:
+            from sklearn.metrics import average_precision_score
+
+            aps_corrected = []
+            for c in active_cls_all:
+                ap = average_precision_score(all_labels[:, c], oof_corrected[:, c])
+                aps_corrected.append(ap)
+            print(
+                f"OOF cmAP with ResidualSSMv3 correction: {np.mean(aps_corrected):.4f}"
+            )
+        oof_scores = oof_corrected  # report corrected scores as final OOF
 
         # Retrain on full dataset for the final artifact
-        print("\n--- Retraining on full dataset for final artifact ---")
+        print("\n--- Retraining Stage 1 on full dataset ---")
         model_final = ProtoSSM(n_tax_groups=len(group_names))
         init_prototypes(model_final, emb, labels)
 
@@ -1100,12 +1236,28 @@ def main() -> None:
             verbose=True,
         )
 
+        # Final Stage 2 on full data (in-sample, for the saved artifact)
+        print("\n--- Retraining Stage 2 (full data) ---")
+        proto_probs_full = predict_batches(model_final, all_batches)  # (708, 234)
+        residual_ssm_final = ResidualSSMv3()
+        residual_ssm_final = train_residual_ssm_v3(
+            residual_ssm=residual_ssm_final,
+            emb=emb,
+            proto_probs=proto_probs_full,
+            labels=labels,
+            all_batches=all_batches,
+            file_to_rows=file_to_rows,
+            epochs=RESIDUAL_V3_EPOCHS,
+            verbose=True,
+        )
+
         t_total = time.time() - t_start
         print(f"\nTotal time: {t_total:.1f}s ({t_total / 60:.1f}min)")
 
         torch.save(
             {
                 "model_state_dict": model_final.state_dict(),
+                "residual_ssm_state_dict": residual_ssm_final.state_dict(),
                 "fold_model_states": fold_models,
                 "oof_scores": oof_scores,
                 "config": config,
