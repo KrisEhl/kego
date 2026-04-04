@@ -9,7 +9,8 @@
   "enable_tpu": false,
   "enable_internet": false,
   "dataset_sources": [
-    "jaejohn/perch-meta"
+    "jaejohn/perch-meta",
+    "aldisued/birdclef2026-protossm-v1"
   ],
   "competition_sources": ["birdclef-2026"],
   "kernel_sources": ["kdmitrie/bc26-tensorflow-2-20-0"],
