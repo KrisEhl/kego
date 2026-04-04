@@ -36,6 +36,8 @@ recordings in the Pantanal wetlands, South America.
 - **Step 19 v1 (with CNN) TIMEOUT**: scoring env too slow for ONNX + CNN combined (~90+ min).
 - **Step 18 COMPLETE**: Perch ONNX = **7.98x speedup** (1.99s/file vs 15.87s/file). 739 files: **24 min** (vs 195 min TF).
 - **Step 20 DONE**: ProtoSSM v2 (ResidualSSM) = LB **0.913** — same as v1. ResidualSSM dead end on 708 windows (too small dataset for correction network to learn).
+- **Step 21 DONE**: Co-occurrence PMI boost (weight=0.20, threshold=0.5) = LB **0.913** — dead end. Station-specific ecology doesn't generalize.
+- **Step 22 READY** (kernel v11 COMPLETE, submit tomorrow): Probe features 139→143 (+std_v, diff_mean, window_pos, delta_prev). Hit daily submission limit.
 
 **Step 17 results (ProtoSSM v1)**:
 - 5-fold OOF cmAP = 0.5452 (per-fold: 0.5548, 0.3614, 0.7403, 0.5888, trained on ~17-29 classes/fold)
