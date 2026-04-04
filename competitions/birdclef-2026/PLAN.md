@@ -85,6 +85,7 @@ recordings in the Pantanal wetlands, South America.
 | **Step 19 v1 (ONNX + ProtoSSM + 1-fold CNN)** | **TIMEOUT** | CNN adds ~38 min in scoring env → >90 min total |
 | **Step 19 v2 (ONNX Perch + ProtoSSM, no CNN)** | **0.913** | ONNX logits = TF logits (confirmed equivalent) |
 | **Step 20 ProtoSSM v2 (ResidualSSM second pass)** | **0.913** | ResidualSSM dead end — OOF 0.5438 vs v1 0.5452. Too small dataset (708 windows) to learn corrections |
+| **Step 21: co-occurrence PMI boost (weight=0.20, threshold=0.5)** | **0.913** | Dead end — station-specific ecology doesn't generalize. 852 pairs, max P(j\|i)=0.91, mean boost 0.039, max boost 5.18 |
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
