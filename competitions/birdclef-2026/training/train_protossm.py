@@ -170,9 +170,24 @@ def load_data(data_root: Path) -> dict:
         f"{(labels.sum(axis=0) > 0).sum()} species with ≥1 positive"
     )
 
+    # Load precomputed OOF probe scores if available (used as Stage 2 training base)
+    probe_scores_path = PERCH_META_DIR / "oof_probe_scores.npy"
+    if probe_scores_path.exists():
+        probe_scores = np.load(probe_scores_path).astype(np.float32)
+        assert probe_scores.shape == scores.shape, (
+            f"probe_scores shape {probe_scores.shape} != scores shape {scores.shape}"
+        )
+        print(f"Loaded OOF probe scores: {probe_scores.shape} (Stage 2 base)")
+    else:
+        probe_scores = None
+        print(
+            "No oof_probe_scores.npy found — Stage 2 will use raw Perch logits as base"
+        )
+
     return {
         "emb": emb,
         "logits": scores,
+        "probe_logits": probe_scores,  # (708, 234) or None
         "labels": labels,
         "sites": meta["site"].values,
         "hours": meta["hour_utc"].values,
@@ -992,13 +1007,21 @@ def main() -> None:
     print("\n--- Loading data ---")
     data = load_data(DATA_ROOT)
     emb = data["emb"]  # (708, 1536)
-    logits = data["logits"]  # (708, 234)
+    logits = data["logits"]  # (708, 234) raw Perch logits — used as ProtoSSM input
+    probe_logits = data["probe_logits"]  # (708, 234) or None — used as Stage 2 base
     labels = data["labels"]  # (708, 234)
     sites = data["sites"]
     hours = data["hours"]
     filenames = data["filenames"]
     species_list = data["species_list"]
     taxonomy = data["taxonomy"]
+
+    # Stage 2 base: probe-augmented logits (matches inference pipeline) or raw Perch fallback
+    stage2_base_logits = probe_logits if probe_logits is not None else logits
+    stage2_base_name = (
+        "probe-augmented" if probe_logits is not None else "raw Perch (fallback)"
+    )
+    print(f"Stage 2 base: {stage2_base_name}")
 
     # Site vocabulary
     all_sites = sorted(set(sites.tolist()))
@@ -1082,7 +1105,7 @@ def main() -> None:
             verbose=True,
         )
 
-        # Collect in-sample proto predictions for Stage 2
+        # Collect in-sample proto predictions for Stage 2 (used as proto_probs input)
         print("\n--- Stage 1 complete — collecting proto predictions ---")
         proto_logits_train = predict_batches_logits(model, all_batches)  # (708, 234)
         proto_probs_train = 1.0 / (1.0 + np.exp(-proto_logits_train))
@@ -1090,14 +1113,18 @@ def main() -> None:
             f"Proto logits: {proto_logits_train.shape}, mean={proto_logits_train.mean():.4f}"
         )
 
-        # Stage 2: train ResidualSSMv3 on frozen ProtoSSM predictions
-        print(f"\n--- Stage 2 — ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs) ---")
+        # Stage 2 base: probe-augmented logits (match inference pipeline) or proto logits fallback
+        # BCE loss: BCE(stage2_base_logits + correction, labels)
+        # stage2_base_logits matches final_scores quality at inference time
+        print(
+            f"\n--- Stage 2 — ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs, base={stage2_base_name}) ---"
+        )
         residual_ssm = ResidualSSMv3()
         residual_ssm = train_residual_ssm_v3(
             residual_ssm=residual_ssm,
             emb=emb,
-            proto_logits=proto_logits_train,
-            proto_probs=proto_probs_train,
+            proto_logits=stage2_base_logits,  # base that correction is applied to at inference
+            proto_probs=proto_probs_train,  # ProtoSSM probs used as SSM input features
             labels=labels,
             all_batches=all_batches,
             file_to_rows=file_to_rows,
@@ -1214,15 +1241,18 @@ def main() -> None:
         if fold_val_aps:
             print(f"\nOOF cmAP across folds (ProtoSSM): {np.mean(fold_val_aps):.4f}")
 
-        # Stage 2: train ResidualSSMv3 on OOF proto predictions (no data leakage)
-        print(f"\n--- Stage 2 (OOF): ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs) ---")
+        # Stage 2: train ResidualSSMv3 using probe-augmented logits as the base
+        # This matches the inference pipeline where correction is applied to probe-quality scores
+        print(
+            f"\n--- Stage 2 (OOF): ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs, base={stage2_base_name}) ---"
+        )
         print(f"OOF proto logits shape: {oof_proto_logits.shape}")
         residual_ssm_oof = ResidualSSMv3()
         residual_ssm_oof = train_residual_ssm_v3(
             residual_ssm=residual_ssm_oof,
             emb=emb,
-            proto_logits=oof_proto_logits,
-            proto_probs=oof_proto_probs,
+            proto_logits=stage2_base_logits,  # probe-augmented or raw Perch fallback
+            proto_probs=oof_proto_probs,  # ProtoSSM probs as SSM input features
             labels=labels,
             all_batches=all_batches,
             file_to_rows=file_to_rows,
@@ -1230,8 +1260,8 @@ def main() -> None:
             verbose=True,
         )
 
-        # OOF eval: perch_logits + 0.35 * correction (mirrors inference pipeline)
-        # logits = batch["logits"] = scores_full_raw (Perch logits), same as final_scores start
+        # OOF eval: stage2_base_logits + 0.35 * correction (mirrors inference pipeline)
+        # stage2_base_logits = probe-augmented scores (same quality as final_scores at inference)
         oof_pipeline_logits = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
         residual_ssm_oof.eval()
         with torch.no_grad():
@@ -1240,15 +1270,18 @@ def main() -> None:
                 emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)
                 proto_p = torch.tensor(oof_proto_probs[row_idx], dtype=torch.float32)
                 correction = residual_ssm_oof(emb_t, proto_p).numpy()
-                # Apply to Perch logits (same as inference applies to final_scores)
-                oof_pipeline_logits[row_idx] = logits[row_idx] + 0.35 * correction
+                # Apply to stage2_base (same base used for training → OOF eval is meaningful)
+                oof_pipeline_logits[row_idx] = (
+                    stage2_base_logits[row_idx] + 0.35 * correction
+                )
 
         from sklearn.metrics import average_precision_score
 
         active_cls_all = np.where(labels.sum(0) > 0)[0]
-        # Baseline: Perch logits alone
-        aps_perch = [
-            average_precision_score(labels[:, c], logits[:, c]) for c in active_cls_all
+        # Baseline: stage2_base alone (probe-augmented or raw Perch)
+        aps_base = [
+            average_precision_score(labels[:, c], stage2_base_logits[:, c])
+            for c in active_cls_all
         ]
         # After correction
         oof_probs_pipeline = 1.0 / (1.0 + np.exp(-oof_pipeline_logits))
@@ -1256,9 +1289,11 @@ def main() -> None:
             average_precision_score(labels[:, c], oof_probs_pipeline[:, c])
             for c in active_cls_all
         ]
-        print(f"OOF pipeline cmAP (Perch baseline):        {np.mean(aps_perch):.4f}")
         print(
-            f"OOF pipeline cmAP (+ResidualSSMv3 ×0.35):  {np.mean(aps_corrected):.4f}"
+            f"OOF pipeline cmAP ({stage2_base_name} baseline): {np.mean(aps_base):.4f}"
+        )
+        print(
+            f"OOF pipeline cmAP (+ResidualSSMv3 ×0.35):        {np.mean(aps_corrected):.4f}"
         )
         oof_scores = oof_probs_pipeline  # store pipeline probabilities as final OOF
 
@@ -1280,16 +1315,16 @@ def main() -> None:
         )
 
         # Final Stage 2 on full data (in-sample, for the saved artifact)
-        print("\n--- Retraining Stage 2 (full data) ---")
+        print(f"\n--- Retraining Stage 2 (full data, base={stage2_base_name}) ---")
         proto_logits_full = predict_batches_logits(
             model_final, all_batches
-        )  # (708, 234)
+        )  # (708, 234) — ProtoSSM probs input only
         proto_probs_full = 1.0 / (1.0 + np.exp(-proto_logits_full))
         residual_ssm_final = ResidualSSMv3()
         residual_ssm_final = train_residual_ssm_v3(
             residual_ssm=residual_ssm_final,
             emb=emb,
-            proto_logits=proto_logits_full,
+            proto_logits=stage2_base_logits,  # probe-augmented or raw Perch fallback
             proto_probs=proto_probs_full,
             labels=labels,
             all_batches=all_batches,
