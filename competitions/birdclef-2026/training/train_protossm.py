@@ -819,6 +819,7 @@ def train_model(
 def train_residual_ssm_v3(
     residual_ssm: ResidualSSMv3,
     emb: np.ndarray,
+    proto_logits: np.ndarray,
     proto_probs: np.ndarray,
     labels: np.ndarray,
     all_batches: list[dict],
@@ -828,18 +829,20 @@ def train_residual_ssm_v3(
 ) -> ResidualSSMv3:
     """Train ResidualSSMv3 on frozen ProtoSSM predictions.
 
-    Trains the correction module to predict (labels - proto_probs) for each
-    soundscape file as a sequence, learning temporal correction patterns.
+    Trains with BCE loss: BCE(proto_logits + correction, labels).
+    The correction is learned in logit space so it can be added directly to
+    final_scores (also in logit space) at inference.
 
     Args:
-        residual_ssm:  ResidualSSMv3 instance
-        emb:           (N, 1536) all Perch embeddings
-        proto_probs:   (N, 234) ProtoSSM sigmoid predictions (precomputed)
-        labels:        (N, 234) ground-truth multi-hot labels
-        all_batches:   file-level batch list (for iteration order)
-        file_to_rows:  filename → list[int] row indices
-        epochs:        training epochs
-        verbose:       print progress
+        residual_ssm:   ResidualSSMv3 instance
+        emb:            (N, 1536) all Perch embeddings
+        proto_logits:   (N, 234) ProtoSSM raw logit output (for loss)
+        proto_probs:    (N, 234) ProtoSSM sigmoid predictions (model input)
+        labels:         (N, 234) ground-truth multi-hot labels
+        all_batches:    file-level batch list (for iteration order)
+        file_to_rows:   filename → list[int] row indices
+        epochs:         training epochs
+        verbose:        print progress
 
     Returns:
         trained ResidualSSMv3
@@ -860,14 +863,20 @@ def train_residual_ssm_v3(
             row_idx = file_to_rows[batch["filename"]]
 
             emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)  # (T, 1536)
-            proto_t = torch.tensor(
+            proto_l = torch.tensor(
+                proto_logits[row_idx], dtype=torch.float32
+            )  # (T, 234)
+            proto_p = torch.tensor(
                 proto_probs[row_idx], dtype=torch.float32
             )  # (T, 234)
             labels_t = torch.tensor(labels[row_idx], dtype=torch.float32)  # (T, 234)
 
-            correction = residual_ssm(emb_t, proto_t)  # (T, 234)
-            target = labels_t - proto_t  # residual to learn
-            loss = F.mse_loss(correction, target)
+            # Input uses proto_probs (sigmoid features); loss uses logit space
+            correction = residual_ssm(
+                emb_t, proto_p
+            )  # (T, 234) — logit-space correction
+            # BCE loss: proto_logits + correction → labels
+            loss = F.binary_cross_entropy_with_logits(proto_l + correction, labels_t)
 
             optimizer.zero_grad()
             loss.backward()
@@ -909,6 +918,28 @@ def predict_batches(
             logits_out, _ = model(emb_t, logits_perch, site_t, hour_t)
             probs = torch.sigmoid(logits_out).numpy()  # (T, n_classes)
             preds.append(probs)
+    return np.concatenate(preds, axis=0)
+
+
+def predict_batches_logits(
+    model: ProtoSSM,
+    batches: list[dict],
+) -> np.ndarray:
+    """Run model inference, returning raw logits (not sigmoid).
+
+    Returns:
+        (N_windows, n_classes) float32 raw logits
+    """
+    model.eval()
+    preds = []
+    with torch.no_grad():
+        for batch in batches:
+            emb_t = torch.tensor(batch["emb"], dtype=torch.float32)
+            logits_perch = torch.tensor(batch["logits"], dtype=torch.float32)
+            site_t = torch.tensor(batch["site_idx"], dtype=torch.long)
+            hour_t = torch.tensor(batch["hour_idx"], dtype=torch.long)
+            logits_out, _ = model(emb_t, logits_perch, site_t, hour_t)
+            preds.append(logits_out.numpy())
     return np.concatenate(preds, axis=0)
 
 
@@ -1053,9 +1084,10 @@ def main() -> None:
 
         # Collect in-sample proto predictions for Stage 2
         print("\n--- Stage 1 complete — collecting proto predictions ---")
-        proto_probs_train = predict_batches(model, all_batches)  # (708, 234)
+        proto_logits_train = predict_batches_logits(model, all_batches)  # (708, 234)
+        proto_probs_train = 1.0 / (1.0 + np.exp(-proto_logits_train))
         print(
-            f"Proto probs: {proto_probs_train.shape}, mean={proto_probs_train.mean():.4f}"
+            f"Proto logits: {proto_logits_train.shape}, mean={proto_logits_train.mean():.4f}"
         )
 
         # Stage 2: train ResidualSSMv3 on frozen ProtoSSM predictions
@@ -1064,6 +1096,7 @@ def main() -> None:
         residual_ssm = train_residual_ssm_v3(
             residual_ssm=residual_ssm,
             emb=emb,
+            proto_logits=proto_logits_train,
             proto_probs=proto_probs_train,
             labels=labels,
             all_batches=all_batches,
@@ -1104,8 +1137,9 @@ def main() -> None:
 
         # OOF scores stored per-row (708 windows total)
         oof_scores = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
-        # OOF proto probs for ResidualSSMv3 Stage 2 training
+        # OOF proto predictions for ResidualSSMv3 Stage 2 training
         oof_proto_probs = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
+        oof_proto_logits = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
 
         fold_models = []
         fold_val_aps = []
@@ -1145,11 +1179,13 @@ def main() -> None:
             )
 
             # OOF proto predictions (for Stage 2 ResidualSSMv3 training)
-            val_preds = predict_batches(model, batches_vl)
+            val_logits = predict_batches_logits(model, batches_vl)
+            val_preds = 1.0 / (1.0 + np.exp(-val_logits))  # sigmoid
             # Place back into OOF arrays
             val_row_idx = []
             for b in batches_vl:
                 val_row_idx.extend(file_to_rows[b["filename"]])
+            oof_proto_logits[val_row_idx] = val_logits
             oof_proto_probs[val_row_idx] = val_preds
 
             # Quick per-fold cmAP on classes with positives in val set
@@ -1180,11 +1216,12 @@ def main() -> None:
 
         # Stage 2: train ResidualSSMv3 on OOF proto predictions (no data leakage)
         print(f"\n--- Stage 2 (OOF): ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs) ---")
-        print(f"OOF proto probs shape: {oof_proto_probs.shape}")
+        print(f"OOF proto logits shape: {oof_proto_logits.shape}")
         residual_ssm_oof = ResidualSSMv3()
         residual_ssm_oof = train_residual_ssm_v3(
             residual_ssm=residual_ssm_oof,
             emb=emb,
+            proto_logits=oof_proto_logits,
             proto_probs=oof_proto_probs,
             labels=labels,
             all_batches=all_batches,
@@ -1193,31 +1230,37 @@ def main() -> None:
             verbose=True,
         )
 
-        # OOF evaluation with ResidualSSMv3 correction (weight=0.35)
-        oof_corrected = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
+        # OOF eval: perch_logits + 0.35 * correction (mirrors inference pipeline)
+        # logits = batch["logits"] = scores_full_raw (Perch logits), same as final_scores start
+        oof_pipeline_logits = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
         residual_ssm_oof.eval()
         with torch.no_grad():
             for batch in all_batches:
                 row_idx = file_to_rows[batch["filename"]]
                 emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)
-                proto_t = torch.tensor(oof_proto_probs[row_idx], dtype=torch.float32)
-                correction = residual_ssm_oof(emb_t, proto_t).numpy()
-                oof_corrected[row_idx] = oof_proto_probs[row_idx] + 0.35 * correction
+                proto_p = torch.tensor(oof_proto_probs[row_idx], dtype=torch.float32)
+                correction = residual_ssm_oof(emb_t, proto_p).numpy()
+                # Apply to Perch logits (same as inference applies to final_scores)
+                oof_pipeline_logits[row_idx] = logits[row_idx] + 0.35 * correction
 
-        # Evaluate corrected OOF
-        all_labels = labels
-        active_cls_all = np.where(all_labels.sum(0) > 0)[0]
-        if len(active_cls_all) > 0:
-            from sklearn.metrics import average_precision_score
+        from sklearn.metrics import average_precision_score
 
-            aps_corrected = []
-            for c in active_cls_all:
-                ap = average_precision_score(all_labels[:, c], oof_corrected[:, c])
-                aps_corrected.append(ap)
-            print(
-                f"OOF cmAP with ResidualSSMv3 correction: {np.mean(aps_corrected):.4f}"
-            )
-        oof_scores = oof_corrected  # report corrected scores as final OOF
+        active_cls_all = np.where(labels.sum(0) > 0)[0]
+        # Baseline: Perch logits alone
+        aps_perch = [
+            average_precision_score(labels[:, c], logits[:, c]) for c in active_cls_all
+        ]
+        # After correction
+        oof_probs_pipeline = 1.0 / (1.0 + np.exp(-oof_pipeline_logits))
+        aps_corrected = [
+            average_precision_score(labels[:, c], oof_probs_pipeline[:, c])
+            for c in active_cls_all
+        ]
+        print(f"OOF pipeline cmAP (Perch baseline):        {np.mean(aps_perch):.4f}")
+        print(
+            f"OOF pipeline cmAP (+ResidualSSMv3 ×0.35):  {np.mean(aps_corrected):.4f}"
+        )
+        oof_scores = oof_probs_pipeline  # store pipeline probabilities as final OOF
 
         # Retrain on full dataset for the final artifact
         print("\n--- Retraining Stage 1 on full dataset ---")
@@ -1238,11 +1281,15 @@ def main() -> None:
 
         # Final Stage 2 on full data (in-sample, for the saved artifact)
         print("\n--- Retraining Stage 2 (full data) ---")
-        proto_probs_full = predict_batches(model_final, all_batches)  # (708, 234)
+        proto_logits_full = predict_batches_logits(
+            model_final, all_batches
+        )  # (708, 234)
+        proto_probs_full = 1.0 / (1.0 + np.exp(-proto_logits_full))
         residual_ssm_final = ResidualSSMv3()
         residual_ssm_final = train_residual_ssm_v3(
             residual_ssm=residual_ssm_final,
             emb=emb,
+            proto_logits=proto_logits_full,
             proto_probs=proto_probs_full,
             labels=labels,
             all_batches=all_batches,
