@@ -690,11 +690,75 @@ def main() -> None:
     print(f"OOF cmAP (probe-augmented): {np.mean(aps_probe):.4f}")
 
     # -----------------------------------------------------------------------
+    # Full (in-sample) probe scores — fit on ALL 708 windows, predict on all
+    # These match the quality of inference-time probes (trained on full dataset)
+    # Used as Stage 2 training base in submit mode
+    # -----------------------------------------------------------------------
+    print("\nComputing full (in-sample) probe scores...")
+    # Fit full prior tables on all soundscape windows
+    full_tables = fit_prior_tables(sc_clean, Y_SC)
+    full_base, full_prior_arr = fuse_scores_full(
+        scores_full_raw,
+        meta_full["site"].to_numpy(),
+        meta_full["hour_utc"].to_numpy(),
+        full_tables,
+        **fuse_kwargs,
+    )
+
+    full_probe = full_base.copy()
+    pos_cnt_full = Y_FULL.sum(axis=0)
+    full_probe_cls = np.where(pos_cnt_full >= PROBE_MIN_POS)[0]
+    full_probe_models: dict[int, object] = {}
+
+    for ci in full_probe_cls:
+        y = Y_FULL[:, ci]
+        if y.sum() == 0 or y.sum() == len(y):
+            continue
+
+        proto_sim = (
+            cosine_sim_to_prototype(z_full, class_prototypes[ci])
+            if ci in class_prototypes
+            else None
+        )
+        fam = class_family.get(ci, "Unknown")
+        other_fam = family_idx_map.get(fam, np.array([]))
+        other_fam = other_fam[other_fam != ci]
+        fam_mean = full_base[:, other_fam].mean(axis=1) if len(other_fam) > 0 else None
+
+        X = build_class_features(
+            z_full,
+            raw_col=scores_full_raw[:, ci],
+            prior_col=full_prior_arr[:, ci],
+            base_col=full_base[:, ci],
+            proto_sim_col=proto_sim,
+            family_mean_col=fam_mean,
+        )
+        clf = LogisticRegression(
+            C=PROBE_C, max_iter=400, solver="liblinear", class_weight="balanced"
+        )
+        clf.fit(X, y)
+        pred = clf.decision_function(X).astype(np.float32)  # in-sample prediction
+        full_probe[:, ci] = (1.0 - PROBE_ALPHA) * full_base[:, ci] + PROBE_ALPHA * pred
+        full_probe_models[ci] = clf
+
+    print(f"  Full probe models fitted: {len(full_probe_models)} classes")
+    aps_full = [
+        average_precision_score(Y_FULL[:, c], full_probe[:, c])
+        for c in active_cls
+        if Y_FULL[:, c].sum() > 0
+    ]
+    print(f"  Full (in-sample) cmAP: {np.mean(aps_full):.4f}")
+
+    # -----------------------------------------------------------------------
     # Save
     # -----------------------------------------------------------------------
     out_path = PERCH_META_DIR / "oof_probe_scores.npy"
     np.save(out_path, oof_probe)
     print(f"\nSaved: {out_path}  shape={oof_probe.shape}  dtype={oof_probe.dtype}")
+
+    full_out_path = PERCH_META_DIR / "full_probe_scores.npy"
+    np.save(full_out_path, full_probe)
+    print(f"Saved: {full_out_path}  shape={full_probe.shape}  dtype={full_probe.dtype}")
 
 
 if __name__ == "__main__":
