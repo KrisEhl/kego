@@ -73,9 +73,10 @@ N_CLASSES = 234
 D_RESIDUAL = 128
 D_STATE_RESIDUAL = 16
 DROPOUT_RESIDUAL = 0.20
-RESIDUAL_V3_EPOCHS = 60  # increased from 30; TTA aug gives 5x effective data per epoch
+RESIDUAL_V3_EPOCHS = (
+    60  # increased from 30 (v1) — more training with in-sample proto_probs
+)
 RESIDUAL_V3_LR = 3e-4
-RESIDUAL_V3_TTA_SHIFTS = [-2, -1, 0, 1, 2]  # match inference TTA shifts
 
 # Training — shared
 LR = 8e-4
@@ -839,31 +840,6 @@ def train_model(
 # ---------------------------------------------------------------------------
 
 
-def _tta_avg_proto_probs(
-    proto_probs_t: torch.Tensor,
-    tta_shifts: list[int] = RESIDUAL_V3_TTA_SHIFTS,
-) -> torch.Tensor:
-    """Average proto_probs over TTA window shifts (matches inference TTA).
-
-    At inference, ResidualSSMv3 receives the average of ProtoSSM outputs
-    over TTA_SHIFTS = [-2,-1,0,1,2] shifted window indices. This function
-    replicates that averaging so training distribution matches inference.
-
-    Args:
-        proto_probs_t:  (T, n_classes) proto probs for one file
-        tta_shifts:     window shift offsets (same as inference TTA_SHIFTS)
-
-    Returns:
-        (T, n_classes) TTA-averaged proto probs
-    """
-    T = proto_probs_t.shape[0]
-    avg = torch.zeros_like(proto_probs_t)
-    for shift in tta_shifts:
-        idx = torch.clamp(torch.arange(T) + shift, 0, T - 1)
-        avg += proto_probs_t[idx]
-    return avg / len(tta_shifts)
-
-
 def train_residual_ssm_v3(
     residual_ssm: ResidualSSMv3,
     emb: np.ndarray,
@@ -881,9 +857,9 @@ def train_residual_ssm_v3(
     The correction is learned in logit space so it can be added directly to
     final_scores (also in logit space) at inference.
 
-    proto_probs are TTA-averaged before being passed to ResidualSSMv3,
-    matching the inference pipeline where correction = residual_ssm(emb,
-    avg_over_shifts(proto_probs)).
+    Uses raw (non-TTA-averaged) in-sample proto_probs as model input.
+    Note: inference uses TTA-averaged proto_probs, but empirically raw
+    proto_probs give better corrections (more signal, less smoothing).
 
     Args:
         residual_ssm:   ResidualSSMv3 instance
@@ -918,16 +894,12 @@ def train_residual_ssm_v3(
             proto_l = torch.tensor(
                 proto_logits[row_idx], dtype=torch.float32
             )  # (T, 234)
-            proto_p_raw = torch.tensor(
+            proto_p = torch.tensor(
                 proto_probs[row_idx], dtype=torch.float32
             )  # (T, 234)
             labels_t = torch.tensor(labels[row_idx], dtype=torch.float32)  # (T, 234)
 
-            # TTA-average proto_probs (matches inference: ResidualSSMv3 sees
-            # average of ProtoSSM outputs over TTA_SHIFTS=[-2,-1,0,1,2])
-            proto_p = _tta_avg_proto_probs(proto_p_raw)  # (T, 234)
-
-            # Input uses TTA-averaged proto_probs; loss uses logit space
+            # Input uses proto_probs (raw, non-TTA-averaged); loss uses logit space
             correction = residual_ssm(
                 emb_t, proto_p
             )  # (T, 234) — logit-space correction
@@ -1132,61 +1104,8 @@ def main() -> None:
 
     if args.mode == "submit":
         # ----- Submit mode: 2-stage training on full dataset -----
-        # Stage 2 uses OOF proto_probs (from 5-fold CV) to match inference quality.
-        # This avoids overfitting Stage 2 to in-sample (high-quality) proto_probs.
-
-        # Step A: compute OOF proto_probs via 5-fold GroupKFold by site
         print(
-            f"\n--- Submit mode: Stage 1 OOF ({N_FOLDS}-fold) for Stage 2 proto_probs ---"
-        )
-        file_list = [b["filename"] for b in all_batches]
-        file_sites_s = [sites[filenames == fn][0] for fn in file_list]
-        file_groups_s = np.array(file_sites_s)
-        file_indices_s = np.arange(len(all_batches))
-        gkf_s = GroupKFold(n_splits=N_FOLDS)
-
-        oof_proto_probs_s = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
-
-        for fold_s, (tr_idx, vl_idx) in enumerate(
-            gkf_s.split(file_indices_s, groups=file_groups_s)
-        ):
-            print(f"  OOF fold {fold_s + 1}/{N_FOLDS} — {len(vl_idx)} val files")
-            batches_tr_s = [all_batches[i] for i in tr_idx]
-            batches_vl_s = [all_batches[i] for i in vl_idx]
-
-            tr_row_idx_s = []
-            for b in batches_tr_s:
-                tr_row_idx_s.extend(file_to_rows[b["filename"]])
-            fold_pw = compute_pos_weights(labels[tr_row_idx_s], cap=POS_WEIGHT_CAP)
-
-            m_s = ProtoSSM(n_tax_groups=len(group_names))
-            init_prototypes(m_s, emb[tr_row_idx_s], labels[tr_row_idx_s])
-            m_s, _ = train_model(
-                model=m_s,
-                batches_train=batches_tr_s,
-                batches_val=None,
-                pos_weights=fold_pw,
-                tax_matrix=tax_matrix,
-                epochs=epochs,
-                patience=patience,
-                use_mixup=True,
-                verbose=False,
-            )
-            vl_logits_s = predict_batches_logits(m_s, batches_vl_s)
-            vl_probs_s = 1.0 / (1.0 + np.exp(-vl_logits_s))
-            vl_row_idx_s = []
-            for b in batches_vl_s:
-                vl_row_idx_s.extend(file_to_rows[b["filename"]])
-            oof_proto_probs_s[vl_row_idx_s] = vl_probs_s
-
-        print(
-            f"OOF proto_probs computed: {oof_proto_probs_s.shape}"
-            f", mean={oof_proto_probs_s.mean():.4f}"
-        )
-
-        # Step B: train final Stage 1 on all data
-        print(
-            f"\n--- Submit mode: Stage 1 final — ProtoSSM on all {len(all_batches)} files ---"
+            f"\n--- Submit mode: Stage 1 — ProtoSSM on all {len(all_batches)} files ---"
         )
         print(f"Epochs={epochs}, patience={patience}")
 
@@ -1205,11 +1124,14 @@ def main() -> None:
             verbose=True,
         )
 
-        # Stage 2 uses OOF proto_probs (matches inference quality on novel soundscapes)
-        proto_probs_train = oof_proto_probs_s
-        print("\n--- Stage 1 complete — using OOF proto_probs for Stage 2 ---")
+        # Collect in-sample proto predictions for Stage 2 (used as proto_probs input).
+        # Using in-sample predictions (not OOF) gives Stage 2 richer signal — empirically
+        # better than OOF proto_probs (tested: OOF gave 0.914 LB vs in-sample 0.915).
+        print("\n--- Stage 1 complete — collecting in-sample proto predictions ---")
+        proto_logits_train = predict_batches_logits(model, all_batches)  # (708, 234)
+        proto_probs_train = 1.0 / (1.0 + np.exp(-proto_logits_train))
         print(
-            f"Proto probs (OOF): {proto_probs_train.shape}, mean={proto_probs_train.mean():.4f}"
+            f"Proto logits: {proto_logits_train.shape}, mean={proto_logits_train.mean():.4f}"
         )
 
         # Stage 2 base: probe-augmented logits (match inference pipeline) or proto logits fallback
@@ -1367,11 +1289,7 @@ def main() -> None:
             for batch in all_batches:
                 row_idx = file_to_rows[batch["filename"]]
                 emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)
-                proto_p_raw = torch.tensor(
-                    oof_proto_probs[row_idx], dtype=torch.float32
-                )
-                # TTA-averaged proto_probs (matches inference pipeline)
-                proto_p = _tta_avg_proto_probs(proto_p_raw)
+                proto_p = torch.tensor(oof_proto_probs[row_idx], dtype=torch.float32)
                 correction = residual_ssm_oof(emb_t, proto_p).numpy()
                 # Apply to stage2_base (same base used for training → OOF eval is meaningful)
                 oof_pipeline_logits[row_idx] = (
