@@ -73,9 +73,10 @@ N_CLASSES = 234
 D_RESIDUAL = 128
 D_STATE_RESIDUAL = 16
 DROPOUT_RESIDUAL = 0.20
-RESIDUAL_V3_EPOCHS = (
-    60  # increased from 30 (v1) — more training with in-sample proto_probs
-)
+RESIDUAL_V3_EPOCHS = 30  # submit mode fixed epoch (used when no val split)
+RESIDUAL_V3_MAX_EPOCHS = 150  # max epochs when early stopping is enabled
+RESIDUAL_V3_PATIENCE = 15  # early stopping patience for Stage 2 val loss
+RESIDUAL_V3_VAL_FRAC = 0.20  # fraction of soundscapes held out for Stage 2 ES
 RESIDUAL_V3_LR = 3e-4
 
 # Training — shared
@@ -849,6 +850,8 @@ def train_residual_ssm_v3(
     all_batches: list[dict],
     file_to_rows: dict[str, list[int]],
     epochs: int = RESIDUAL_V3_EPOCHS,
+    val_batches: list[dict] | None = None,
+    patience: int = RESIDUAL_V3_PATIENCE,
     verbose: bool = True,
 ) -> ResidualSSMv3:
     """Train ResidualSSMv3 on frozen ProtoSSM predictions.
@@ -861,15 +864,21 @@ def train_residual_ssm_v3(
     Note: inference uses TTA-averaged proto_probs, but empirically raw
     proto_probs give better corrections (more signal, less smoothing).
 
+    If val_batches is provided, early stopping is used: training stops when
+    validation loss hasn't improved for `patience` epochs, and the best model
+    weights are restored. This prevents overfitting on the small 708-window dataset.
+
     Args:
         residual_ssm:   ResidualSSMv3 instance
         emb:            (N, 1536) all Perch embeddings
         proto_logits:   (N, 234) base logits for BCE loss (full probe scores)
         proto_probs:    (N, 234) ProtoSSM sigmoid predictions (model input)
         labels:         (N, 234) ground-truth multi-hot labels
-        all_batches:    file-level batch list (for iteration order)
+        all_batches:    file-level batch list for training
         file_to_rows:   filename → list[int] row indices
-        epochs:         training epochs
+        epochs:         max training epochs
+        val_batches:    optional held-out file-level batch list for early stopping
+        patience:       early stopping patience (epochs without val improvement)
         verbose:        print progress
 
     Returns:
@@ -880,6 +889,10 @@ def train_residual_ssm_v3(
     )
     rng = np.random.default_rng(42)
     n_files = len(all_batches)
+
+    best_val_loss = float("inf")
+    best_state = None
+    no_improve = 0
 
     for epoch in range(1, epochs + 1):
         residual_ssm.train()
@@ -912,11 +925,58 @@ def train_residual_ssm_v3(
             optimizer.step()
             losses.append(loss.item())
 
-        if verbose and epoch % 10 == 0:
-            print(
-                f"  [ResidualSSMv3] Epoch {epoch:3d}/{epochs}"
-                f"  loss={float(np.mean(losses)):.5f}"
-            )
+        train_loss = float(np.mean(losses))
+
+        if val_batches is not None:
+            # Compute validation loss for early stopping
+            residual_ssm.eval()
+            val_losses = []
+            with torch.no_grad():
+                for batch in val_batches:
+                    row_idx = file_to_rows[batch["filename"]]
+                    emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)
+                    proto_l = torch.tensor(proto_logits[row_idx], dtype=torch.float32)
+                    proto_p = torch.tensor(proto_probs[row_idx], dtype=torch.float32)
+                    labels_t = torch.tensor(labels[row_idx], dtype=torch.float32)
+                    correction = residual_ssm(emb_t, proto_p)
+                    val_loss = F.binary_cross_entropy_with_logits(
+                        proto_l + correction, labels_t
+                    )
+                    val_losses.append(val_loss.item())
+
+            val_loss_mean = float(np.mean(val_losses))
+
+            if verbose and (epoch % 10 == 0 or epoch <= 5):
+                print(
+                    f"  [ResidualSSMv3] Epoch {epoch:3d}/{epochs}"
+                    f"  train={train_loss:.5f}  val={val_loss_mean:.5f}"
+                    + ("  *" if val_loss_mean < best_val_loss else "")
+                )
+
+            if val_loss_mean < best_val_loss:
+                best_val_loss = val_loss_mean
+                best_state = {
+                    k: v.clone() for k, v in residual_ssm.state_dict().items()
+                }
+                no_improve = 0
+            else:
+                no_improve += 1
+                if no_improve >= patience:
+                    print(
+                        f"  [ResidualSSMv3] Early stop at epoch {epoch}"
+                        f" (best val={best_val_loss:.5f} at epoch {epoch - patience})"
+                    )
+                    break
+        else:
+            if verbose and epoch % 10 == 0:
+                print(
+                    f"  [ResidualSSMv3] Epoch {epoch:3d}/{epochs}"
+                    f"  loss={train_loss:.5f}"
+                )
+
+    if val_batches is not None and best_state is not None:
+        residual_ssm.load_state_dict(best_state)
+        print(f"  [ResidualSSMv3] Restored best weights (val={best_val_loss:.5f})")
 
     return residual_ssm
 
@@ -1137,8 +1197,25 @@ def main() -> None:
         # Stage 2 base: probe-augmented logits (match inference pipeline) or proto logits fallback
         # BCE loss: BCE(stage2_base_logits + correction, labels)
         # stage2_base_logits matches final_scores quality at inference time
+
+        # Split soundscapes into train / val for early stopping (file-level, no leakage)
+        rng_split = np.random.default_rng(42)
+        n_val_files = max(1, int(len(all_batches) * RESIDUAL_V3_VAL_FRAC))
+        val_file_idx = rng_split.choice(
+            len(all_batches), size=n_val_files, replace=False
+        )
+        val_file_set = {all_batches[i]["filename"] for i in val_file_idx}
+        stage2_train_batches = [
+            b for b in all_batches if b["filename"] not in val_file_set
+        ]
+        stage2_val_batches = [b for b in all_batches if b["filename"] in val_file_set]
         print(
-            f"\n--- Stage 2 — ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs, base={stage2_base_name}) ---"
+            f"\n--- Stage 2 — ResidualSSMv3 (max {RESIDUAL_V3_MAX_EPOCHS} epochs, early stopping, "
+            f"base={stage2_base_name}) ---"
+        )
+        print(
+            f"  Train: {len(stage2_train_batches)} soundscapes, "
+            f"Val: {len(stage2_val_batches)} soundscapes (early stopping)"
         )
         residual_ssm = ResidualSSMv3()
         residual_ssm = train_residual_ssm_v3(
@@ -1147,9 +1224,11 @@ def main() -> None:
             proto_logits=stage2_base_logits,  # base that correction is applied to at inference
             proto_probs=proto_probs_train,  # ProtoSSM probs used as SSM input features
             labels=labels,
-            all_batches=all_batches,
+            all_batches=stage2_train_batches,
             file_to_rows=file_to_rows,
-            epochs=RESIDUAL_V3_EPOCHS,
+            epochs=RESIDUAL_V3_MAX_EPOCHS,
+            val_batches=stage2_val_batches,
+            patience=RESIDUAL_V3_PATIENCE,
             verbose=True,
         )
 
