@@ -1062,6 +1062,16 @@ def main() -> None:
         default=42,
         help="Random seed",
     )
+    parser.add_argument(
+        "--stage2-epochs",
+        type=int,
+        default=None,
+        help=(
+            "Fixed epoch count for Stage 2 ResidualSSMv3 (uses all 59 soundscapes, no "
+            "val split). Use after early stopping reveals the optimal epoch. "
+            "Overrides RESIDUAL_V3_EPOCHS and disables early stopping."
+        ),
+    )
     args = parser.parse_args()
 
     if args.data_dir:
@@ -1198,39 +1208,63 @@ def main() -> None:
         # BCE loss: BCE(stage2_base_logits + correction, labels)
         # stage2_base_logits matches final_scores quality at inference time
 
-        # Split soundscapes into train / val for early stopping (file-level, no leakage)
-        rng_split = np.random.default_rng(42)
-        n_val_files = max(1, int(len(all_batches) * RESIDUAL_V3_VAL_FRAC))
-        val_file_idx = rng_split.choice(
-            len(all_batches), size=n_val_files, replace=False
-        )
-        val_file_set = {all_batches[i]["filename"] for i in val_file_idx}
-        stage2_train_batches = [
-            b for b in all_batches if b["filename"] not in val_file_set
-        ]
-        stage2_val_batches = [b for b in all_batches if b["filename"] in val_file_set]
-        print(
-            f"\n--- Stage 2 — ResidualSSMv3 (max {RESIDUAL_V3_MAX_EPOCHS} epochs, early stopping, "
-            f"base={stage2_base_name}) ---"
-        )
-        print(
-            f"  Train: {len(stage2_train_batches)} soundscapes, "
-            f"Val: {len(stage2_val_batches)} soundscapes (early stopping)"
-        )
         residual_ssm = ResidualSSMv3()
-        residual_ssm = train_residual_ssm_v3(
-            residual_ssm=residual_ssm,
-            emb=emb,
-            proto_logits=stage2_base_logits,  # base that correction is applied to at inference
-            proto_probs=proto_probs_train,  # ProtoSSM probs used as SSM input features
-            labels=labels,
-            all_batches=stage2_train_batches,
-            file_to_rows=file_to_rows,
-            epochs=RESIDUAL_V3_MAX_EPOCHS,
-            val_batches=stage2_val_batches,
-            patience=RESIDUAL_V3_PATIENCE,
-            verbose=True,
-        )
+
+        if args.stage2_epochs is not None:
+            # Fixed-epoch mode: use all 59 soundscapes, no val split.
+            # Use after early stopping reveals the optimal epoch count.
+            fixed_ep = args.stage2_epochs
+            print(
+                f"\n--- Stage 2 — ResidualSSMv3 ({fixed_ep} epochs fixed, all {len(all_batches)} soundscapes, "
+                f"base={stage2_base_name}) ---"
+            )
+            residual_ssm = train_residual_ssm_v3(
+                residual_ssm=residual_ssm,
+                emb=emb,
+                proto_logits=stage2_base_logits,
+                proto_probs=proto_probs_train,
+                labels=labels,
+                all_batches=all_batches,
+                file_to_rows=file_to_rows,
+                epochs=fixed_ep,
+                val_batches=None,
+                verbose=True,
+            )
+        else:
+            # Early stopping mode: hold out 20% of soundscapes as validation.
+            rng_split = np.random.default_rng(42)
+            n_val_files = max(1, int(len(all_batches) * RESIDUAL_V3_VAL_FRAC))
+            val_file_idx = rng_split.choice(
+                len(all_batches), size=n_val_files, replace=False
+            )
+            val_file_set = {all_batches[i]["filename"] for i in val_file_idx}
+            stage2_train_batches = [
+                b for b in all_batches if b["filename"] not in val_file_set
+            ]
+            stage2_val_batches = [
+                b for b in all_batches if b["filename"] in val_file_set
+            ]
+            print(
+                f"\n--- Stage 2 — ResidualSSMv3 (max {RESIDUAL_V3_MAX_EPOCHS} epochs, early stopping, "
+                f"base={stage2_base_name}) ---"
+            )
+            print(
+                f"  Train: {len(stage2_train_batches)} soundscapes, "
+                f"Val: {len(stage2_val_batches)} soundscapes (early stopping)"
+            )
+            residual_ssm = train_residual_ssm_v3(
+                residual_ssm=residual_ssm,
+                emb=emb,
+                proto_logits=stage2_base_logits,
+                proto_probs=proto_probs_train,
+                labels=labels,
+                all_batches=stage2_train_batches,
+                file_to_rows=file_to_rows,
+                epochs=RESIDUAL_V3_MAX_EPOCHS,
+                val_batches=stage2_val_batches,
+                patience=RESIDUAL_V3_PATIENCE,
+                verbose=True,
+            )
 
         t_total = time.time() - t_start
         print(f"\nTotal time: {t_total:.1f}s ({t_total / 60:.1f}min)")
