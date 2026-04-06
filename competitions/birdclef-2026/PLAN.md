@@ -28,9 +28,9 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB **0.913** (kernel v11, pending v13 submission Apr 5)
+### Current best: LB **0.915** (kernel perch-v2-inference v16, Apr 5 — weight=0.70)
 
-**Active work (Apr 4)**:
+**Active work (Apr 5)**:
 - **Step 17 + V18 DONE**: LB **0.913** (+0.001) — ProtoSSM 50/50 blend + V18 probes + rank-aware post-proc.
 - **Step 19 DONE**: LB **0.913** — ONNX Perch + ProtoSSM (no CNN). ONNX logits confirmed equivalent to TF.
 - **Step 19 v1 (with CNN) TIMEOUT**: scoring env too slow for ONNX + CNN combined (~90+ min).
@@ -39,6 +39,9 @@ recordings in the Pantanal wetlands, South America.
 - **Step 21 DONE**: Co-occurrence PMI boost (weight=0.20, threshold=0.5) = LB **0.913** — dead end. Station-specific ecology doesn't generalize.
 - **Step 22 DONE**: Probe features 139→143 (+std_v, diff_mean, window_pos, delta_prev). In kernel v12/v13.
 - **Step 23 TRAINED** (Apr 4): ResidualSSMv3 (competitor-matched) — OOF cmAP **0.7629** (vs 0.5452 ProtoSSM alone). Submit kernel v13 on Apr 5. Dataset: `aldisued/birdclef2026-protossm-v3`.
+- **Step 23 v2 (BCE fix)**: ResidualSSMv3 trained with BCE logit-space loss — LB **0.909** (kernel v14, Apr 5). Correct space but wrong training base (proto_logits ~0.545 quality).
+- **Step 23 v3 (proper fix, Apr 5)**: ResidualSSMv3 trained with full probe scores as Stage2 base (cmAP 0.926 in-sample). Training-inference alignment. OOF improvement: +0.0017. LB **0.914** (+0.001, kernel v15).
+- **Step 23 RESIDUAL_WEIGHT sweep (Apr 5)**: Correction generalizes well! 0.35→0.914, 0.70→**0.915** (new best, v16), 1.00→pending (v17). No retraining needed.
 
 **Step 17 results (ProtoSSM v1)**:
 - 5-fold OOF cmAP = 0.5452 (per-fold: 0.5548, 0.3614, 0.7403, 0.5888, trained on ~17-29 classes/fold)
@@ -89,6 +92,11 @@ recordings in the Pantanal wetlands, South America.
 | **Step 19 v2 (ONNX Perch + ProtoSSM, no CNN)** | **0.913** | ONNX logits = TF logits (confirmed equivalent) |
 | **Step 20 ProtoSSM v2 (ResidualSSM second pass)** | **0.913** | ResidualSSM dead end — OOF 0.5438 vs v1 0.5452. Too small dataset (708 windows) to learn corrections |
 | **Step 21: co-occurrence PMI boost (weight=0.20, threshold=0.5)** | **0.913** | Dead end — station-specific ecology doesn't generalize. 852 pairs, max P(j\|i)=0.91, mean boost 0.039, max boost 5.18 |
+| **Step 23 v1: ResidualSSMv3 competitor-matched** | **0.906** | Kernel v13 — MSE in probability space (wrong loss), wrong base |
+| **Step 23 v2: ResidualSSMv3 BCE fix** | **0.909** | Kernel v14 — BCE logit-space loss, but Stage2 trained on proto_logits base (~0.545 quality) |
+| **Step 23 v3: ResidualSSMv3 proper fix (full probe base)** | **0.914** | Kernel v15 — Stage2 base=full probe scores (0.926 in-sample cmAP). Training-inference alignment. OOF +0.0017.
+| **Step 23 weight=0.70** | **0.915** | Kernel v16 — RESIDUAL_WEIGHT=0.70. Correction generalizes — linear gain. **New best.**
+| **Step 23 weight=1.00** | **0.915** | Kernel v17 — RESIDUAL_WEIGHT=1.00. Plateau: same as 0.70. Optimal weight is 0.70. |
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
