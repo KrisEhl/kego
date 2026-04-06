@@ -30,6 +30,17 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB **0.915** (kernel perch-v2-inference v16, Apr 5 — weight=0.70)
 
+**Active work (Apr 6 — COMPLETE, 5/5 submissions used)**:
+- **Stage 2 v3 (60 ep)**: LB **0.908** (kernel v19). 60 epochs overfit on 708 samples. 30ep confirmed optimal.
+- **Stage 2 v4 (early stopping, 48/59 soundscapes)**: blank score (dataset not ready when kernel ran — <20s delay).
+- **Stage 2 v4 early stopping analysis**: early stopping at epoch 33 (best val=0.00519). Val plateau from epoch 20. Optimal epoch = 30 (confirmed by LB).
+- **Stage 2 v5 (33ep fixed, all 59)**: LB **0.909** (kernel v21). 33ep slightly worse than 30ep.
+- **Stage 2 v5 + positive_mask**: LB **0.910** (kernel v22). +0.001 from zeroing 163 no-positive species' corrections.
+- **Stage 2 v6 (30ep + mask)**: kernel v23 COMPLETE and ready. Submit on Apr 7.
+- **Implemented**: early stopping (`--stage2-epochs N` flag), `positive_mask` saved to checkpoints and applied in inference notebook.
+
+**Next: Apr 7** — Submit kernel v23 (Stage 2 v6: 30ep + positive_mask). Expected ~0.916. Then use remaining 4 slots for further improvements.
+
 **Active work (Apr 5)**:
 - **Step 17 + V18 DONE**: LB **0.913** (+0.001) — ProtoSSM 50/50 blend + V18 probes + rank-aware post-proc.
 - **Step 19 DONE**: LB **0.913** — ONNX Perch + ProtoSSM (no CNN). ONNX logits confirmed equivalent to TF.
@@ -97,6 +108,12 @@ recordings in the Pantanal wetlands, South America.
 | **Step 23 v3: ResidualSSMv3 proper fix (full probe base)** | **0.914** | Kernel v15 — Stage2 base=full probe scores (0.926 in-sample cmAP). Training-inference alignment. OOF +0.0017.
 | **Step 23 weight=0.70** | **0.915** | Kernel v16 — RESIDUAL_WEIGHT=0.70. Correction generalizes — linear gain. **New best.**
 | **Step 23 weight=1.00** | **0.915** | Kernel v17 — RESIDUAL_WEIGHT=1.00. Plateau: same as 0.70. Optimal weight is 0.70. |
+| **Stage 2 v2 (TTA-matched + OOF + 60ep)** | **0.914** | Kernel v18 — regression. TTA mismatch + OOF proto_probs both hurt. |
+| **Stage 2 v3 (60ep, in-sample)** | **0.908** | Kernel v19 — clear overfitting on 708 samples. 30ep was optimal. |
+| **Stage 2 v4 (early stopping, 48/59)** | **(blank)** | Kernel v20 — dataset not ready when kernel ran (20s delay too short). |
+| **Stage 2 v5 (33ep fixed, all 59)** | **0.909** | Kernel v21 — 33ep slightly worse than 30ep. 30ep confirmed as optimal. |
+| **Stage 2 v5 + positive_mask** | **0.910** | Kernel v22 — +0.001 from mask (33ep base). Mask helps the 163 no-positive species. |
+| **Stage 2 v6 (30ep + positive_mask)** | **pending Apr 7** | Kernel v23 — optimal 30ep base + mask. Expected ~0.916. |
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
