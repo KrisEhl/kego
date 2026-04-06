@@ -1269,6 +1269,15 @@ def main() -> None:
         t_total = time.time() - t_start
         print(f"\nTotal time: {t_total:.1f}s ({t_total / 60:.1f}min)")
 
+        # Boolean mask: True for species with ≥1 positive label in training soundscapes.
+        # Used at inference to zero out ResidualSSM correction for species that never
+        # appeared positively — their correction is driven by all-negative BCE loss and
+        # thus systematically negative, hurting recall for those species.
+        positive_mask = labels.sum(axis=0) > 0  # (234,) bool
+        print(
+            f"Positive mask: {positive_mask.sum()} / {len(positive_mask)} species have positives"
+        )
+
         torch.save(
             {
                 "model_state_dict": model.state_dict(),
@@ -1276,6 +1285,7 @@ def main() -> None:
                 "config": config,
                 "species_names": species_list,
                 "site_to_idx": site_to_idx,
+                "positive_mask": positive_mask,
             },
             output_path,
         )
