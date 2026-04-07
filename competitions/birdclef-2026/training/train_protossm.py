@@ -1072,6 +1072,15 @@ def main() -> None:
             "Overrides RESIDUAL_V3_EPOCHS and disables early stopping."
         ),
     )
+    parser.add_argument(
+        "--stage1-checkpoint",
+        default=None,
+        help=(
+            "Path to an existing checkpoint to load Stage 1 ProtoSSM weights from "
+            "(skips Stage 1 training). Use to quickly retrain only Stage 2 with a "
+            "different seed while reusing the same Stage 1 model."
+        ),
+    )
     args = parser.parse_args()
 
     if args.data_dir:
@@ -1174,25 +1183,36 @@ def main() -> None:
 
     if args.mode == "submit":
         # ----- Submit mode: 2-stage training on full dataset -----
-        print(
-            f"\n--- Submit mode: Stage 1 — ProtoSSM on all {len(all_batches)} files ---"
-        )
-        print(f"Epochs={epochs}, patience={patience}")
-
         model = ProtoSSM(n_tax_groups=len(group_names))
-        init_prototypes(model, emb, labels)
 
-        model, history = train_model(
-            model=model,
-            batches_train=all_batches,
-            batches_val=None,
-            pos_weights=pos_weights,
-            tax_matrix=tax_matrix,
-            epochs=epochs,
-            patience=patience,
-            use_mixup=True,
-            verbose=True,
-        )
+        if args.stage1_checkpoint is not None:
+            # Load Stage 1 weights from existing checkpoint (skip retraining).
+            print(
+                f"\n--- Submit mode: Stage 1 — loading from {args.stage1_checkpoint} ---"
+            )
+            s1_ckpt = torch.load(
+                args.stage1_checkpoint, map_location="cpu", weights_only=False
+            )
+            model.load_state_dict(s1_ckpt["model_state_dict"], strict=False)
+            model.eval()
+            print("Stage 1 loaded (no retraining).")
+        else:
+            print(
+                f"\n--- Submit mode: Stage 1 — ProtoSSM on all {len(all_batches)} files ---"
+            )
+            print(f"Epochs={epochs}, patience={patience}")
+            init_prototypes(model, emb, labels)
+            model, history = train_model(
+                model=model,
+                batches_train=all_batches,
+                batches_val=None,
+                pos_weights=pos_weights,
+                tax_matrix=tax_matrix,
+                epochs=epochs,
+                patience=patience,
+                use_mixup=True,
+                verbose=True,
+            )
 
         # Collect in-sample proto predictions for Stage 2 (used as proto_probs input).
         # Using in-sample predictions (not OOF) gives Stage 2 richer signal — empirically
