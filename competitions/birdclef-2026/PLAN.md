@@ -30,6 +30,16 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB **0.915** (kernel perch-v2-inference v16, Apr 5 — weight=0.70)
 
+**Active work (Apr 7 — 4/5 submissions used, 1 slot remaining)**:
+- **Critical fix**: v23 was found to load `protossm_v3.pt` path (= protossm_v8 contents, since previous session uploaded v8 as v3.pt). So v23 = 30ep + mask + 0.70 as intended.
+- **v23 (×2, duplicate)**: kernel v23 (30ep + binary_mask + weight=0.70). Accidental duplicate. All pending.
+- **v24**: kernel v24 (30ep + binary_mask + weight=0.80). COMPLETE, submitted.
+- **v25 (soft sqrt)**: kernel v25 (30ep + sqrt(n_pos/max) weighting + weight=0.70). COMPLETE, submitted.
+- **v26 prepared**: kernel v26 (30ep + soft sqrt + weight=0.80). COMPLETE, NOT submitted.
+- **Ensemble v27**: 5-seed ensemble (seeds 0,1,2,3,4 = v3+v9+v10+v11+v12). Kernel v27 currently RUNNING. Binary mask + weight=0.70. Dataset v10 uploaded.
+- **Fast Stage 2-only retrain**: Added `--stage1-checkpoint` flag to train_protossm.py. Seeds 1-4 trained in ~3 min each (vs ~50 min with Stage 1).
+- All results PENDING (scoring env busy). 1 slot remaining for today.
+
 **Active work (Apr 6 — COMPLETE, 5/5 submissions used)**:
 - **Stage 2 v3 (60 ep)**: LB **0.908** (kernel v19). 60 epochs overfit on 708 samples. 30ep confirmed optimal.
 - **Stage 2 v4 (early stopping, 48/59 soundscapes)**: blank score (dataset not ready when kernel ran — <20s delay).
@@ -38,8 +48,6 @@ recordings in the Pantanal wetlands, South America.
 - **Stage 2 v5 + positive_mask**: LB **0.910** (kernel v22). +0.001 from zeroing 163 no-positive species' corrections.
 - **Stage 2 v6 (30ep + mask)**: kernel v23 COMPLETE and ready. Submit on Apr 7.
 - **Implemented**: early stopping (`--stage2-epochs N` flag), `positive_mask` saved to checkpoints and applied in inference notebook.
-
-**Next: Apr 7** — Submit kernel v23 (Stage 2 v6: 30ep + positive_mask). Expected ~0.916. Then use remaining 4 slots for further improvements.
 
 **Active work (Apr 5)**:
 - **Step 17 + V18 DONE**: LB **0.913** (+0.001) — ProtoSSM 50/50 blend + V18 probes + rank-aware post-proc.
@@ -113,7 +121,10 @@ recordings in the Pantanal wetlands, South America.
 | **Stage 2 v4 (early stopping, 48/59)** | **(blank)** | Kernel v20 — dataset not ready when kernel ran (20s delay too short). |
 | **Stage 2 v5 (33ep fixed, all 59)** | **0.909** | Kernel v21 — 33ep slightly worse than 30ep. 30ep confirmed as optimal. |
 | **Stage 2 v5 + positive_mask** | **0.910** | Kernel v22 — +0.001 from mask (33ep base). Mask helps the 163 no-positive species. |
-| **Stage 2 v6 (30ep + positive_mask)** | **pending Apr 7** | Kernel v23 — optimal 30ep base + mask. Expected ~0.916. |
+| **Stage 2 v6 (30ep + positive_mask)** | **pending** | Kernel v23 (×2 duplicate) — optimal 30ep base + mask. RESIDUAL_WEIGHT=0.70. |
+| **Stage 2 v6 + weight=0.80** | **pending** | Kernel v24 — binary mask + RESIDUAL_WEIGHT=0.80. |
+| **Stage 2 v7 (sqrt weighting)** | **pending** | Kernel v25 — soft sqrt(n_pos/max) correction weight. RESIDUAL_WEIGHT=0.70. |
+| **Stage 2 ensemble (5 seeds)** | **running** | Kernel v27 — average correction from seeds 0,1,2,3,4 (v3+v9-v12). Binary mask. RESIDUAL_WEIGHT=0.70. |
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
