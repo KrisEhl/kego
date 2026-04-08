@@ -33,10 +33,13 @@ recordings in the Pantanal wetlands, South America.
 **Active work (Apr 8 — 5/5 submissions used)**:
 - **v29 (original weights + v9-v12 ensemble, no mask)**: LB **0.912** — ensemble hurts. Root cause: v9-v12 use fixed 30ep vs original's early stopping.
 - **v30 (66sc 5-seed ensemble)**: PENDING. 792 windows (66sc), original+v13-v16_66sc (all fixed 30ep), no mask.
-- **v31 (single-seed 66sc, v13_66sc)**: PENDING. Seed 42, fixed 30ep on 792 windows, no mask. Tests if +12% data helps.
-- **v32 (early-stopping ensemble)**: PENDING. Primary=protossm_original.pt (59sc, best ep33, val=0.00519) + es_s1-s4 (66sc, best ep27-28, val≈0.00591). Training-regime-matched ensemble hypothesis.
+- **v31 (single-seed 66sc, v13_66sc)**: LB **0.914** — 66sc data marginally WORSE than 59sc original. Root cause: probe score quality drops (0.926→0.8905) with new soundscapes; training-inference mismatch.
+- **v32 (early-stopping ensemble)**: LB **0.913** — still worse than single seed. Even with same val split, different seeds don't complement each other.
 - **Early-stopping seeds (es_s1-s4)**: Trained with `--stage1-checkpoint protossm_v3.pt --seed {1-4}` on 66sc data, NO --stage2-epochs flag (early stopping). All stopped at epoch 27-28, best val=0.00591-0.00594.
-- **Key insight (Apr 8)**: Why ensemble hurts — original v3 used early stopping (train mode, ~ep33 stop), but v9-v12 used fixed 30ep (submit mode). Different training regimes produce weights that don't average well. Es_s1-s4 aim to fix this.
+- **Key insight (Apr 8 — val split bug)**: ALL previous es seeds used SAME val split (hardcoded rng_split=42). Fixed to use args.seed. K-fold seeds (kfold_s1-s4) now have diverse val splits: s1=0.00786, s2=0.00260, s3=0.00769, s4=0.00719. Diverse val splits = true K-fold diversity.
+- **K-fold seeds (kfold_s1-s4)**: Trained on 66sc with diverse val splits (args.seed). Best val varies widely (0.00260–0.00786). Dataset v3 version 13. Kernel v33 prepared (original + kfold_s1-s4). Submit Apr 9.
+- **66sc training-inference mismatch**: 66sc probe scores (cmAP 0.8905) used in training but 59sc probe scores (cmAP 0.926) used at inference (jaejohn/perch-meta has 59sc only). This misalignment costs ~0.001 LB.
+- **Val split fix**: `rng_split = np.random.default_rng(args.seed)` — seed 42 unchanged, seeds 1-4 now use different val splits.
 
 **Active work (Apr 7 — 5/5 submissions used)**:
 - **v23 (×2, duplicate)**: 30ep + binary_mask + weight=0.70 → LB **0.910** (-0.005 vs v16). positive_mask HURTS at 30 epochs.
@@ -135,7 +138,8 @@ recordings in the Pantanal wetlands, South America.
 | **Stage 2 ensemble (5 seeds, NO mask)** | **0.912** | Kernel v29 (v28 config) — correct original weights (first_w=-0.007645) + v9-v12 (fixed 30ep seeds). No mask. Ensemble hurts vs single seed. |
 | **66sc 5-seed ensemble (792 windows)** | **(blank)** | Kernel v30 — SCORING FAILURE. Root cause: protossm_original.pt not in 66sc dataset, fallback to legacy blend. |
 | **66sc single seed (792 windows)** | **PENDING** | Kernel v31 — v13_66sc only (seed42, fixed 30ep). Tests if +12% data helps. |
-| **Early-stopping ensemble (orig+es_s1-s4)** | **PENDING** | Kernel v32 — original (59sc, ep33) + es_s1-s4 (66sc, ep27-28). Training-regime-matched. No mask. |
+| **Early-stopping ensemble (orig+es_s1-s4)** | **0.913** | Kernel v32 — original (59sc, ep33) + es_s1-s4 (66sc, ep27-28). No mask. Ensemble hurts even with training-regime match. |
+| **K-fold ensemble (orig + kfold_s1-s4)** | **queued** | Kernel v33 — original + kfold seeds with DIVERSE val splits. True K-fold benefit expected. Submit Apr 9. |
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
