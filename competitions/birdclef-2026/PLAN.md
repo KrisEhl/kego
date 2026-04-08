@@ -357,13 +357,17 @@ Two research directions investigated in parallel:
 
 **Key guard**: adapter applied to BOTH training embeddings (before PCA/probes) AND test embeddings (before PCA projection). Ensures train-test consistency.
 
-**Results**: TBD (Apr 9)
+**Training results (Apr 8)**:
+- Adapter: early stop epoch 44/200, best val BCE=0.01769 (vs init 0.02028), final α=0.1749
+- Full probe cmAP (adapted emb, 66sc): 0.8904 — same as raw 66sc baseline (neutral)
+- Stage 2: 30ep fixed, train loss 0.00338 (33s total)
+- Kernel v33 pushed (protossm_adapted.pt primary, with adapter), LB score pending Apr 9
 
-- [ ] Train adapter on cluster (max 200 epochs, early stopping patience=30)
-- [ ] Recompute adapted probe scores
-- [ ] Retrain Stage 2 with adapted embeddings + adapted probe scores
-- [ ] Upload checkpoints, push kernel v34
-- [ ] Report: adapter val BCE, α value, probe cmAP change, Stage 2 val loss, LB score
+- [x] Train adapter on cluster (max 200 epochs, early stopping patience=30)
+- [x] Recompute adapted probe scores
+- [x] Retrain Stage 2 with adapted embeddings + adapted probe scores
+- [x] Upload checkpoints, push kernel v33
+- [ ] Report: LB score (pending)
 
 ---
 
