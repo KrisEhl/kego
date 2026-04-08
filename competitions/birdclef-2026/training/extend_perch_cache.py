@@ -93,9 +93,11 @@ birdclassifier = tf.saved_model.load(str(MODEL_DIR))
 infer_fn = birdclassifier.signatures["serving_default"]
 
 # Build species mapping
-perch_labels_path = next(MODEL_DIR.rglob("label.csv"), None)
+perch_labels_path = next(MODEL_DIR.rglob("labels.csv"), None) or next(
+    MODEL_DIR.rglob("label.csv"), None
+)
 if perch_labels_path is None:
-    print("ERROR: label.csv not found", flush=True)
+    print("ERROR: label(s).csv not found", flush=True)
     sys.exit(1)
 perch_labels = pd.read_csv(perch_labels_path, header=None)[0].tolist()
 perch_label_set = {lbl: i for i, lbl in enumerate(perch_labels)}

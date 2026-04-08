@@ -287,9 +287,41 @@ Two research directions investigated in parallel:
 **Conclusion**: Best realistic ceiling with current architecture ~0.920–0.925. To reach 0.940 requires something not yet identified — likely a fundamentally better base model or much more labeled data. The 0.025 gap is real and will not close with incremental improvements.
 
 **Recommended plan**:
-1. Submit K-fold ensemble (v33) Apr 9 — low risk, ready
-2. Implement Perch Embedding Adapter — highest confidence new direction
-3. Try OOF pseudo-label augmentation for Stage 2 — low risk, reuses existing infrastructure
+1. Submit K-fold ensemble (v35) Apr 9 — no adapter, original primary + kfold_s1-s4
+2. Submit adapter test (v34) Apr 9 — adapter + adapted primary, no ensemble
+3. Submit full system (v36) Apr 9 — adapter + adapted primary + kfold ensemble
+4. Try OOF pseudo-label augmentation for Stage 2 based on results
+
+---
+
+### ✅ Step 24 — Perch Embedding Adapter (Apr 8)
+
+**Training: 33s on cluster | α=0.175 | Best val BCE: 0.01769 | Kernel v34 (single), v36 (full system)**
+
+**Implementation**:
+- New script: `competitions/birdclef-2026/training/train_perch_adapter.py`
+- Architecture: `concat(emb 1536, logits 234) → LayerNorm(512) → GELU → Dropout(0.2) → Linear(1536)`
+- Residual: `emb_out = emb + α * delta`, α learned (init 0.1, final 0.175)
+- Zero-init output: adapter starts as identity transformation
+- Training: AdapterWithHead (linear proxy for LogReg probes), BCE loss, Adam, 200ep max, early stop patience=30
+- Stopped at ep74 (best val ep44), val BCE: 0.02028→0.01769 (improved 12%)
+- Adapted probe scores: cmAP 0.8904 (same as raw 66sc — adapter doesn't help probes directly)
+- Stage 2 retrained with adapted emb + adapted probe scores: `protossm_adapted.pt` (30ep fixed, 27s)
+
+**Checkpoints**: `perch_adapter.pt` (6.8MB) + `protossm_adapted.pt` (20MB) in `birdclef2026-protossm-v3` v14
+
+**Infrastructure changes** (merged to main):
+- `train_perch_adapter.py` — standalone adapter training
+- `precompute_probe_scores.py --emb-file --output-suffix` — adapted probe computation
+- `train_protossm.py --emb-file --probe-scores-file` — Stage 2 with adapted emb
+- Inference notebook: `CFG.USE_ADAPTER` flag + Cell 11b (adapter application)
+
+**Apr 9 experiment grid**:
+| Kernel | Config | Tests |
+|--------|--------|-------|
+| v34 | adapter=True, adapted primary, no ensemble | Adapter alone |
+| v35 | adapter=False, original primary, kfold ensemble | K-fold diversity alone |
+| v36 | adapter=True, adapted primary, kfold ensemble | Full system |
 
 ---
 
