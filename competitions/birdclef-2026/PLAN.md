@@ -28,17 +28,24 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB **0.915** (kernel perch-v2-inference v16, Apr 5 — weight=0.70)
+### Current best: LB **0.915** (kernel perch-v2-inference v16, Apr 5 — weight=0.70, no mask)
 
-**Active work (Apr 7 — 4/5 submissions used, 1 slot remaining)**:
-- **Critical fix**: v23 was found to load `protossm_v3.pt` path (= protossm_v8 contents, since previous session uploaded v8 as v3.pt). So v23 = 30ep + mask + 0.70 as intended.
-- **v23 (×2, duplicate)**: kernel v23 (30ep + binary_mask + weight=0.70). Accidental duplicate. All pending.
-- **v24**: kernel v24 (30ep + binary_mask + weight=0.80). COMPLETE, submitted.
-- **v25 (soft sqrt)**: kernel v25 (30ep + sqrt(n_pos/max) weighting + weight=0.70). COMPLETE, submitted.
-- **v26 prepared**: kernel v26 (30ep + soft sqrt + weight=0.80). COMPLETE, NOT submitted.
-- **Ensemble v27**: 5-seed ensemble (seeds 0,1,2,3,4 = v3+v9+v10+v11+v12). Kernel v27 currently RUNNING. Binary mask + weight=0.70. Dataset v10 uploaded.
-- **Fast Stage 2-only retrain**: Added `--stage1-checkpoint` flag to train_protossm.py. Seeds 1-4 trained in ~3 min each (vs ~50 min with Stage 1).
-- All results PENDING (scoring env busy). 1 slot remaining for today.
+**Active work (Apr 8 — 5/5 submissions used)**:
+- **v29 (original weights + v9-v12 ensemble, no mask)**: LB **0.912** — ensemble hurts. Root cause: v9-v12 use fixed 30ep vs original's early stopping.
+- **v30 (66sc 5-seed ensemble)**: PENDING. 792 windows (66sc), original+v13-v16_66sc (all fixed 30ep), no mask.
+- **v31 (single-seed 66sc, v13_66sc)**: PENDING. Seed 42, fixed 30ep on 792 windows, no mask. Tests if +12% data helps.
+- **v32 (early-stopping ensemble)**: PENDING. Primary=protossm_original.pt (59sc, best ep33, val=0.00519) + es_s1-s4 (66sc, best ep27-28, val≈0.00591). Training-regime-matched ensemble hypothesis.
+- **Early-stopping seeds (es_s1-s4)**: Trained with `--stage1-checkpoint protossm_v3.pt --seed {1-4}` on 66sc data, NO --stage2-epochs flag (early stopping). All stopped at epoch 27-28, best val=0.00591-0.00594.
+- **Key insight (Apr 8)**: Why ensemble hurts — original v3 used early stopping (train mode, ~ep33 stop), but v9-v12 used fixed 30ep (submit mode). Different training regimes produce weights that don't average well. Es_s1-s4 aim to fix this.
+
+**Active work (Apr 7 — 5/5 submissions used)**:
+- **v23 (×2, duplicate)**: 30ep + binary_mask + weight=0.70 → LB **0.910** (-0.005 vs v16). positive_mask HURTS at 30 epochs.
+- **v24 (weight=0.80)**: binary mask + weight=0.80 → **(blank score)** — scoring failure.
+- **v25 (soft sqrt)**: sqrt(n_pos/max) weighting + weight=0.70 → **(blank score)** — scoring failure.
+- **v27 (5-seed ensemble + mask)**: seeds 0-4 (v3+v9-v12), binary mask, weight=0.70 → LB **0.910** — ensemble offers no gain when mask applied.
+- **v28 (no mask, 5-seed ensemble)**: COMPLETE, queued for tomorrow. Hypothesis: no mask should recover 0.915+.
+- **Key finding**: positive_mask = dead end at 30 epochs. At 33ep +0.001 was marginal. At 30ep it costs -0.005. The corrections for 163 no-positive species are beneficial at the optimal epoch count.
+- **Fast Stage 2-only retrain**: `--stage1-checkpoint` flag added to train_protossm.py. Seeds 1-4 (v9-v12) trained in ~3 min each. All have positive_mask=True saved in checkpoint.
 
 **Active work (Apr 6 — COMPLETE, 5/5 submissions used)**:
 - **Stage 2 v3 (60 ep)**: LB **0.908** (kernel v19). 60 epochs overfit on 708 samples. 30ep confirmed optimal.
@@ -121,10 +128,14 @@ recordings in the Pantanal wetlands, South America.
 | **Stage 2 v4 (early stopping, 48/59)** | **(blank)** | Kernel v20 — dataset not ready when kernel ran (20s delay too short). |
 | **Stage 2 v5 (33ep fixed, all 59)** | **0.909** | Kernel v21 — 33ep slightly worse than 30ep. 30ep confirmed as optimal. |
 | **Stage 2 v5 + positive_mask** | **0.910** | Kernel v22 — +0.001 from mask (33ep base). Mask helps the 163 no-positive species. |
-| **Stage 2 v6 (30ep + positive_mask)** | **pending** | Kernel v23 (×2 duplicate) — optimal 30ep base + mask. RESIDUAL_WEIGHT=0.70. |
-| **Stage 2 v6 + weight=0.80** | **pending** | Kernel v24 — binary mask + RESIDUAL_WEIGHT=0.80. |
-| **Stage 2 v7 (sqrt weighting)** | **pending** | Kernel v25 — soft sqrt(n_pos/max) correction weight. RESIDUAL_WEIGHT=0.70. |
-| **Stage 2 ensemble (5 seeds)** | **running** | Kernel v27 — average correction from seeds 0,1,2,3,4 (v3+v9-v12). Binary mask. RESIDUAL_WEIGHT=0.70. |
+| **Stage 2 v6 (30ep + positive_mask)** | **0.910** | Kernel v23 (×2 duplicate) — optimal 30ep base + mask. positive_mask HURTS at 30ep (-0.005 vs no-mask v16=0.915). |
+| **Stage 2 v6 + weight=0.80** | **(blank)** | Kernel v24 — binary mask + RESIDUAL_WEIGHT=0.80. Scoring failure. |
+| **Stage 2 v7 (sqrt weighting)** | **(blank)** | Kernel v25 — soft sqrt(n_pos/max) correction weight. RESIDUAL_WEIGHT=0.70. Scoring failure. |
+| **Stage 2 ensemble (5 seeds, mask)** | **0.910** | Kernel v27 — average correction from seeds 0,1,2,3,4 (v3+v9-v12). Binary mask. RESIDUAL_WEIGHT=0.70. Ensemble no benefit when mask applied. |
+| **Stage 2 ensemble (5 seeds, NO mask)** | **0.912** | Kernel v29 (v28 config) — correct original weights (first_w=-0.007645) + v9-v12 (fixed 30ep seeds). No mask. Ensemble hurts vs single seed. |
+| **66sc 5-seed ensemble (792 windows)** | **(blank)** | Kernel v30 — SCORING FAILURE. Root cause: protossm_original.pt not in 66sc dataset, fallback to legacy blend. |
+| **66sc single seed (792 windows)** | **PENDING** | Kernel v31 — v13_66sc only (seed42, fixed 30ep). Tests if +12% data helps. |
+| **Early-stopping ensemble (orig+es_s1-s4)** | **PENDING** | Kernel v32 — original (59sc, ep33) + es_s1-s4 (66sc, ep27-28). Training-regime-matched. No mask. |
 | **soundscape-v9 (pseudo-label pretraining)** | **DEAD END** | sc_cmap 0.65–0.69 vs v7 0.976 — regression regardless of epochs/threshold |
 | **Blend v1 (kernel_sources approach)** | **0.912** | BUG: CNN preds from kernel_sources = all-zero (dry-run output). 0.80×perch + 0.20×0 = same ranking → same LB |
 | **Blend v2 (single kernel, 4-fold CNN)** | **TIMEOUT** | kernel v1 — 4-fold no-overlap ~44 min + Perch ~7 min = too slow in scoring env |
