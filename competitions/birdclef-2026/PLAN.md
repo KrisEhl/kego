@@ -366,8 +366,10 @@ Two research directions investigated in parallel:
 - [x] Train adapter on cluster (max 200 epochs, early stopping patience=30)
 - [x] Recompute adapted probe scores
 - [x] Retrain Stage 2 with adapted embeddings + adapted probe scores
-- [x] Upload checkpoints, push kernel v33
-- [ ] Report: LB score (pending)
+- [x] Upload checkpoints to birdclef2026-protossm-v3 (v14)
+- [x] Push kernel v33 (COMPLETE, submission pending)
+- [ ] Submit Apr 9 (daily limit hit Apr 8)
+- [ ] Report: LB score (pending Apr 9)
 
 ---
 
