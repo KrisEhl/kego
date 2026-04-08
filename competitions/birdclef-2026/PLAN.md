@@ -249,6 +249,50 @@ Key insights from Apr 4 research (3-agent deep dive — see `research-protossm.m
 
 ## Next steps (ordered by expected impact)
 
+### Research: Closing the Gap to 0.940 LB (Apr 8 — deep-dive by two subagents)
+
+**Current best: 0.915. LB leader: 0.940. Gap: -0.025.**
+
+Two research directions investigated in parallel:
+
+#### Direction A: Fine-tuning Perch Embeddings
+
+**Verdict: Direct Perch fine-tuning = ❌ NOT RECOMMENDED. Perch Embedding Adapter = ✅ viable (+0.002–0.004)**
+
+- **Full Perch fine-tune**: Catastrophic forgetting risk (70%). Perch is a TF SavedModel; PyTorch bridge adds complexity. 59 soundscapes far too small (708 windows) for 10,932-class model fine-tuning.
+- **LoRA adapters on Perch**: Medium risk (50% overfit). Still requires TF fine-tuning infrastructure not in codebase.
+- **✅ Recommended: Perch Embedding Adapter** — small PyTorch MLP (~50K params) that transforms frozen Perch embeddings: `concat(emb 1536, raw_logits 234) → 512 → 1536`. Residual design: `emb_out = emb_in + α * delta`. Frozen Perch prevents catastrophic forgetting. <2 min training on cluster. Feeds into existing LogReg probes (no re-run needed).
+  - Architecture: 2-3 layers, LayerNorm + ReLU + 0.2 dropout, train on 708 windows
+  - Expected: +0.002–0.004 LB (confidence 70%)
+  - Risk: Station-specific overfit (30%)
+
+#### Direction B: BirdCLEF 2025 Pseudo-Labels
+
+**Verdict: ❌ NOT VIABLE — wrong geography, wrong taxonomy**
+
+- BirdCLEF 2025 = Kenyan birds (East African savanna/woodland). BirdCLEF 2026 = Pantanal (South American wetland). ~10-15 species overlap max.
+- Our probes only know 53/234 Pantanal species — can't generate pseudo-labels for Kenyan species.
+- CNN pseudo-label pretraining (Step 9) already failed exactly this pattern: -0.28 sc_cmap, unrecoverable.
+- **Alternative** (if any pseudo-label approach): Apply current model OOF predictions on the 59 existing soundscapes as soft targets for Stage 2 → +0.002–0.004 expected, low risk.
+
+#### Gap Analysis: Can we reach 0.940?
+
+| Approach | Expected gain | Total (from 0.915) |
+|---|---|---|
+| K-fold ensemble (v33, Apr 9) | +0.001–0.002 | 0.916–0.917 |
+| Perch Embedding Adapter | +0.002–0.004 | 0.918–0.921 |
+| OOF pseudo-label Stage 2 augmentation | +0.002–0.004 | 0.920–0.925 |
+| Combined | +0.005–0.010 | 0.920–0.925 |
+
+**Conclusion**: Best realistic ceiling with current architecture ~0.920–0.925. To reach 0.940 requires something not yet identified — likely a fundamentally better base model or much more labeled data. The 0.025 gap is real and will not close with incremental improvements.
+
+**Recommended plan**:
+1. Submit K-fold ensemble (v33) Apr 9 — low risk, ready
+2. Implement Perch Embedding Adapter — highest confidence new direction
+3. Try OOF pseudo-label augmentation for Stage 2 — low risk, reuses existing infrastructure
+
+---
+
 ### ❌ Step 15 — Cross-species pre-training on BirdCLEF 2021-2024 — DEAD END (Apr 3)
 
 **Expected: +0.010–0.030 LB | Requires pre-training + fine-tuning | High priority**
