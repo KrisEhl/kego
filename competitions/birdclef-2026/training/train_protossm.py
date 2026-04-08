@@ -1252,7 +1252,8 @@ def main() -> None:
             )
         else:
             # Early stopping mode: hold out 20% of soundscapes as validation.
-            rng_split = np.random.default_rng(42)
+            # Use args.seed so different seeds get different train/val splits (K-fold diversity).
+            rng_split = np.random.default_rng(args.seed)
             n_val_files = max(1, int(len(all_batches) * RESIDUAL_V3_VAL_FRAC))
             val_file_idx = rng_split.choice(
                 len(all_batches), size=n_val_files, replace=False
