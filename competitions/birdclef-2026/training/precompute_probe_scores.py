@@ -344,7 +344,12 @@ def main() -> None:
     if args.emb_file is not None:
         emb_path = Path(args.emb_file)
         if not emb_path.is_absolute():
-            emb_path = DATA_ROOT / args.emb_file
+            # Try PERCH_META_DIR first, then DATA_ROOT
+            candidate = PERCH_META_DIR / emb_path
+            if candidate.exists():
+                emb_path = candidate
+            else:
+                emb_path = DATA_ROOT / args.emb_file
         emb_full = np.load(emb_path).astype(np.float32)
         print(f"Loaded adapted embeddings from {emb_path}: {emb_full.shape}")
     else:
