@@ -12,9 +12,16 @@ labels) so training base matches inference base.
 
 Usage:
     uv run python competitions/birdclef-2026/training/precompute_probe_scores.py
-    # Saves data/perch-meta/oof_probe_scores.npy
+    # Saves data/perch-meta/oof_probe_scores.npy and full_probe_scores.npy
+
+    # With adapted embeddings (from train_perch_adapter.py):
+    uv run python competitions/birdclef-2026/training/precompute_probe_scores.py \\
+        --emb-file data/perch-meta/full_emb_adapted.npy \\
+        --output-suffix adapted
+    # Saves data/perch-meta/oof_probe_scores_adapted.npy and full_probe_scores_adapted.npy
 """
 
+import argparse
 import os
 import re
 import sys
@@ -302,14 +309,46 @@ def build_class_features(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Precompute OOF and full probe scores from Perch embeddings"
+    )
+    parser.add_argument(
+        "--emb-file",
+        type=str,
+        default=None,
+        help=(
+            "Path to adapted embeddings .npy file (overrides emb_full from the NPZ). "
+            "Use with adapted embeddings from train_perch_adapter.py."
+        ),
+    )
+    parser.add_argument(
+        "--output-suffix",
+        type=str,
+        default=None,
+        help=(
+            "Suffix appended to output filenames. E.g. 'adapted' → "
+            "oof_probe_scores_adapted.npy / full_probe_scores_adapted.npy. "
+            "Default: no suffix (overwrites standard files)."
+        ),
+    )
+    args = parser.parse_args()
+
     print(f"Data root: {DATA_ROOT}")
 
     # -----------------------------------------------------------------------
     # Load perch cache
     # -----------------------------------------------------------------------
     npz = np.load(PERCH_META_DIR / "full_perch_arrays.npz")
-    emb_full = npz["emb_full"].astype(np.float32)  # (708, 1536)
     scores_full_raw = npz["scores_full_raw"].astype(np.float32)  # (708, 234)
+
+    if args.emb_file is not None:
+        emb_path = Path(args.emb_file)
+        if not emb_path.is_absolute():
+            emb_path = DATA_ROOT / args.emb_file
+        emb_full = np.load(emb_path).astype(np.float32)
+        print(f"Loaded adapted embeddings from {emb_path}: {emb_full.shape}")
+    else:
+        emb_full = npz["emb_full"].astype(np.float32)  # (708, 1536)
     meta_full = pd.read_parquet(PERCH_META_DIR / "full_perch_meta.parquet")
     print(f"Loaded perch cache: {emb_full.shape}, {scores_full_raw.shape}")
 
@@ -752,11 +791,12 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # Save
     # -----------------------------------------------------------------------
-    out_path = PERCH_META_DIR / "oof_probe_scores.npy"
+    suffix = f"_{args.output_suffix}" if args.output_suffix else ""
+    out_path = PERCH_META_DIR / f"oof_probe_scores{suffix}.npy"
     np.save(out_path, oof_probe)
     print(f"\nSaved: {out_path}  shape={oof_probe.shape}  dtype={oof_probe.dtype}")
 
-    full_out_path = PERCH_META_DIR / "full_probe_scores.npy"
+    full_out_path = PERCH_META_DIR / f"full_probe_scores{suffix}.npy"
     np.save(full_out_path, full_probe)
     print(f"Saved: {full_out_path}  shape={full_probe.shape}  dtype={full_probe.dtype}")
 

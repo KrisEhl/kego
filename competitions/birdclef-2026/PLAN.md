@@ -330,6 +330,43 @@ Two research directions investigated in parallel:
 
 ---
 
+### Step 24 — Perch Embedding Adapter (Apr 8-9)
+
+**Expected: +0.002–0.004 LB | Training: <5 min | Architecture: lightweight MLP adapter on frozen Perch embeddings**
+
+**Hypothesis**: Frozen Perch embeddings are optimized for 10,932 global species. A small adapter (~1.8M params) can transform them to be more discriminative for Pantanal-specific species, improving probe quality from cmAP 0.926 without catastrophic forgetting (zero-init residual → starts as identity).
+
+**Architecture**: PerchEmbeddingAdapter
+- Input: concat(emb 1536, perch_logits 234) = 1770 dims
+- 2-layer MLP: Linear(1770→512) → LayerNorm → GELU → Dropout(0.2) → Linear(512→1536) (zero-init)
+- Residual: `emb_out = emb_in + α * delta`, α≈0.1 init, learned (log_alpha parameter)
+- Training: BCE vs species labels using linear head proxy (1536→234), pos_weight_cap=5.0
+
+**Full pipeline**:
+1. `train_perch_adapter.py` → adapter checkpoint + `full_emb_adapted.npy`
+2. `precompute_probe_scores.py --emb-file full_emb_adapted.npy --output-suffix adapted`
+3. `train_protossm.py --stage1-checkpoint protossm_v3.pt --emb-file full_emb_adapted.npy --probe-scores-file full_probe_scores_adapted.npy`
+4. Upload `perch_adapter.pt` + `protossm_adapted.pt` to birdclef2026-protossm-v3 dataset
+5. Kernel v34: single-seed, adapter applied at test time
+
+**Files**:
+- `training/train_perch_adapter.py` — standalone adapter training script
+- `precompute_probe_scores.py` — modified to accept `--emb-file` and `--output-suffix`
+- `train_protossm.py` — modified to accept `--emb-file` and `--probe-scores-file`
+- Inference notebook — adapter cell inserted after cache loading (cell 11b)
+
+**Key guard**: adapter applied to BOTH training embeddings (before PCA/probes) AND test embeddings (before PCA projection). Ensures train-test consistency.
+
+**Results**: TBD (Apr 9)
+
+- [ ] Train adapter on cluster (max 200 epochs, early stopping patience=30)
+- [ ] Recompute adapted probe scores
+- [ ] Retrain Stage 2 with adapted embeddings + adapted probe scores
+- [ ] Upload checkpoints, push kernel v34
+- [ ] Report: adapter val BCE, α value, probe cmAP change, Stage 2 val loss, LB score
+
+---
+
 ### Step 16 — Perch post-processing improvements (Apr 3)
 
 **In progress** — three changes to `kaggle_perch_v2_inference.ipynb`:
