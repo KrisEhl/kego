@@ -30,6 +30,15 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB **0.915** (kernel perch-v2-inference v16, Apr 5 — weight=0.70, no mask)
 
+**Active work (Apr 9 — 3/5 submissions used, v37 RUNNING)**:
+- **v34 (adapter alone)**: LB **(blank)** — scoring failure or still pending
+- **v35 (kfold ensemble, no adapter)**: LB **0.912** — still worse than single seed. Root cause: kfold seeds trained on 66sc (792 windows) but inference uses 59sc probe scores → training-inference mismatch
+- **v36 (adapter + kfold ensemble)**: LB **0.910** — adapter hurts on top of misaligned seeds
+- **Root cause confirmed**: All previous ensemble seeds used 66sc training data (792 windows) but inference uses 59sc probe scores (708 windows) from jaejohn/perch-meta. Training-inference mismatch = -0.003 penalty.
+- **Fix**: New 59sc seeds (59sc_s1-s4). Stage2-only retrain from protossm_v3.pt Stage1 with `full_perch_arrays_59.npz` + `full_probe_scores__59sc.npy` (cmAP 0.9261). Epoch 30 losses: s1=0.00315, s2=0.00310. Uploaded to `birdclef2026-protossm-v3`.
+- **v37 (original primary + 59sc_s1-s4 ensemble, no adapter)**: RUNNING. This is the properly-aligned ensemble test.
+- **Infrastructure fixes**: Added `--npz-file` flag to `train_protossm.py` and `precompute_probe_scores.py`. OOF probe path now derived from probe_scores_file (no hardcoded 66sc mismatch).
+
 **Active work (Apr 8 — 5/5 submissions used)**:
 - **v29 (original weights + v9-v12 ensemble, no mask)**: LB **0.912** — ensemble hurts. Root cause: v9-v12 use fixed 30ep vs original's early stopping.
 - **v30 (66sc 5-seed ensemble)**: PENDING. 792 windows (66sc), original+v13-v16_66sc (all fixed 30ep), no mask.
@@ -317,11 +326,12 @@ Two research directions investigated in parallel:
 - Inference notebook: `CFG.USE_ADAPTER` flag + Cell 11b (adapter application)
 
 **Apr 9 experiment grid**:
-| Kernel | Config | Tests |
-|--------|--------|-------|
-| v34 | adapter=True, adapted primary, no ensemble | Adapter alone |
-| v35 | adapter=False, original primary, kfold ensemble | K-fold diversity alone |
-| v36 | adapter=True, adapted primary, kfold ensemble | Full system |
+| Kernel | Config | Result | Notes |
+|--------|--------|--------|-------|
+| v34 | adapter=True, adapted primary, no ensemble | (blank) | Scoring failure |
+| v35 | adapter=False, original primary, kfold ensemble (66sc) | 0.912 | 66sc mismatch hurts |
+| v36 | adapter=True, adapted primary, kfold ensemble (66sc) | 0.910 | Adapter + mismatch = worst |
+| v37 | adapter=False, original primary, 59sc_s1-s4 ensemble | RUNNING | Properly-aligned ensemble |
 
 ---
 
