@@ -207,7 +207,9 @@ def load_data(
     # full = in-sample probes (trained on all 708 windows) → matches inference-time probe quality
     # oof  = OOF probes (train mode diagnostic only; weaker due to small per-fold training sets)
     full_probe_path = PERCH_META_DIR / probe_scores_file
-    oof_probe_path = PERCH_META_DIR / "oof_probe_scores.npy"
+    oof_probe_path = PERCH_META_DIR / probe_scores_file.replace(
+        "full_probe_scores", "oof_probe_scores"
+    )
     if full_probe_path.exists():
         probe_scores_full = np.load(full_probe_path).astype(np.float32)
         assert probe_scores_full.shape == scores.shape
