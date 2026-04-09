@@ -331,6 +331,16 @@ def main() -> None:
             "Default: no suffix (overwrites standard files)."
         ),
     )
+    parser.add_argument(
+        "--npz-file",
+        type=str,
+        default="full_perch_arrays.npz",
+        help=(
+            "Filename (in PERCH_META_DIR) of the Perch cache NPZ to load. "
+            "Default: 'full_perch_arrays.npz'. "
+            "Use 'full_perch_arrays_59.npz' to compute probe scores for the 59-soundscape set."
+        ),
+    )
     args = parser.parse_args()
 
     print(f"Data root: {DATA_ROOT}")
@@ -338,8 +348,8 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # Load perch cache
     # -----------------------------------------------------------------------
-    npz = np.load(PERCH_META_DIR / "full_perch_arrays.npz")
-    scores_full_raw = npz["scores_full_raw"].astype(np.float32)  # (708, 234)
+    npz = np.load(PERCH_META_DIR / args.npz_file)
+    scores_full_raw = npz["scores_full_raw"].astype(np.float32)
 
     if args.emb_file is not None:
         emb_path = Path(args.emb_file)
@@ -353,8 +363,11 @@ def main() -> None:
         emb_full = np.load(emb_path).astype(np.float32)
         print(f"Loaded adapted embeddings from {emb_path}: {emb_full.shape}")
     else:
-        emb_full = npz["emb_full"].astype(np.float32)  # (708, 1536)
-    meta_full = pd.read_parquet(PERCH_META_DIR / "full_perch_meta.parquet")
+        emb_full = npz["emb_full"].astype(np.float32)
+    meta_file = args.npz_file.replace("full_perch_arrays", "full_perch_meta").replace(
+        ".npz", ".parquet"
+    )
+    meta_full = pd.read_parquet(PERCH_META_DIR / meta_file)
     print(f"Loaded perch cache: {emb_full.shape}, {scores_full_raw.shape}")
 
     # -----------------------------------------------------------------------

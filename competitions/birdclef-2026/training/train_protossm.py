@@ -110,6 +110,7 @@ def load_data(
     data_root: Path,
     emb_file: str | None = None,
     probe_scores_file: str = "full_probe_scores.npy",
+    npz_file: str = "full_perch_arrays.npz",
 ) -> dict:
     """Load Perch embeddings, logits, labels, and metadata.
 
@@ -135,8 +136,8 @@ def load_data(
             taxonomy:   DataFrame   -- (234, 5)
     """
     # Load Perch cache
-    npz = np.load(PERCH_META_DIR / "full_perch_arrays.npz")
-    scores = npz["scores_full_raw"].astype(np.float32)  # (708, 234)
+    npz = np.load(PERCH_META_DIR / npz_file)
+    scores = npz["scores_full_raw"].astype(np.float32)
 
     if emb_file is not None:
         emb_path = Path(emb_file)
@@ -152,7 +153,10 @@ def load_data(
     else:
         emb = npz["emb_full"].astype(np.float32)  # (708, 1536)
 
-    meta = pd.read_parquet(PERCH_META_DIR / "full_perch_meta.parquet")
+    meta_file = npz_file.replace("full_perch_arrays", "full_perch_meta").replace(
+        ".npz", ".parquet"
+    )
+    meta = pd.read_parquet(PERCH_META_DIR / meta_file)
     meta["window_sec"] = meta["row_id"].str.extract(r"_(\d+)$").astype(int)
 
     assert len(meta) == len(emb), f"Meta rows ({len(meta)}) != NPZ rows ({len(emb)})"
@@ -1125,6 +1129,15 @@ def main() -> None:
             "Use 'full_probe_scores_adapted.npy' when training with adapted embeddings."
         ),
     )
+    parser.add_argument(
+        "--npz-file",
+        default="full_perch_arrays.npz",
+        help=(
+            "Filename (in PERCH_META_DIR) of the Perch cache NPZ to load. "
+            "Default: 'full_perch_arrays.npz'. "
+            "Use 'full_perch_arrays_59.npz' to train on the original 59-soundscape set."
+        ),
+    )
     args = parser.parse_args()
 
     if args.data_dir:
@@ -1142,7 +1155,10 @@ def main() -> None:
     # -----------------------------------------------------------------------
     print("\n--- Loading data ---")
     data = load_data(
-        DATA_ROOT, emb_file=args.emb_file, probe_scores_file=args.probe_scores_file
+        DATA_ROOT,
+        emb_file=args.emb_file,
+        probe_scores_file=args.probe_scores_file,
+        npz_file=args.npz_file,
     )
     emb = data["emb"]  # (708, 1536)
     logits = data["logits"]  # (708, 234) raw Perch logits — used as ProtoSSM input
