@@ -84,14 +84,17 @@ def run_eval(
     # Load data
     # -------------------------------------------------------------------------
     print("\nLoading data...")
-    probe_scores_file = ckpt.get("config", {}).get(
-        "probe_scores_file", "full_probe_scores.npy"
-    )
-    data = load_data(
-        DATA_ROOT,
-        npz_file=npz_file or "full_perch_arrays.npz",
-        probe_scores_file=probe_scores_file,
-    )
+    eval_npz = npz_file or "full_perch_arrays.npz"
+    # Probe scores file must match the NPZ being evaluated.
+    # 59sc NPZ → use checkpoint's probe_scores_file (trained on 59sc).
+    # 66sc NPZ (default) → always use full_probe_scores.npy (792 rows).
+    if npz_file is not None and "59" in npz_file:
+        probe_scores_file = ckpt.get("config", {}).get(
+            "probe_scores_file", "full_probe_scores.npy"
+        )
+    else:
+        probe_scores_file = "full_probe_scores.npy"
+    data = load_data(DATA_ROOT, npz_file=eval_npz, probe_scores_file=probe_scores_file)
     emb = data["emb"]
     logits = data["logits"]  # (708, 234) Perch logits
     labels = data["labels"]  # (708, 234)
