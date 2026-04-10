@@ -1536,9 +1536,12 @@ def main() -> None:
             )
 
         # Stage 3 (optional): ResidualSSMv3 second pass on Stage 2 residuals.
-        # Input to Stage 3: concat(emb, sigmoid(stage2_base + rw * stage2_correction))
-        # Loss:             BCE(stage3_base + correction2, labels)
-        # where stage3_base = stage2_base + rw * stage2_corrections (in-sample)
+        # Key design: Stage 3 base = perch_logits + rw * stage2_corrections.
+        # This matches the inference pipeline exactly:
+        #   inference: final_scores = perch_logits + rw*correction2 + w3*correction3
+        #   training:  BCE(perch_logits + rw*stage2_corrections + correction3, labels)
+        # Using perch_logits (not probe_scores) removes the training/inference mismatch
+        # that Stage 2 has. Stage 3 learns to correct FROM the same base seen at inference.
         residual_ssm_v3b = None
         if getattr(args, "stage3_epochs", None) is not None:
             fixed_ep3 = args.stage3_epochs
@@ -1560,8 +1563,9 @@ def main() -> None:
                     corr = residual_ssm(emb_t, proto_p)
                     stage2_corrections[row_idx] = corr.numpy()
 
-            # Stage 3 base: advance the logit baseline by the Stage 2 correction
-            stage3_base_logits = stage2_base_logits + rw * stage2_corrections
+            # Stage 3 base: perch_logits + rw * stage2_corrections
+            # Using perch_logits (not probe_scores) matches inference exactly.
+            stage3_base_logits = logits + rw * stage2_corrections
             stage3_proto_probs = 1.0 / (1.0 + np.exp(-stage3_base_logits))
             print(
                 f"  Stage 3 base logits: mean={stage3_base_logits.mean():.4f}, "
