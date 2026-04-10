@@ -869,6 +869,94 @@ def train_model(
 
 
 # ---------------------------------------------------------------------------
+# XC augmentation for Stage 2
+# ---------------------------------------------------------------------------
+
+XC_LOSS_WEIGHT = 0.30  # weight for XC clip loss relative to soundscape loss
+XC_BATCHES_PER_SPECIES = 4  # pseudo-batches of T=12 clips per species
+XC_BATCH_SIZE = 12  # windows per XC pseudo-batch
+
+
+def build_xc_batches(
+    xc_cache_path: Path,
+    proto_model: "ProtoSSM",
+    species_list: list[str],
+    n_batches: int = XC_BATCHES_PER_SPECIES,
+    batch_size: int = XC_BATCH_SIZE,
+    seed: int = 42,
+) -> list[tuple]:
+    """Build XC training batches for Stage 2 augmentation.
+
+    Loads XC clip embeddings from perch_train_cache_v2.npz, groups clips by species,
+    creates pseudo-batches of T=batch_size clips, and runs Stage 1 to get proto_probs.
+
+    Returns list of (emb_T, comp_logits_T, proto_probs_T, labels_T) tensors.
+    Each tensor shape: (T, dim).
+    """
+    import scipy.special as sp  # noqa: PLC0415
+
+    print(f"Loading XC cache from {xc_cache_path}...", flush=True)
+    xc = np.load(xc_cache_path)
+    xc_emb = xc["embeddings"].astype(np.float32)  # (N, 1536)
+    xc_comp = xc["comp_probs"].astype(np.float32)  # (N, 234) probabilities
+    xc_labels = xc["labels"].astype(np.float32)  # (N, 234)
+    xc_species = xc["species"].tolist()  # (234,) list of species names
+
+    # Align species order with our competition species_list
+    if xc_species != species_list:
+        sp_idx = [xc_species.index(s) if s in xc_species else -1 for s in species_list]
+        xc_comp_aligned = np.zeros((len(xc_comp), len(species_list)), dtype=np.float32)
+        xc_labels_aligned = np.zeros_like(xc_comp_aligned)
+        for our_i, their_i in enumerate(sp_idx):
+            if their_i >= 0:
+                xc_comp_aligned[:, our_i] = xc_comp[:, their_i]
+                xc_labels_aligned[:, our_i] = xc_labels[:, their_i]
+        xc_comp = xc_comp_aligned
+        xc_labels = xc_labels_aligned
+
+    # Convert comp_probs to logit space (clip to avoid inf)
+    xc_comp_logits = sp.logit(np.clip(xc_comp, 1e-6, 1 - 1e-6))
+
+    # Group clip indices by primary species
+    species_clips: dict[int, list[int]] = {}
+    for i in range(len(xc_labels)):
+        pos = np.where(xc_labels[i] > 0.5)[0]
+        if len(pos) > 0:
+            sp_i = int(pos[0])  # primary label index
+            species_clips.setdefault(sp_i, []).append(i)
+
+    rng = np.random.default_rng(seed)
+    proto_model.eval()
+    dummy_site = torch.tensor(0, dtype=torch.long)
+    dummy_hour = torch.tensor(12, dtype=torch.long)
+
+    batches = []
+    for sp_i, clip_idxs in species_clips.items():
+        if len(clip_idxs) < batch_size:
+            continue  # skip species with too few clips
+        for _ in range(n_batches):
+            chosen = rng.choice(clip_idxs, size=batch_size, replace=False)
+            emb_t = torch.tensor(xc_emb[chosen], dtype=torch.float32)
+            logits_t = torch.tensor(xc_comp_logits[chosen], dtype=torch.float32)
+            labels_t = torch.tensor(xc_labels[chosen], dtype=torch.float32)
+
+            # Run Stage 1 to get proto_probs (T=batch_size single-clip sequence)
+            with torch.no_grad():
+                out_logits, _ = proto_model(emb_t, logits_t, dummy_site, dummy_hour)
+                proto_p = torch.sigmoid(out_logits)
+
+            batches.append((emb_t, logits_t, proto_p, labels_t))
+
+    rng.shuffle(batches)
+    print(
+        f"Built {len(batches)} XC batches from {len(species_clips)} species "
+        f"({n_batches} batches × {batch_size} clips each)",
+        flush=True,
+    )
+    return batches
+
+
+# ---------------------------------------------------------------------------
 # Stage 2: ResidualSSMv3 training
 # ---------------------------------------------------------------------------
 
@@ -885,6 +973,8 @@ def train_residual_ssm_v3(
     val_batches: list[dict] | None = None,
     patience: int = RESIDUAL_V3_PATIENCE,
     verbose: bool = True,
+    xc_batches: list[tuple] | None = None,
+    xc_loss_weight: float = XC_LOSS_WEIGHT,
 ) -> ResidualSSMv3:
     """Train ResidualSSMv3 on frozen ProtoSSM predictions.
 
@@ -956,6 +1046,20 @@ def train_residual_ssm_v3(
             nn.utils.clip_grad_norm_(residual_ssm.parameters(), 1.0)
             optimizer.step()
             losses.append(loss.item())
+
+        # XC augmentation: add XC clip batches at lower weight after soundscape pass
+        if xc_batches is not None:
+            xc_idxs = rng.permutation(len(xc_batches))
+            for xi in xc_idxs:
+                emb_t, proto_l, proto_p, labels_t = xc_batches[xi]
+                correction = residual_ssm(emb_t, proto_p)
+                loss = xc_loss_weight * F.binary_cross_entropy_with_logits(
+                    proto_l + correction, labels_t
+                )
+                optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(residual_ssm.parameters(), 1.0)
+                optimizer.step()
 
         train_loss = float(np.mean(losses))
 
@@ -1140,6 +1244,15 @@ def main() -> None:
             "Use 'full_perch_arrays_59.npz' to train on the original 59-soundscape set."
         ),
     )
+    parser.add_argument(
+        "--xc-cache",
+        default=None,
+        help=(
+            "Path to XC training clip Perch cache NPZ (e.g. perch_train_cache_v2.npz). "
+            "If provided, XC clips are used as Stage 2 augmentation at XC_LOSS_WEIGHT=0.30. "
+            "Expected keys: embeddings (N,1536), comp_probs (N,234), labels (N,234), species (234,)."
+        ),
+    )
     args = parser.parse_args()
 
     if args.data_dir:
@@ -1296,6 +1409,16 @@ def main() -> None:
 
         residual_ssm = ResidualSSMv3()
 
+        # Build XC augmentation batches if --xc-cache provided
+        xc_batches = None
+        if args.xc_cache is not None:
+            xc_cache_path = Path(args.xc_cache)
+            if not xc_cache_path.is_absolute():
+                xc_cache_path = COMPETITION_DATA / args.xc_cache
+            xc_batches = build_xc_batches(
+                xc_cache_path, model, species_list, seed=args.seed
+            )
+
         if args.stage2_epochs is not None:
             # Fixed-epoch mode: use all 59 soundscapes, no val split.
             # Use after early stopping reveals the optimal epoch count.
@@ -1314,6 +1437,7 @@ def main() -> None:
                 file_to_rows=file_to_rows,
                 epochs=fixed_ep,
                 val_batches=None,
+                xc_batches=xc_batches,
                 verbose=True,
             )
         else:
@@ -1350,6 +1474,7 @@ def main() -> None:
                 epochs=RESIDUAL_V3_MAX_EPOCHS,
                 val_batches=stage2_val_batches,
                 patience=RESIDUAL_V3_PATIENCE,
+                xc_batches=xc_batches,
                 verbose=True,
             )
 
