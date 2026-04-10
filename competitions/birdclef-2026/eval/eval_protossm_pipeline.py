@@ -38,7 +38,10 @@ DATA_ROOT = Path(os.environ.get("KEGO_PATH_DATA", "data"))
 
 
 def run_eval(
-    checkpoint_path: Path, residual_weight: float, stage3_weight: float
+    checkpoint_path: Path,
+    residual_weight: float,
+    stage3_weight: float,
+    npz_file: str | None = None,
 ) -> None:
     print(f"Checkpoint  : {checkpoint_path}")
     print(f"Stage 2 w   : {residual_weight}")
@@ -81,8 +84,8 @@ def run_eval(
     # Load data
     # -------------------------------------------------------------------------
     print("\nLoading data...")
-    data = load_data(DATA_ROOT)
-    emb = data["emb"]  # (708, 1536)
+    data = load_data(DATA_ROOT, npz_file=npz_file)
+    emb = data["emb"]
     logits = data["logits"]  # (708, 234) Perch logits
     labels = data["labels"]  # (708, 234)
     sites = data["sites"]
@@ -220,6 +223,12 @@ def main() -> None:
         help="Weight for Stage 3 ResidualSSMv3b correction (default: 0.70)",
     )
     parser.add_argument(
+        "--npz-file",
+        default=None,
+        help="NPZ file to load (default: full_perch_arrays.npz = 66sc). "
+        "Use 'full_perch_arrays_59.npz' to evaluate on 59sc only.",
+    )
+    parser.add_argument(
         "--data-dir",
         default=None,
         help="Override KEGO_PATH_DATA",
@@ -237,7 +246,7 @@ def main() -> None:
         print(f"ERROR: checkpoint not found: {checkpoint_path}")
         sys.exit(1)
 
-    run_eval(checkpoint_path, args.residual_weight, args.stage3_weight)
+    run_eval(checkpoint_path, args.residual_weight, args.stage3_weight, args.npz_file)
 
 
 if __name__ == "__main__":
