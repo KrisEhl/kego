@@ -975,6 +975,7 @@ def train_residual_ssm_v3(
     verbose: bool = True,
     xc_batches: list[tuple] | None = None,
     xc_loss_weight: float = XC_LOSS_WEIGHT,
+    noise_std: float = 0.0,
 ) -> ResidualSSMv3:
     """Train ResidualSSMv3 on frozen ProtoSSM predictions.
 
@@ -1033,6 +1034,10 @@ def train_residual_ssm_v3(
                 proto_probs[row_idx], dtype=torch.float32
             )  # (T, 234)
             labels_t = torch.tensor(labels[row_idx], dtype=torch.float32)  # (T, 234)
+
+            # Embedding noise augmentation: perturb input embeddings during training
+            if noise_std > 0.0:
+                emb_t = emb_t + torch.randn_like(emb_t) * noise_std
 
             # Input uses proto_probs (raw, non-TTA-averaged); loss uses logit space
             correction = residual_ssm(
@@ -1253,6 +1258,16 @@ def main() -> None:
             "Expected keys: embeddings (N,1536), comp_probs (N,234), labels (N,234), species (234,)."
         ),
     )
+    parser.add_argument(
+        "--noise-std",
+        type=float,
+        default=0.0,
+        help=(
+            "Std of Gaussian noise added to Perch embeddings during Stage 2 training. "
+            "0.0 = no noise (default). Typical values: 0.01-0.05. "
+            "Improves generalization by preventing memorization of specific embedding values."
+        ),
+    )
     args = parser.parse_args()
 
     if args.data_dir:
@@ -1438,6 +1453,7 @@ def main() -> None:
                 epochs=fixed_ep,
                 val_batches=None,
                 xc_batches=xc_batches,
+                noise_std=args.noise_std,
                 verbose=True,
             )
         else:
@@ -1475,6 +1491,7 @@ def main() -> None:
                 val_batches=stage2_val_batches,
                 patience=RESIDUAL_V3_PATIENCE,
                 xc_batches=xc_batches,
+                noise_std=args.noise_std,
                 verbose=True,
             )
 
