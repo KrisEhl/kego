@@ -1274,6 +1274,15 @@ def main() -> None:
             "Improves generalization by preventing memorization of specific embedding values."
         ),
     )
+    parser.add_argument(
+        "--stage2-dropout",
+        type=float,
+        default=DROPOUT_RESIDUAL,
+        help=(
+            f"Dropout rate for ResidualSSMv3 (default={DROPOUT_RESIDUAL}). "
+            "Higher values (0.30-0.50) increase regularization for the small 708-window dataset."
+        ),
+    )
     args = parser.parse_args()
 
     if args.data_dir:
@@ -1428,7 +1437,9 @@ def main() -> None:
         # BCE loss: BCE(stage2_base_logits + correction, labels)
         # stage2_base_logits matches final_scores quality at inference time
 
-        residual_ssm = ResidualSSMv3()
+        residual_ssm = ResidualSSMv3(
+            dropout=getattr(args, "stage2_dropout", DROPOUT_RESIDUAL)
+        )
 
         # Build XC augmentation batches if --xc-cache provided
         xc_batches = None
