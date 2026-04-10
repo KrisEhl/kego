@@ -78,6 +78,9 @@ RESIDUAL_V3_MAX_EPOCHS = 150  # max epochs when early stopping is enabled
 RESIDUAL_V3_PATIENCE = 15  # early stopping patience for Stage 2 val loss
 RESIDUAL_V3_VAL_FRAC = 0.20  # fraction of soundscapes held out for Stage 2 ES
 RESIDUAL_V3_LR = 3e-4
+RESIDUAL_WEIGHT_DEFAULT = (
+    0.70  # default weight applied to Stage 2 correction at inference
+)
 
 # Training — shared
 LR = 8e-4
@@ -1275,6 +1278,26 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--stage3-epochs",
+        type=int,
+        default=None,
+        help=(
+            "Fixed epoch count for Stage 3 ResidualSSMv3b (second-pass correction). "
+            "If provided, a second ResidualSSMv3 is trained on the residual of Stage 2. "
+            "Stage 3 base = stage2_base + residual_weight * stage2_corrections. "
+            "Saves residual_ssm_v3b_state_dict in checkpoint."
+        ),
+    )
+    parser.add_argument(
+        "--residual-weight",
+        type=float,
+        default=RESIDUAL_WEIGHT_DEFAULT,
+        help=(
+            f"Weight applied to Stage 2 correction when computing Stage 3 base logits "
+            f"(default={RESIDUAL_WEIGHT_DEFAULT}). Should match the inference residual weight."
+        ),
+    )
+    parser.add_argument(
         "--stage2-dropout",
         type=float,
         default=DROPOUT_RESIDUAL,
@@ -1512,6 +1535,56 @@ def main() -> None:
                 verbose=True,
             )
 
+        # Stage 3 (optional): ResidualSSMv3 second pass on Stage 2 residuals.
+        # Input to Stage 3: concat(emb, sigmoid(stage2_base + rw * stage2_correction))
+        # Loss:             BCE(stage3_base + correction2, labels)
+        # where stage3_base = stage2_base + rw * stage2_corrections (in-sample)
+        residual_ssm_v3b = None
+        if getattr(args, "stage3_epochs", None) is not None:
+            fixed_ep3 = args.stage3_epochs
+            rw = args.residual_weight
+            print(
+                f"\n--- Stage 3 — ResidualSSMv3b ({fixed_ep3} epochs, "
+                f"second-pass correction, rw={rw}) ---"
+            )
+
+            # Compute in-sample Stage 2 corrections over all training windows
+            residual_ssm.eval()
+            stage2_corrections = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
+            with torch.no_grad():
+                for fn_key, row_idx in file_to_rows.items():
+                    emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)
+                    proto_p = torch.tensor(
+                        proto_probs_train[row_idx], dtype=torch.float32
+                    )
+                    corr = residual_ssm(emb_t, proto_p)
+                    stage2_corrections[row_idx] = corr.numpy()
+
+            # Stage 3 base: advance the logit baseline by the Stage 2 correction
+            stage3_base_logits = stage2_base_logits + rw * stage2_corrections
+            stage3_proto_probs = 1.0 / (1.0 + np.exp(-stage3_base_logits))
+            print(
+                f"  Stage 3 base logits: mean={stage3_base_logits.mean():.4f}, "
+                f"stage2 correction mean_abs={np.abs(stage2_corrections).mean():.4f}"
+            )
+
+            residual_ssm_v3b = ResidualSSMv3(
+                dropout=getattr(args, "stage2_dropout", DROPOUT_RESIDUAL)
+            )
+            residual_ssm_v3b = train_residual_ssm_v3(
+                residual_ssm=residual_ssm_v3b,
+                emb=emb,
+                proto_logits=stage3_base_logits,
+                proto_probs=stage3_proto_probs,
+                labels=labels,
+                all_batches=all_batches,
+                file_to_rows=file_to_rows,
+                epochs=fixed_ep3,
+                val_batches=None,
+                noise_std=args.noise_std,
+                verbose=True,
+            )
+
         t_total = time.time() - t_start
         print(f"\nTotal time: {t_total:.1f}s ({t_total / 60:.1f}min)")
 
@@ -1524,17 +1597,21 @@ def main() -> None:
             f"Positive mask: {positive_mask.sum()} / {len(positive_mask)} species have positives"
         )
 
-        torch.save(
-            {
-                "model_state_dict": model.state_dict(),
-                "residual_ssm_state_dict": residual_ssm.state_dict(),
-                "config": config,
-                "species_names": species_list,
-                "site_to_idx": site_to_idx,
-                "positive_mask": positive_mask,
-            },
-            output_path,
-        )
+        save_dict = {
+            "model_state_dict": model.state_dict(),
+            "residual_ssm_state_dict": residual_ssm.state_dict(),
+            "config": config,
+            "species_names": species_list,
+            "site_to_idx": site_to_idx,
+            "positive_mask": positive_mask,
+        }
+        if residual_ssm_v3b is not None:
+            save_dict["residual_ssm_v3b_state_dict"] = residual_ssm_v3b.state_dict()
+            save_dict["residual_weight"] = args.residual_weight
+            print(
+                f"Stage 3 ResidualSSMv3b saved (residual_weight={args.residual_weight})"
+            )
+        torch.save(save_dict, output_path)
         print(f"Saved to {output_path}")
 
     else:

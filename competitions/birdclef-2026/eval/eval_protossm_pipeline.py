@@ -37,9 +37,12 @@ from train_protossm import (  # noqa: E402
 DATA_ROOT = Path(os.environ.get("KEGO_PATH_DATA", "data"))
 
 
-def run_eval(checkpoint_path: Path, residual_weight: float) -> None:
-    print(f"Checkpoint : {checkpoint_path}")
-    print(f"Res weight : {residual_weight}")
+def run_eval(
+    checkpoint_path: Path, residual_weight: float, stage3_weight: float
+) -> None:
+    print(f"Checkpoint  : {checkpoint_path}")
+    print(f"Stage 2 w   : {residual_weight}")
+    print(f"Stage 3 w   : {stage3_weight}")
 
     # -------------------------------------------------------------------------
     # Load checkpoint
@@ -57,10 +60,22 @@ def run_eval(checkpoint_path: Path, residual_weight: float) -> None:
     residual_ssm = ResidualSSMv3()
     if "residual_ssm_state_dict" in ckpt:
         residual_ssm.load_state_dict(ckpt["residual_ssm_state_dict"])
-        print("ResidualSSMv3 loaded from checkpoint.")
+        print("ResidualSSMv3 (Stage 2) loaded from checkpoint.")
     else:
         print("WARNING: no residual_ssm_state_dict in checkpoint — correction = 0.")
     residual_ssm.eval()
+
+    residual_ssm_v3b = None
+    if "residual_ssm_v3b_state_dict" in ckpt:
+        residual_ssm_v3b = ResidualSSMv3()
+        residual_ssm_v3b.load_state_dict(ckpt["residual_ssm_v3b_state_dict"])
+        residual_ssm_v3b.eval()
+        ckpt_rw = ckpt.get("residual_weight", residual_weight)
+        print(
+            f"ResidualSSMv3b (Stage 3) loaded (checkpoint residual_weight={ckpt_rw})."
+        )
+    else:
+        print("No Stage 3 (residual_ssm_v3b_state_dict) in checkpoint.")
 
     # -------------------------------------------------------------------------
     # Load data
@@ -99,6 +114,7 @@ def run_eval(checkpoint_path: Path, residual_weight: float) -> None:
     # -------------------------------------------------------------------------
     proto_logits_arr = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
     correction_arr = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
+    correction3_arr = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
 
     with torch.no_grad():
         for batch in all_batches:
@@ -112,15 +128,25 @@ def run_eval(checkpoint_path: Path, residual_weight: float) -> None:
             proto_probs_t = torch.sigmoid(proto_logits_t)
 
             correction_t = residual_ssm(emb_t, proto_probs_t)
-
             proto_logits_arr[row_idx] = proto_logits_t.numpy()
             correction_arr[row_idx] = correction_t.numpy()
 
+            # Stage 3: input = sigmoid(stage2_base + rw * correction)
+            if residual_ssm_v3b is not None:
+                stage3_base_t = logits_perch_t + residual_weight * correction_t
+                stage3_probs_t = torch.sigmoid(stage3_base_t)
+                correction3_t = residual_ssm_v3b(emb_t, stage3_probs_t)
+                correction3_arr[row_idx] = correction3_t.numpy()
+
     proto_probs_arr = 1.0 / (1.0 + np.exp(-proto_logits_arr))
 
-    # final = Perch logits + weight * correction → sigmoid
+    # Stage 2 pipeline: Perch + rw * correction2
     final_logits = logits + residual_weight * correction_arr
     final_probs = 1.0 / (1.0 + np.exp(-final_logits))
+
+    # Stage 3 pipeline: Stage 2 + w3 * correction3
+    final3_logits = final_logits + stage3_weight * correction3_arr
+    final3_probs = 1.0 / (1.0 + np.exp(-final3_logits))
 
     # -------------------------------------------------------------------------
     # Compute cmAP on all labeled windows
@@ -141,22 +167,35 @@ def run_eval(checkpoint_path: Path, residual_weight: float) -> None:
     print("\n--- cmAP on all labeled soundscape windows ---")
     cmAP(1.0 / (1.0 + np.exp(-logits)), "Perch logits (baseline)")
     cmAP(proto_probs_arr, "ProtoSSM probs (Stage 1 only)")
-    cmAP(final_probs, f"Perch + {residual_weight:.2f}×ResidualSSMv3 (full pipeline)")
+    cmAP(final_probs, f"Perch + {residual_weight:.2f}×ResidualSSMv3 (Stage 2)")
+    if residual_ssm_v3b is not None:
+        cmAP(final3_probs, f"Stage 2 + {stage3_weight:.2f}×ResidualSSMv3b (Stage 3)")
 
-    # Also show what different blend weights look like
-    print("\n--- Blend weight sensitivity ---")
-    for w in [0.0, 0.15, 0.25, 0.35, 0.50]:
+    # Blend weight sensitivity for Stage 2
+    print("\n--- Stage 2 blend weight sensitivity ---")
+    for w in [0.0, 0.35, 0.50, 0.60, 0.70, 0.80, 1.00]:
         p = 1.0 / (1.0 + np.exp(-(logits + w * correction_arr)))
-        cmAP(p, f"weight={w:.2f}")
+        cmAP(p, f"stage2 w={w:.2f}")
 
-    # Print correction stats
-    print("\nCorrection stats:")
-    print(f"  mean abs correction : {np.abs(correction_arr).mean():.4f}")
-    print(f"  max abs correction  : {np.abs(correction_arr).max():.4f}")
-    print(f"  Perch logits range  : {logits.min():.3f} to {logits.max():.3f}")
+    # Stage 3 blend weight sensitivity (if present)
+    if residual_ssm_v3b is not None:
+        print(
+            f"\n--- Stage 3 blend weight sensitivity (stage2_w={residual_weight:.2f}) ---"
+        )
+        for w3 in [0.0, 0.25, 0.35, 0.50, 0.70, 1.00]:
+            p = 1.0 / (1.0 + np.exp(-(final_logits + w3 * correction3_arr)))
+            cmAP(p, f"stage3 w={w3:.2f}")
+
+    # Correction stats
+    print("\nStage 2 correction stats:")
     print(
-        f"  Correction range    : {correction_arr.min():.3f} to {correction_arr.max():.3f}"
+        f"  mean abs: {np.abs(correction_arr).mean():.4f}  range: [{correction_arr.min():.3f}, {correction_arr.max():.3f}]"
     )
+    if residual_ssm_v3b is not None:
+        print("Stage 3 correction stats:")
+        print(
+            f"  mean abs: {np.abs(correction3_arr).mean():.4f}  range: [{correction3_arr.min():.3f}, {correction3_arr.max():.3f}]"
+        )
 
 
 def main() -> None:
@@ -171,8 +210,14 @@ def main() -> None:
     parser.add_argument(
         "--residual-weight",
         type=float,
-        default=0.35,
-        help="Weight for ResidualSSMv3 correction (default: 0.35)",
+        default=0.70,
+        help="Weight for Stage 2 ResidualSSMv3 correction (default: 0.70)",
+    )
+    parser.add_argument(
+        "--stage3-weight",
+        type=float,
+        default=0.70,
+        help="Weight for Stage 3 ResidualSSMv3b correction (default: 0.70)",
     )
     parser.add_argument(
         "--data-dir",
@@ -192,7 +237,7 @@ def main() -> None:
         print(f"ERROR: checkpoint not found: {checkpoint_path}")
         sys.exit(1)
 
-    run_eval(checkpoint_path, args.residual_weight)
+    run_eval(checkpoint_path, args.residual_weight, args.stage3_weight)
 
 
 if __name__ == "__main__":
