@@ -30,13 +30,99 @@ recordings in the Pantanal wetlands, South America.
 
 ### Current best: LB **0.915** (kernel perch-v2-inference v16, Apr 5 — weight=0.70, no mask)
 
-**Active work (Apr 9 — 3/5 submissions used, v37 RUNNING)**:
+**Active work (Apr 10 — 1/5 submissions used)**:
+
+Stage 3 (ResidualSSMv3 second pass) implemented and submitted.
+
+**Key finding**: Stage 3 with correct base (perch_logits + 0.70*stage2_corrections) shows massive in-sample improvement:
+
+| Checkpoint | 66sc cmAP (Stage2) | 66sc cmAP (Stage3 w=0.70) | 59sc cmAP (Stage3) |
+|---|---|---|---|
+| cosine_e30_s42 Stage3v2 | 0.3300 | **0.4367** (+0.107) | **0.4932** |
+| fresh Stage1+2+3 retrain | 0.3333 | **0.4317** (+0.098) | **0.4869** |
+| original baseline (Stage2 only) | **0.3355** | — | — |
+
+**Stage 3 architecture**:
+- Input: `concat(emb 1536, sigmoid(perch_logits + 0.70 * stage2_corrections) 234)`
+- Loss: `BCE(perch_logits + 0.70 * stage2_corrections + correction3, labels)`
+- 30 epochs fixed, same ResidualSSMv3 architecture, Stage 3 loss ~0.030 (higher than Stage 2 loss ~0.005)
+- Key design: use `perch_logits` as base (NOT probe_scores) → matches inference exactly
+
+**Why Stage 3 shows large gain**: Stage 2 corrections are large-negative (mean_abs=6), reducing false positives. Stage 3 "rescues" true positives by adding selective positive corrections (range now [-7.3, +3.6] vs Stage 2 [-10.5, +2.6]).
+
+**Submissions**: v40 (cosine Stage3v2) running. v41 (fresh Stage1+2+3) ready to push.
+
+**Previous work (Apr 10 — 0/5 submissions used — all experiments failed, no submissions)**:
+
+All hyperparameter experiments failed to beat the 0.3355 in-sample cmAP baseline (→ LB 0.915). 3 submission slots were conserved.
+
+| Experiment | In-sample cmAP | Notes |
+|---|---|---|
+| **baseline** (30ep, dropout=0.20, fixed LR) | **0.3355** | → LB 0.915 |
+| xc_aug_s42 | — | **LB 0.902** (submitted v38) — catastrophically bad |
+| noise02_e35 | 0.3345 | Gaussian noise σ=0.02, slight regularization, not enough |
+| nonoise_e35 | 0.3320 | 35ep no noise: overfit on 708 windows |
+| noise02_e40 | 0.3307 | More epochs + noise: still overfit |
+| dropout0.30 | 0.3336 | Higher dropout underfits |
+| dropout0.40 | 0.3332 | More underfitting |
+| dropout0.50 | 0.3335 | Marginal recovery but still below baseline |
+| cosine_e30 | 0.3299 | CosineAnnealingLR (T_max=30): LR→1e-6 at ep30, starves training |
+| cosine_e60 | 0.3303 | T_max=60, 60 epochs: still can't beat fixed LR |
+| s09aug_e30 | 0.3340 | Stage 2 on 66sc with 59sc-aligned probes — Stage 1 has no S09 site embedding (randomly initialized) → noisy Stage 2 |
+
+**Root cause analysis**:
+- **XC augmentation (LB 0.902)**: XC clips are isolated close-range recordings (single species) vs soundscape windows (multi-species, ambient noise). Both embedding statistics and probe score distributions differ → distribution mismatch.
+- **Hyperparameter tuning at local optimum**: 30ep / dropout=0.20 / fixed LR is already at the Pareto frontier for this 708-window dataset. All regularization either underfits (dropout↑, noise, cosine) or overfits (more epochs).
+- **s09aug blocked by Stage 1**: `protossm_v3.pt` trained on 59sc (8 sites). S09 = unknown site → Stage 1 proto_probs for S09 windows randomly initialized → Stage 2 correction training is noisy.
+
+**In-sample cmAP → LB correlation**: ~1.7× magnification: Δin-sample −0.001 → ΔLB ≈ −0.002. All experimental checkpoints below 0.3355 expected to give LB < 0.915.
+
+**Active work (Apr 11 — 1/5 submissions used)**:
+
+| Seed | In-sample cmAP | Stage 1 alone | Notes |
+|---|---|---|---|
+| baseline (59sc, s42) | 0.3355 | 0.3403 | → LB 0.915 |
+| **66sc s42** | **0.3430** | 0.3274 | Stage2 +0.0156. Best candidate. |
+| 66sc s1 | 0.3270 | 0.3459 | Stage2 HURTS (-0.0189). Stage 1 over-learned. |
+| 66sc s2 | 0.3387 | — | Above baseline but below s42. |
+| 66sc s3 | TRAINING | — | — |
+
+**v39 COMPLETE** (kernel v39): `protossm_66sc_s1_s42.pt`, weight=0.70 → LB **0.912** (-0.003 vs best 0.915). **REGRESSION**.
+
+| Seed | In-sample cmAP | Stage 1 alone | Notes |
+|---|---|---|---|
+| baseline (59sc, s42) | 0.3355 | 0.3403 | → LB 0.915 |
+| **66sc s42 30ep** | **0.3430** | 0.3274 | → LB 0.912 (-0.003!) |
+| 66sc s42 22ep (optimal) | 0.3438 | 0.3274 | Expected LB ~0.912 (not submitted) |
+| 66sc s1 | 0.3270 | 0.3459 | Stage2 HURTS (-0.0189). Dead end. |
+| 66sc s2 | 0.3387 | — | Above baseline but useless given 66sc hurts |
+| 66sc s3 | 0.3351 | — | Below baseline |
+
+**Root cause analysis (CONFIRMED DEAD END)**:
+- 66sc = 59sc + 7 S09 soundscapes
+- In-sample cmAP improvement (+0.0075) was ENTIRELY due to overfitting to S09 windows
+- S09 site characteristics do NOT generalize to test soundscapes
+- The original 59sc Stage 1 (8 sites) has better generalization to the DIVERSE test set
+- Adding S09 introduces a site-specific bias that hurts on test soundscapes
+
+**Historical pattern**: ALL 66sc experiments have hurt LB:
+- 66sc Stage 2 (Apr 8): 0.914 (-0.001)
+- 66sc kfold ensemble (Apr 9): 0.912 (-0.003)
+- 66sc full Stage 1+2 retrain (Apr 11): 0.912 (-0.003)
+→ **S09 data is categorically harmful. Never add 66sc data to training.**
+
+**Next direction (Apr 12)**:
+- The 59sc 30ep architecture appears at local optimum for current model
+- Need fundamentally different approach to improve
+- Options: (1) Post-processing improvements (rank-aware file_max^0.4, per-class thresholds); (2) Better probe quality; (3) Stage 2 with additional inputs (Perch logits)
+
+**Active work (Apr 9 — 5/5 submissions used)**:
 - **v34 (adapter alone)**: LB **(blank)** — scoring failure or still pending
 - **v35 (kfold ensemble, no adapter)**: LB **0.912** — still worse than single seed. Root cause: kfold seeds trained on 66sc (792 windows) but inference uses 59sc probe scores → training-inference mismatch
 - **v36 (adapter + kfold ensemble)**: LB **0.910** — adapter hurts on top of misaligned seeds
 - **Root cause confirmed**: All previous ensemble seeds used 66sc training data (792 windows) but inference uses 59sc probe scores (708 windows) from jaejohn/perch-meta. Training-inference mismatch = -0.003 penalty.
 - **Fix**: New 59sc seeds (59sc_s1-s4). Stage2-only retrain from protossm_v3.pt Stage1 with `full_perch_arrays_59.npz` + `full_probe_scores__59sc.npy` (cmAP 0.9261). Epoch 30 losses: s1=0.00315, s2=0.00310. Uploaded to `birdclef2026-protossm-v3`.
-- **v37 (original primary + 59sc_s1-s4 ensemble, no adapter)**: RUNNING. This is the properly-aligned ensemble test.
+- **v37 (original primary + 59sc_s1-s4 ensemble, no adapter)**: LB **0.913** — properly-aligned ensemble still hurts (0.913 vs 0.915 single). **Conclusion: ensemble with fixed-ep seeds has no diversity; single seed=42 correction is uniquely good. Ensemble approach abandoned.**
 - **Infrastructure fixes**: Added `--npz-file` flag to `train_protossm.py` and `precompute_probe_scores.py`. OOF probe path now derived from probe_scores_file (no hardcoded 66sc mismatch).
 
 **Active work (Apr 8 — 5/5 submissions used)**:
