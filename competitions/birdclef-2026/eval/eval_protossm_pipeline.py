@@ -87,7 +87,11 @@ def run_eval(
     probe_scores_file = ckpt.get("config", {}).get(
         "probe_scores_file", "full_probe_scores.npy"
     )
-    data = load_data(DATA_ROOT, npz_file=npz_file, probe_scores_file=probe_scores_file)
+    data = load_data(
+        DATA_ROOT,
+        npz_file=npz_file or "full_perch_arrays.npz",
+        probe_scores_file=probe_scores_file,
+    )
     emb = data["emb"]
     logits = data["logits"]  # (708, 234) Perch logits
     labels = data["labels"]  # (708, 234)
