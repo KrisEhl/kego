@@ -341,6 +341,17 @@ def main() -> None:
             "Use 'full_perch_arrays_59.npz' to compute probe scores for the 59-soundscape set."
         ),
     )
+    parser.add_argument(
+        "--apply-extra-npz",
+        type=str,
+        default=None,
+        help=(
+            "If provided, fit probes on --npz-file data, then ALSO apply to the extra soundscapes "
+            "in this NPZ file that are not present in --npz-file. The combined output is saved "
+            "as full_probe_scores_<npz_suffix>_extended.npy. Example use: fit on 59sc, extend to 66sc: "
+            "--npz-file full_perch_arrays_59.npz --apply-extra-npz full_perch_arrays.npz"
+        ),
+    )
     args = parser.parse_args()
 
     print(f"Data root: {DATA_ROOT}")
@@ -817,6 +828,124 @@ def main() -> None:
     full_out_path = PERCH_META_DIR / f"full_probe_scores{suffix}.npy"
     np.save(full_out_path, full_probe)
     print(f"Saved: {full_out_path}  shape={full_probe.shape}  dtype={full_probe.dtype}")
+
+    # -----------------------------------------------------------------------
+    # Optional: apply 59sc-fitted probes to extra soundscapes in a larger NPZ
+    # Output: combined probe scores (N_base + N_extra, 234)
+    # Use case: fit on 59sc, extend to 66sc for more Stage 2 training data.
+    # The extra soundscapes get OOF-quality probe scores (out-of-distribution
+    # for the 59sc-fitted probes), which matches test-time inference quality.
+    # -----------------------------------------------------------------------
+    if args.apply_extra_npz is not None:
+        print(
+            f"\n--- Applying 59sc probes to extra soundscapes in {args.apply_extra_npz} ---"
+        )
+        extra_npz_path = PERCH_META_DIR / args.apply_extra_npz
+        extra_npz = np.load(extra_npz_path)
+        extra_emb_all = extra_npz["emb_full"].astype(np.float32)
+        extra_scores_all = extra_npz["scores_full_raw"].astype(np.float32)
+        extra_meta_file = args.apply_extra_npz.replace(
+            "full_perch_arrays", "full_perch_meta"
+        ).replace(".npz", ".parquet")
+        extra_meta_all = pd.read_parquet(PERCH_META_DIR / extra_meta_file)
+        print(
+            f"  Loaded extra NPZ: {extra_emb_all.shape}, meta: {extra_meta_all.shape}"
+        )
+
+        # Identify the extra rows not present in the base NPZ
+        base_filenames = set(meta_full["filename"].tolist())
+        extra_mask = ~extra_meta_all["filename"].isin(base_filenames).values
+        n_extra = extra_mask.sum()
+        print(
+            f"  Extra soundscapes: {n_extra} windows "
+            f"({extra_meta_all[extra_mask]['filename'].nunique()} files)"
+        )
+
+        extra_emb = extra_emb_all[extra_mask]
+        extra_scores_raw = extra_scores_all[extra_mask]
+        extra_meta = extra_meta_all[extra_mask].reset_index(drop=True)
+
+        # Apply PCA fitted on base (59sc) to extra embeddings
+        extra_emb_scaled = scaler.transform(extra_emb)
+        extra_z = pca.transform(extra_emb_scaled).astype(np.float32)
+
+        # Compute prior fusion for extra rows using full_tables (fitted on base)
+        extra_base, extra_prior_arr = fuse_scores_full(
+            extra_scores_raw,
+            extra_meta["site"].to_numpy(),
+            extra_meta["hour_utc"].to_numpy(),
+            full_tables,
+            **fuse_kwargs,
+        )
+
+        # Apply per-class probe models to extra rows
+        extra_probe = extra_base.copy()
+        for ci, clf in full_probe_models.items():
+            proto_sim_extra = (
+                cosine_sim_to_prototype(extra_z, class_prototypes[ci])
+                if ci in class_prototypes
+                else None
+            )
+            fam = class_family.get(ci, "Unknown")
+            other_fam = family_idx_map.get(fam, np.array([]))
+            other_fam = other_fam[other_fam != ci]
+            fam_mean_extra = (
+                extra_base[:, other_fam].mean(axis=1) if len(other_fam) > 0 else None
+            )
+            X_extra = build_class_features(
+                extra_z,
+                raw_col=extra_scores_raw[:, ci],
+                prior_col=extra_prior_arr[:, ci],
+                base_col=extra_base[:, ci],
+                proto_sim_col=proto_sim_extra,
+                family_mean_col=fam_mean_extra,
+            )
+            pred_extra = clf.decision_function(X_extra).astype(np.float32)
+            extra_probe[:, ci] = (1.0 - PROBE_ALPHA) * extra_base[
+                :, ci
+            ] + PROBE_ALPHA * pred_extra
+
+        # Combine base (59sc) + extra in the order they appear in the larger NPZ
+        # Reorder to match the larger NPZ's row order
+        combined_probe = np.zeros((len(extra_meta_all), n_classes), dtype=np.float32)
+        base_row_map = {fn: [] for fn in base_filenames}
+        for idx, row in meta_full.iterrows():
+            base_row_map[row["filename"]].append(int(idx))
+
+        for ei, row in extra_meta_all.iterrows():
+            if not extra_mask[ei]:
+                # Base row: find matching row in full_probe
+                fn = row["filename"]
+                ws = row["row_id"].split("_")[-1]
+                for base_idx in base_row_map.get(fn, []):
+                    if meta_full.iloc[base_idx]["row_id"].split("_")[-1] == ws:
+                        combined_probe[ei] = full_probe[base_idx]
+                        break
+            else:
+                # Extra row: use extra_probe (need to find index in extra_probe)
+                extra_idx = (extra_meta["row_id"] == row["row_id"]).values.argmax()
+                combined_probe[ei] = extra_probe[extra_idx]
+
+        print(f"  Combined probe scores shape: {combined_probe.shape}")
+        # Derive suffix from the extra NPZ filename
+        extra_stem = (
+            args.apply_extra_npz.replace("full_perch_arrays", "")
+            .replace(".npz", "")
+            .strip("_")
+            or "extended"
+        )
+        base_stem = (
+            args.npz_file.replace("full_perch_arrays", "")
+            .replace(".npz", "")
+            .strip("_")
+            or "base"
+        )
+        combined_out_path = (
+            PERCH_META_DIR
+            / f"full_probe_scores{suffix}_{base_stem}_probes_{extra_stem}_data.npy"
+        )
+        np.save(combined_out_path, combined_probe)
+        print(f"Saved combined: {combined_out_path}  shape={combined_probe.shape}")
 
 
 if __name__ == "__main__":
