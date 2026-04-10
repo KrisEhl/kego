@@ -1010,6 +1010,11 @@ def train_residual_ssm_v3(
     optimizer = torch.optim.AdamW(
         residual_ssm.parameters(), lr=RESIDUAL_V3_LR, weight_decay=1e-4
     )
+    # Cosine annealing scheduler: LR decays from RESIDUAL_V3_LR to 1e-6 over all epochs.
+    # Helps find sharper minima without fixed-LR oscillation in later epochs.
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs, eta_min=1e-6
+    )
     rng = np.random.default_rng(42)
     n_files = len(all_batches)
 
@@ -1067,6 +1072,7 @@ def train_residual_ssm_v3(
                 optimizer.step()
 
         train_loss = float(np.mean(losses))
+        scheduler.step()
 
         if val_batches is not None:
             # Compute validation loss for early stopping
