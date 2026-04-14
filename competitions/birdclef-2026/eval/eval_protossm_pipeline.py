@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 from sklearn.metrics import average_precision_score
 
@@ -60,13 +61,23 @@ def run_eval(
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
-    residual_ssm = ResidualSSMv3()
+    _d_site = cfg.get("d_site", 0)
+    residual_ssm = ResidualSSMv3(d_site=_d_site)
     if "residual_ssm_state_dict" in ckpt:
         residual_ssm.load_state_dict(ckpt["residual_ssm_state_dict"])
-        print("ResidualSSMv3 (Stage 2) loaded from checkpoint.")
+        print(f"ResidualSSMv3 (Stage 2) loaded from checkpoint. d_site={_d_site}")
     else:
         print("WARNING: no residual_ssm_state_dict in checkpoint — correction = 0.")
     residual_ssm.eval()
+
+    # Site profiles (for site-aware model)
+    site_profiles_eval: dict = {}
+    if "site_profiles" in ckpt and _d_site > 0:
+        site_profiles_eval = {
+            k: torch.tensor(v, dtype=torch.float32)
+            for k, v in ckpt["site_profiles"].items()
+        }
+        print(f"Site profiles loaded: {len(site_profiles_eval)} sites")
 
     residual_ssm_v3b = None
     if "residual_ssm_v3b_state_dict" in ckpt:
@@ -140,7 +151,12 @@ def run_eval(
             proto_logits_t, _ = model(emb_t, logits_perch_t, site_t, hour_t)
             proto_probs_t = torch.sigmoid(proto_logits_t)
 
-            correction_t = residual_ssm(emb_t, proto_probs_t)
+            # Site profile lookup for site-aware model
+            _site_name = {v: k for k, v in ckpt.get("site_to_idx", {}).items()}.get(
+                batch["site_idx"]
+            )
+            _site_prof = site_profiles_eval.get(_site_name) if _site_name else None
+            correction_t = residual_ssm(emb_t, proto_probs_t, _site_prof)
             proto_logits_arr[row_idx] = proto_logits_t.numpy()
             correction_arr[row_idx] = correction_t.numpy()
 
@@ -198,6 +214,132 @@ def run_eval(
         for w3 in [0.0, 0.25, 0.35, 0.50, 0.70, 1.00]:
             p = 1.0 / (1.0 + np.exp(-(final_logits + w3 * correction3_arr)))
             cmAP(p, f"stage3 w={w3:.2f}")
+
+    # -------------------------------------------------------------------------
+    # Post-processing evaluation (mirrors inference notebook)
+    # -------------------------------------------------------------------------
+    _tax_path = DATA_ROOT / "birdclef" / "birdclef-2026" / "taxonomy.csv"
+    if _tax_path.exists():
+        taxonomy_ = pd.read_csv(_tax_path)
+        PRIMARY_LABELS = taxonomy_["primary_label"].tolist()
+        label_to_idx = {lbl: i for i, lbl in enumerate(PRIMARY_LABELS)}
+        class_name_map = taxonomy_.set_index("primary_label")["class_name"].to_dict()
+
+        active_labels = [PRIMARY_LABELS[c] for c in active_cls]
+        _TEXTURE_TAXA = {"Amphibia", "Insecta"}
+        _RARE_TAXA = {"Mammalia", "Reptilia"}
+
+        # Build archetype index arrays (only for active classes)
+        _idx_amphibia = np.array(
+            [
+                label_to_idx[c]
+                for c in active_labels
+                if class_name_map.get(c) == "Amphibia"
+            ],
+            dtype=np.int32,
+        )
+        _idx_insecta = np.array(
+            [
+                label_to_idx[c]
+                for c in active_labels
+                if class_name_map.get(c) == "Insecta"
+            ],
+            dtype=np.int32,
+        )
+        _idx_rare = np.array(
+            [
+                label_to_idx[c]
+                for c in active_labels
+                if class_name_map.get(c) in _RARE_TAXA
+            ],
+            dtype=np.int32,
+        )
+        _idx_aves = np.array(
+            [label_to_idx[c] for c in active_labels if class_name_map.get(c) == "Aves"],
+            dtype=np.int32,
+        )
+
+        n_files = len(set(filenames.tolist()))
+        N_WINDOWS = 12
+
+        def _delta_shift_smooth(arr_3d: np.ndarray, alpha: float) -> np.ndarray:
+            if alpha <= 0.0:
+                return arr_3d
+            out = arr_3d.copy()
+            neighbors = (arr_3d[:, :-2, :] + arr_3d[:, 2:, :]) * 0.5
+            out[:, 1:-1, :] += alpha * (neighbors - arr_3d[:, 1:-1, :])
+            out[:, 0, :] += alpha * (arr_3d[:, 1, :] - arr_3d[:, 0, :])
+            out[:, -1, :] += alpha * (arr_3d[:, -2, :] - arr_3d[:, -1, :])
+            return out
+
+        def apply_postproc(
+            base_logits: np.ndarray,
+            smooth_amphibia: float = 0.45,
+            smooth_insecta: float = 0.35,
+            smooth_aves: float = 0.0,
+            smooth_rare: float = 0.05,
+            rank_power: float = 0.4,
+            boost_alpha: float = 0.05,
+            boost_topk: int = 2,
+        ) -> np.ndarray:
+            n_total, n_cls = base_logits.shape
+            # Reshape to (n_files, N_WINDOWS, n_cls) — assumes rows sorted by file
+            s = base_logits.reshape(n_files, N_WINDOWS, n_cls).copy()
+            # Temporal smoothing
+            for idx_arr, alpha in [
+                (_idx_amphibia, smooth_amphibia),
+                (_idx_insecta, smooth_insecta),
+                (_idx_aves, smooth_aves),
+                (_idx_rare, smooth_rare),
+            ]:
+                if len(idx_arr) > 0 and alpha > 0.0:
+                    s[:, :, idx_arr] = _delta_shift_smooth(s[:, :, idx_arr], alpha)
+            # Sigmoid
+            probs = 1.0 / (1.0 + np.exp(-s))  # (n_files, N_WINDOWS, n_cls)
+            # Rank-aware scaling: file_max^rank_power
+            file_max = probs.max(axis=1)  # (n_files, n_cls)
+            probs = probs * np.power(file_max, rank_power)[:, np.newaxis, :]
+            # File-level confidence boost top-k
+            if boost_topk > 0 and boost_alpha > 0.0:
+                top_idx = np.argsort(file_max, axis=1)[:, -boost_topk:]
+                boost_mask = np.zeros_like(file_max)
+                for fi in range(n_files):
+                    boost_mask[fi, top_idx[fi]] = 1.0
+                probs = (
+                    probs
+                    + boost_alpha
+                    * file_max[:, np.newaxis, :]
+                    * boost_mask[:, np.newaxis, :]
+                )
+                probs = np.clip(probs, 0.0, 1.0)
+            return probs.reshape(n_total, n_cls)
+
+        print("\n--- Post-processing cmAP (v52 config: A4+A2+rank-aware) ---")
+        pp_default = apply_postproc(final_logits)
+        cmAP(pp_default, "v52 default (smooth+rank+boost_top2)")
+
+        print("\n--- Post-processing parameter sweep ---")
+        # Rank power sweep
+        for rp in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 2.0, 4.0]:
+            p = apply_postproc(final_logits, rank_power=rp)
+            cmAP(p, f"rank_power={rp:.1f}")
+        # Boost topk sweep
+        for topk in [0, 1, 2, 3, 5]:
+            p = apply_postproc(final_logits, boost_topk=topk)
+            cmAP(p, f"boost_topk={topk}")
+        # Boost alpha sweep
+        for ba in [0.0, 0.03, 0.05, 0.08, 0.12]:
+            p = apply_postproc(final_logits, boost_alpha=ba)
+            cmAP(p, f"boost_alpha={ba:.2f}")
+        # Smoothing: amphibia alpha sweep
+        for sa in [0.0, 0.20, 0.35, 0.45, 0.60]:
+            p = apply_postproc(final_logits, smooth_amphibia=sa)
+            cmAP(p, f"smooth_amphibia={sa:.2f}")
+        # No smoothing at all (rank+boost only)
+        p = apply_postproc(
+            final_logits, smooth_amphibia=0.0, smooth_insecta=0.0, smooth_rare=0.0
+        )
+        cmAP(p, "rank+boost only (no smooth)")
 
     # Correction stats
     print("\nStage 2 correction stats:")
