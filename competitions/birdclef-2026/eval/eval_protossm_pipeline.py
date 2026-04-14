@@ -61,23 +61,15 @@ def run_eval(
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
-    _d_site = cfg.get("d_site", 0)
-    residual_ssm = ResidualSSMv3(d_site=_d_site)
+    residual_ssm = ResidualSSMv3()
     if "residual_ssm_state_dict" in ckpt:
         residual_ssm.load_state_dict(ckpt["residual_ssm_state_dict"])
-        print(f"ResidualSSMv3 (Stage 2) loaded from checkpoint. d_site={_d_site}")
+        print("ResidualSSMv3 (Stage 2) loaded from checkpoint.")
     else:
         print("WARNING: no residual_ssm_state_dict in checkpoint — correction = 0.")
     residual_ssm.eval()
 
-    # Site profiles (for site-aware model)
     site_profiles_eval: dict = {}
-    if "site_profiles" in ckpt and _d_site > 0:
-        site_profiles_eval = {
-            k: torch.tensor(v, dtype=torch.float32)
-            for k, v in ckpt["site_profiles"].items()
-        }
-        print(f"Site profiles loaded: {len(site_profiles_eval)} sites")
 
     residual_ssm_v3b = None
     if "residual_ssm_v3b_state_dict" in ckpt:
@@ -151,12 +143,7 @@ def run_eval(
             proto_logits_t, _ = model(emb_t, logits_perch_t, site_t, hour_t)
             proto_probs_t = torch.sigmoid(proto_logits_t)
 
-            # Site profile lookup for site-aware model
-            _site_name = {v: k for k, v in ckpt.get("site_to_idx", {}).items()}.get(
-                batch["site_idx"]
-            )
-            _site_prof = site_profiles_eval.get(_site_name) if _site_name else None
-            correction_t = residual_ssm(emb_t, proto_probs_t, _site_prof)
+            correction_t = residual_ssm(emb_t, proto_probs_t)
             proto_logits_arr[row_idx] = proto_logits_t.numpy()
             correction_arr[row_idx] = correction_t.numpy()
 
