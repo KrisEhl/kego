@@ -522,6 +522,11 @@ def main() -> None:
             "n_pseudo_batches": len(pseudo_batches),
             "use_stage2_preds": args.use_stage2_preds,
         },
+        # Copy inference-required keys from source checkpoint
+        "site_to_idx": ckpt.get("site_to_idx", {}),
+        "species_names": ckpt.get("species_names", []),
+        "fold_model_states": ckpt.get("fold_model_states", []),
+        "oof_scores": ckpt.get("oof_scores", None),
     }
     torch.save(save_ckpt, output_path)
     print(f"Saved: {output_path}", flush=True)
