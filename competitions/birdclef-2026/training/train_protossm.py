@@ -361,15 +361,24 @@ class BidirectionalSSMBlock(nn.Module):
         return self.merge_norm(merged + residual)
 
 
+D_SITE = 64  # site context projection dimension (0 = disable site context)
+
+
 class ResidualSSMv3(nn.Module):
     """1-layer BiSSM correction module (Stage 2, trained separately from ProtoSSM).
 
-    Input: concat(emb 1536, proto_probs 234) = 1770 dims.
+    Input: concat(emb 1536, proto_probs 234[, site_ctx d_site][, hour d_hour]) dims.
     Output: correction delta (n_classes) to add (with weight 0.35) to probe scores.
     Output projection is zero-initialized so training starts as no-op.
 
     Architecture mirrors competitor approach (dingjiarun): uses full Perch embedding
     context alongside ProtoSSM softmax outputs for temporal correction.
+
+    When d_site > 0, a per-site mean embedding (1536 dims) is projected to d_site
+    and concatenated to the per-window input.
+
+    When d_hour > 0, a learned hour-of-day embedding is concatenated per window.
+    This helps sonotype species with strong temporal patterns (son10 active 3-4 AM etc.)
     """
 
     def __init__(
@@ -379,29 +388,64 @@ class ResidualSSMv3(nn.Module):
         d_model: int = D_RESIDUAL,
         d_state: int = D_STATE_RESIDUAL,
         dropout: float = DROPOUT_RESIDUAL,
+        d_site: int = 0,
+        d_hour: int = 0,
+        n_layers: int = 1,
     ):
         super().__init__()
+        self.d_site = d_site
+        self.d_hour = d_hour
+        if d_site > 0:
+            self.site_proj = nn.Linear(d_emb, d_site)
+        else:
+            self.site_proj = None
+        if d_hour > 0:
+            self.hour_embed = nn.Embedding(24, d_hour)
+        else:
+            self.hour_embed = None
         self.in_proj = nn.Sequential(
-            nn.Linear(d_emb + n_classes, d_model),
+            nn.Linear(d_emb + n_classes + d_site + d_hour, d_model),
             nn.LayerNorm(d_model),
             nn.Dropout(dropout),
         )
-        self.ssm = BidirectionalSSMBlock(d_model, d_state, dropout)
+        self.ssm_layers = nn.ModuleList(
+            [BidirectionalSSMBlock(d_model, d_state, dropout) for _ in range(n_layers)]
+        )
         self.out_proj = nn.Linear(d_model, n_classes)
         nn.init.zeros_(self.out_proj.weight)
         nn.init.zeros_(self.out_proj.bias)
 
-    def forward(self, emb: torch.Tensor, proto_probs: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        emb: torch.Tensor,
+        proto_probs: torch.Tensor,
+        site_profile: torch.Tensor | None = None,
+        hour_idx: int | None = None,
+    ) -> torch.Tensor:
         """
         Args:
-            emb:         (T, d_emb)    Perch embeddings
-            proto_probs: (T, n_classes) ProtoSSM sigmoid output
+            emb:          (T, d_emb)    Perch embeddings
+            proto_probs:  (T, n_classes) ProtoSSM sigmoid output
+            site_profile: (d_emb,) or None — per-site mean embedding
+            hour_idx:     int or None — UTC hour 0-23 for this file
 
         Returns:
             (T, n_classes) correction delta
         """
-        h = self.in_proj(torch.cat([emb, proto_probs], dim=-1))  # (T, d_model)
-        h = self.ssm(h)  # (T, d_model)
+        T = emb.shape[0]
+        parts = [emb, proto_probs]
+        if self.site_proj is not None and site_profile is not None:
+            ctx = self.site_proj(site_profile.unsqueeze(0)).expand(T, -1)  # (T, d_site)
+            parts.append(ctx)
+        if self.hour_embed is not None and hour_idx is not None:
+            h_t = torch.tensor(
+                max(0, min(23, int(hour_idx))), dtype=torch.long, device=emb.device
+            )
+            hour_ctx = self.hour_embed(h_t).unsqueeze(0).expand(T, -1)  # (T, d_hour)
+            parts.append(hour_ctx)
+        h = self.in_proj(torch.cat(parts, dim=-1))  # (T, d_model)
+        for ssm in self.ssm_layers:
+            h = ssm(h)  # (T, d_model)
         return self.out_proj(h)  # (T, n_classes)
 
 
@@ -979,6 +1023,8 @@ def train_residual_ssm_v3(
     xc_batches: list[tuple] | None = None,
     xc_loss_weight: float = XC_LOSS_WEIGHT,
     noise_std: float = 0.0,
+    site_profiles: dict[int, torch.Tensor] | None = None,
+    correction_l2: float = 0.0,
 ) -> ResidualSSMv3:
     """Train ResidualSSMv3 on frozen ProtoSSM predictions.
 
@@ -1047,12 +1093,20 @@ def train_residual_ssm_v3(
             if noise_std > 0.0:
                 emb_t = emb_t + torch.randn_like(emb_t) * noise_std
 
+            # Site profile context (if site-aware mode)
+            site_prof = None
+            if site_profiles is not None:
+                site_prof = site_profiles.get(batch["site_idx"])
+
             # Input uses proto_probs (raw, non-TTA-averaged); loss uses logit space
             correction = residual_ssm(
-                emb_t, proto_p
+                emb_t, proto_p, site_prof, hour_idx=batch["hour_idx"]
             )  # (T, 234) — logit-space correction
             # BCE loss: proto_logits + correction → labels
             loss = F.binary_cross_entropy_with_logits(proto_l + correction, labels_t)
+            # Optional L2 penalty on correction magnitude (regularize toward zero)
+            if correction_l2 > 0.0:
+                loss = loss + correction_l2 * correction.pow(2).mean()
 
             optimizer.zero_grad()
             loss.backward()
@@ -1088,7 +1142,12 @@ def train_residual_ssm_v3(
                     proto_l = torch.tensor(proto_logits[row_idx], dtype=torch.float32)
                     proto_p = torch.tensor(proto_probs[row_idx], dtype=torch.float32)
                     labels_t = torch.tensor(labels[row_idx], dtype=torch.float32)
-                    correction = residual_ssm(emb_t, proto_p)
+                    site_prof = None
+                    if site_profiles is not None:
+                        site_prof = site_profiles.get(batch["site_idx"])
+                    correction = residual_ssm(
+                        emb_t, proto_p, site_prof, hour_idx=batch["hour_idx"]
+                    )
                     val_loss = F.binary_cross_entropy_with_logits(
                         proto_l + correction, labels_t
                     )
@@ -1232,12 +1291,31 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--stage2-checkpoint",
+        default=None,
+        help=(
+            "Path to an existing checkpoint to load Stage 2 ResidualSSMv3 weights from "
+            "(skips Stage 2 training). Combined with --stage3-epochs, allows adding "
+            "Stage 3 on top of an existing Stage 1+2 checkpoint."
+        ),
+    )
+    parser.add_argument(
         "--emb-file",
         default=None,
         help=(
             "Path to adapted embeddings .npy file to use instead of emb_full from the NPZ. "
             "If relative, resolved against PERCH_META_DIR. "
             "Use after running train_perch_adapter.py (e.g. 'full_emb_adapted.npy')."
+        ),
+    )
+    parser.add_argument(
+        "--stage2-emb-file",
+        default=None,
+        help=(
+            "Path to alternative embeddings .npy for Stage 2 training only "
+            "(Stage 1 inference still uses raw emb_full from the NPZ). "
+            "If relative, resolved against PERCH_META_DIR. "
+            "Use 'coral_emb_aligned.npy' for CORAL-aligned embeddings."
         ),
     )
     parser.add_argument(
@@ -1304,6 +1382,50 @@ def main() -> None:
         help=(
             f"Dropout rate for ResidualSSMv3 (default={DROPOUT_RESIDUAL}). "
             "Higher values (0.30-0.50) increase regularization for the small 708-window dataset."
+        ),
+    )
+    parser.add_argument(
+        "--stage2-n-layers",
+        type=int,
+        default=1,
+        help="Number of BiSSM layers in ResidualSSMv3 (default=1). Competitor uses 2.",
+    )
+    parser.add_argument(
+        "--stage2-d-model",
+        type=int,
+        default=D_RESIDUAL,
+        help=(
+            f"d_model for ResidualSSMv3 (default={D_RESIDUAL}). "
+            "Try 64 to reduce params (399K→140K) for better generalization on 708 samples."
+        ),
+    )
+    parser.add_argument(
+        "--stage2-d-hour",
+        type=int,
+        default=0,
+        help=(
+            "Hour-of-day embedding dimension for ResidualSSMv3 (default=0 = disabled). "
+            "Set to 16 to add a learned 24-hour embedding to Stage2 input. "
+            "Helps sonotype species with strong temporal patterns (son10=3-4AM etc.)"
+        ),
+    )
+    parser.add_argument(
+        "--stage2-l2",
+        type=float,
+        default=0.0,
+        help=(
+            "L2 penalty on correction magnitude: loss += l2 * correction^2.mean() "
+            "(default=0.0). Try 0.01 to regularize toward zero correction."
+        ),
+    )
+    parser.add_argument(
+        "--site-profiles",
+        type=str,
+        default=None,
+        help=(
+            "Path to per_site_profiles.npz (from precompute_site_profiles.py). "
+            "If provided, enables site-aware ResidualSSMv3 (d_site=64). "
+            "Default: None (standard model, no site context)."
         ),
     )
     args = parser.parse_args()
@@ -1460,9 +1582,72 @@ def main() -> None:
         # BCE loss: BCE(stage2_base_logits + correction, labels)
         # stage2_base_logits matches final_scores quality at inference time
 
+        # Optional: CORAL-aligned embeddings for Stage 2 only (Stage 1 used raw emb above).
+        # At test inference, test embs are already in the unlabeled distribution (target domain),
+        # so no CORAL transform is needed in the Kaggle kernel.
+        emb_stage2 = emb  # default: same as Stage 1
+        if getattr(args, "stage2_emb_file", None) is not None:
+            s2_emb_path = Path(args.stage2_emb_file)
+            if not s2_emb_path.is_absolute():
+                candidate = PERCH_META_DIR / s2_emb_path
+                s2_emb_path = (
+                    candidate
+                    if candidate.exists()
+                    else DATA_ROOT / args.stage2_emb_file
+                )
+            emb_stage2 = np.load(s2_emb_path).astype(np.float32)
+            print(f"Stage 2 emb: CORAL-aligned from {s2_emb_path}: {emb_stage2.shape}")
+
+        # Load site profiles if --site-profiles provided (Track C)
+        site_profiles_dict: dict[int, torch.Tensor] | None = None
+        _d_site = 0
+        if getattr(args, "site_profiles", None) is not None:
+            _sp = np.load(args.site_profiles)
+            _sp_profiles = _sp["profiles"].astype(np.float32)  # (n_sp_sites, 1536)
+            _sp_names = list(_sp["site_names"])
+            # Build site_idx → tensor lookup (uses site_to_idx from labeled training data)
+            site_profiles_dict = {}
+            for sp_i, sp_name in enumerate(_sp_names):
+                if sp_name in site_to_idx:
+                    idx = site_to_idx[sp_name]
+                    site_profiles_dict[idx] = torch.tensor(
+                        _sp_profiles[sp_i], dtype=torch.float32
+                    )
+            # Global mean as fallback for unknown sites
+            _global_mean = torch.tensor(_sp["global_mean"].astype(np.float32))
+            # idx=0 is padding/unknown in site_to_idx
+            site_profiles_dict[0] = _global_mean
+            _d_site = D_SITE
+            print(
+                f"Site profiles loaded: {len(_sp_names)} sites, "
+                f"{len(site_profiles_dict)} matched to training site_to_idx. "
+                f"d_site={_d_site}"
+            )
+
         residual_ssm = ResidualSSMv3(
-            dropout=getattr(args, "stage2_dropout", DROPOUT_RESIDUAL)
+            dropout=getattr(args, "stage2_dropout", DROPOUT_RESIDUAL),
+            d_site=_d_site,
+            d_model=getattr(args, "stage2_d_model", D_RESIDUAL),
+            d_hour=getattr(args, "stage2_d_hour", 0),
+            n_layers=getattr(args, "stage2_n_layers", 1),
         )
+
+        # Load Stage 2 from existing checkpoint if --stage2-checkpoint provided
+        _stage2_loaded = False
+        if getattr(args, "stage2_checkpoint", None) is not None:
+            s2_ckpt = torch.load(
+                args.stage2_checkpoint, map_location="cpu", weights_only=False
+            )
+            if "residual_ssm_state_dict" in s2_ckpt:
+                residual_ssm.load_state_dict(s2_ckpt["residual_ssm_state_dict"])
+                _stage2_loaded = True
+                print(
+                    f"\n--- Stage 2 — ResidualSSMv3 loaded from {args.stage2_checkpoint} (no retraining) ---"
+                )
+            else:
+                print(
+                    "WARNING: no residual_ssm_state_dict in stage2-checkpoint — Stage 2 will be retrained."
+                )
 
         # Build XC augmentation batches if --xc-cache provided
         xc_batches = None
@@ -1474,9 +1659,8 @@ def main() -> None:
                 xc_cache_path, model, species_list, seed=args.seed
             )
 
-        if args.stage2_epochs is not None:
-            # Fixed-epoch mode: use all 59 soundscapes, no val split.
-            # Use after early stopping reveals the optimal epoch count.
+        if not _stage2_loaded and args.stage2_epochs is not None:
+            # Fixed-epoch mode: use all soundscapes, no val split.
             fixed_ep = args.stage2_epochs
             print(
                 f"\n--- Stage 2 — ResidualSSMv3 ({fixed_ep} epochs fixed, all {len(all_batches)} soundscapes, "
@@ -1484,7 +1668,7 @@ def main() -> None:
             )
             residual_ssm = train_residual_ssm_v3(
                 residual_ssm=residual_ssm,
-                emb=emb,
+                emb=emb_stage2,
                 proto_logits=stage2_base_logits,
                 proto_probs=proto_probs_train,
                 labels=labels,
@@ -1494,9 +1678,11 @@ def main() -> None:
                 val_batches=None,
                 xc_batches=xc_batches,
                 noise_std=args.noise_std,
+                site_profiles=site_profiles_dict,
+                correction_l2=getattr(args, "stage2_l2", 0.0),
                 verbose=True,
             )
-        else:
+        elif not _stage2_loaded:
             # Early stopping mode: hold out 20% of soundscapes as validation.
             # Use args.seed so different seeds get different train/val splits (K-fold diversity).
             rng_split = np.random.default_rng(args.seed)
@@ -1521,7 +1707,7 @@ def main() -> None:
             )
             residual_ssm = train_residual_ssm_v3(
                 residual_ssm=residual_ssm,
-                emb=emb,
+                emb=emb_stage2,
                 proto_logits=stage2_base_logits,
                 proto_probs=proto_probs_train,
                 labels=labels,
@@ -1532,6 +1718,8 @@ def main() -> None:
                 patience=RESIDUAL_V3_PATIENCE,
                 xc_batches=xc_batches,
                 noise_std=args.noise_std,
+                site_profiles=site_profiles_dict,
+                correction_l2=getattr(args, "stage2_l2", 0.0),
                 verbose=True,
             )
 
@@ -1554,13 +1742,17 @@ def main() -> None:
             # Compute in-sample Stage 2 corrections over all training windows
             residual_ssm.eval()
             stage2_corrections = np.zeros((len(emb), N_CLASSES), dtype=np.float32)
+            fn_to_site_idx = {b["filename"]: b["site_idx"] for b in all_batches}
             with torch.no_grad():
                 for fn_key, row_idx in file_to_rows.items():
                     emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)
                     proto_p = torch.tensor(
                         proto_probs_train[row_idx], dtype=torch.float32
                     )
-                    corr = residual_ssm(emb_t, proto_p)
+                    s_prof = None
+                    if site_profiles_dict is not None:
+                        s_prof = site_profiles_dict.get(fn_to_site_idx.get(fn_key, 0))
+                    corr = residual_ssm(emb_t, proto_p, s_prof)
                     stage2_corrections[row_idx] = corr.numpy()
 
             # Stage 3 base: perch_logits + rw * stage2_corrections
@@ -1601,6 +1793,10 @@ def main() -> None:
             f"Positive mask: {positive_mask.sum()} / {len(positive_mask)} species have positives"
         )
 
+        # Store d_site and stage2_n_layers in config so inference code knows the architecture
+        config["d_site"] = _d_site
+        config["stage2_n_layers"] = getattr(args, "stage2_n_layers", 1)
+
         save_dict = {
             "model_state_dict": model.state_dict(),
             "residual_ssm_state_dict": residual_ssm.state_dict(),
@@ -1609,6 +1805,16 @@ def main() -> None:
             "site_to_idx": site_to_idx,
             "positive_mask": positive_mask,
         }
+        # Save site profiles in checkpoint for easy inference (avoid separate file)
+        if site_profiles_dict is not None:
+            # Convert back to site_name → numpy for storage
+            _inv_site = {v: k for k, v in site_to_idx.items()}
+            _prof_dict_np = {
+                _inv_site.get(idx, f"__idx{idx}"): t.numpy()
+                for idx, t in site_profiles_dict.items()
+                if idx in _inv_site or idx == 0
+            }
+            save_dict["site_profiles"] = _prof_dict_np
         if residual_ssm_v3b is not None:
             save_dict["residual_ssm_v3b_state_dict"] = residual_ssm_v3b.state_dict()
             save_dict["residual_weight"] = args.residual_weight
@@ -1718,7 +1924,7 @@ def main() -> None:
             f"\n--- Stage 2 (OOF): ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs, base={stage2_base_name}) ---"
         )
         print(f"OOF proto logits shape: {oof_proto_logits.shape}")
-        residual_ssm_oof = ResidualSSMv3()
+        residual_ssm_oof = ResidualSSMv3(n_layers=getattr(args, "stage2_n_layers", 1))
         residual_ssm_oof = train_residual_ssm_v3(
             residual_ssm=residual_ssm_oof,
             emb=emb,
@@ -1791,7 +1997,7 @@ def main() -> None:
             model_final, all_batches
         )  # (708, 234) — ProtoSSM probs input only
         proto_probs_full = 1.0 / (1.0 + np.exp(-proto_logits_full))
-        residual_ssm_final = ResidualSSMv3()
+        residual_ssm_final = ResidualSSMv3(n_layers=getattr(args, "stage2_n_layers", 1))
         residual_ssm_final = train_residual_ssm_v3(
             residual_ssm=residual_ssm_final,
             emb=emb,
