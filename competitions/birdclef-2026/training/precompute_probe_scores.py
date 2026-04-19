@@ -32,6 +32,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GroupKFold
+from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
 DATA_ROOT = Path(os.environ.get("KEGO_PATH_DATA", "data"))
@@ -342,6 +343,13 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--probe-model",
+        type=str,
+        default="logreg",
+        choices=["logreg", "mlp"],
+        help="Probe model type: 'logreg' (default) or 'mlp' (MLPClassifier (256,128) with early stopping).",
+    )
+    parser.add_argument(
         "--apply-extra-npz",
         type=str,
         default=None,
@@ -354,7 +362,29 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    def _make_probe_clf():
+        if args.probe_model == "mlp":
+            return MLPClassifier(
+                hidden_layer_sizes=(256, 128),
+                alpha=0.01,
+                max_iter=300,
+                early_stopping=True,
+                validation_fraction=0.1,
+                random_state=42,
+            )
+        return LogisticRegression(
+            C=PROBE_C, max_iter=400, solver="liblinear", class_weight="balanced"
+        )
+
+    def _probe_score(clf, X):
+        if args.probe_model == "mlp":
+            p = clf.predict_proba(X)[:, 1].astype(np.float32)
+            p = np.clip(p, 1e-6, 1 - 1e-6)
+            return np.log(p / (1.0 - p))  # convert probability → logit
+        return clf.decision_function(X).astype(np.float32)
+
     print(f"Data root: {DATA_ROOT}")
+    print(f"Probe model: {args.probe_model}")
 
     # -----------------------------------------------------------------------
     # Load perch cache
@@ -723,11 +753,9 @@ def main() -> None:
                 family_mean_col=fam_mean_va,
             )
 
-            clf = LogisticRegression(
-                C=PROBE_C, max_iter=400, solver="liblinear", class_weight="balanced"
-            )
+            clf = _make_probe_clf()
             clf.fit(X_tr, y_tr)
-            pred = clf.decision_function(X_va).astype(np.float32)
+            pred = _probe_score(clf, X_va)
             oof_probe[va_idx, ci] = (1.0 - PROBE_ALPHA) * oof_base[
                 va_idx, ci
             ] + PROBE_ALPHA * pred
@@ -801,11 +829,9 @@ def main() -> None:
             proto_sim_col=proto_sim,
             family_mean_col=fam_mean,
         )
-        clf = LogisticRegression(
-            C=PROBE_C, max_iter=400, solver="liblinear", class_weight="balanced"
-        )
+        clf = _make_probe_clf()
         clf.fit(X, y)
-        pred = clf.decision_function(X).astype(np.float32)  # in-sample prediction
+        pred = _probe_score(clf, X)  # in-sample prediction
         full_probe[:, ci] = (1.0 - PROBE_ALPHA) * full_base[:, ci] + PROBE_ALPHA * pred
         full_probe_models[ci] = clf
 
