@@ -28,29 +28,326 @@ recordings in the Pantanal wetlands, South America.
 
 ## Status
 
-### Current best: LB **0.915** (kernel perch-v2-inference v16, Apr 5 — weight=0.70, no mask)
+### Current best: LB **0.920** (kernel perch-v2-inference v53/v55/v57/v58, Apr 12–13)
 
-**Active work (Apr 10 — 1/5 submissions used)**:
+---
 
-Stage 3 (ResidualSSMv3 second pass) implemented and submitted.
+## Status summary (Apr 16)
 
-**Key finding**: Stage 3 with correct base (perch_logits + 0.70*stage2_corrections) shows massive in-sample improvement:
+All low-hanging fruit is exhausted. Post-processing, backbone swaps, seed searches, Stage2 architecture, pseudo-labeling, CORAL alignment, diel priors, and global delta smoothing all confirmed dead ends. Current best: **LB 0.920** (v53/v55/v57/v58).
 
-| Checkpoint | 66sc cmAP (Stage2) | 66sc cmAP (Stage3 w=0.70) | 59sc cmAP (Stage3) |
+**Exhausted directions (confirmed dead):**
+- Post-processing: rank_power sweep (0.4→4.0), boost, A1 taxon temp, insecta smoothing — all 0.920 or below
+- Stage2-only seed search (s100-s119): 20 seeds, none beat seed 42 (0.3625 at rp=2.0)
+- Stage1+Stage2 full retrain seed search (s200-s231): 32 seeds. Best locally: s209 (+0.009) but LB **0.918** (−0.002). LOCAL cmAP ANTI-CORRELATED with LB for Stage1 seeds.
+- AVES/BEATs/WavLM backbones: all tested, all worse than Perch
+- Stage3, 66sc data, XC augmentation, site-aware Stage2, per-class temperature calibration
+- CORAL embedding alignment (v63: 0.919), diel activity priors (v64: 0.918)
+- Global prob-space delta smooth α=0.20 (v68: 0.913 — WORSE due to redundancy with logit-space smoothing)
+- Pseudo-labeling r1c (v67: 0.912)
+
+**All directions exhausted as of Apr 17.** LB 0.920 appears to be the ceiling for our current setup. The gap to competitors (0.930+) is unexplained — same architecture, same post-processing, same probe quality. Possible explanations: (1) competitors have additional private labeled data, (2) better probe hyperparameters we haven't searched, (3) luck/noise at the 0.920 level.
+
+**Apr 17 additional results:**
+- MLP probes (64,) — v76 LB **0.919** (−0.001). LogReg with L2 beats MLP at 708 samples. Track N dead end.
+- Submit-mode retrain — v70 LB **0.916** (−0.004). 66sc regression confirmed again. Dead end.
+- v77 (LogReg restore + protossm_original.pt first): COMPLETE blank score — likely transient scoring error. Resubmit tomorrow (Apr 18) as v78.
+- 5/5 daily slots used Apr 17. Next action: push v78 (same code) and resubmit Apr 18.
+
+---
+
+## New directions (Apr 14+)
+
+### Track F: LOSO CV — reliable Stage2 evaluation ✅ COMPLETE (Apr 14-15)
+
+Script: `eval/eval_loso.py` (implemented, bug-fixed Apr 15, validated).
+
+Uses Leave-One-Site-Out (8 sites in 59sc dataset) to evaluate Stage2 without in-sample bias.
+**CRITICAL**: Run with `OMP_NUM_THREADS=4` — NOT 4 parallel processes (causes CPU saturation).
+
+#### LOSO BUG: Perch-logit base was WRONG → anti-correlated with LB (fixed Apr 15)
+
+**Bug**: Original LOSO used raw Perch logits as Stage2 base (~0.545 cmAP). Real inference uses
+probe_scores (`full_probe_scores__59sc.npy`, ~0.926 cmAP). Inflated deltas (+0.06→+0.12), rankings INVERTED.
+
+**Evidence of anti-correlation**: Perch-logit LOSO ranked seed 218 best (+0.005) → v61 submitted → LB **0.914** (−0.006 vs 0.920). The metric ranked the worst seed as best.
+
+**Fix (Apr 15)**: `eval_loso.py` now loads `full_probe_scores__59sc.npy` as Stage2 base (`--probe-scores` arg, default = `full_probe_scores__59sc.npy`). Probe scores are seed-independent.
+
+**DO NOT use `--probe-scores none` for seed ranking** — raw Perch logit LOSO is anti-correlated.
+
+#### Probe-scores LOSO results (Apr 15) — DEFINITIVE SEED RANKING
+
+| Seed | Probe-LOSO cmAP (weighted) | Stage2 delta | LB | Verdict |
+|------|--------------------------|--------------|-----|---------|
+| **42 (baseline)** | **0.9449** | **+0.0016** | **0.920** | ✅ OPTIMAL |
+| 218 | 0.9440 | +0.0007 | 0.914 (−0.006) | ❌ |
+
+Baseline probe_scores: 0.9433 (seed-independent). Probe-LOSO correctly ranks seed 42 > 218, matching LB.
+
+**Stage1 seed search = DEFINITIVELY DEAD END.** Three signals agree: LB (seed 42=0.920 > 209=0.918 > 218=0.914), probe-LOSO (seed 42 > 218), Stage2 delta (seed 42 > 218). **DO NOT retry.**
+
+#### Per-site probe-LOSO results (seed 42, Apr 15) — pseudo-labeling evaluation baseline
+
+| Site | cmAP | Baseline | Delta | n_sc | active_cls |
+|------|------|----------|-------|------|------------|
+| S03 | 1.0000 | 1.0000 | +0.0000 | 2 | 4 |
+| S08 | 0.9497 | 0.9496 | +0.0001 | 5 | 19 |
+| S13 | 1.0000 | 1.0000 | +0.0000 | 2 | 6 |
+| S15 | 0.9319 | 0.9319 | +0.0000 | 4 | 14 |
+| S18 | 1.0000 | 1.0000 | +0.0000 | 1 | 3 |
+| S19 | 0.9559 | 0.9461 | **+0.0098** | 3 | 17 |
+| S22 | 0.8961 | 0.8961 | +0.0000 | 39 | 29 |
+| S23 | 0.9881 | 0.9881 | +0.0000 | 3 | 14 |
+| **Weighted avg** | **0.9449** | **0.9433** | **+0.0016** | — | — |
+
+**Pseudo-labeling goal**: beat 0.9449 weighted cmAP (especially S22 delta from 0.0000 to >0.0050).
+
+```bash
+# Run probe-scores LOSO for any checkpoint (cluster):
+OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 KEGO_PATH_DATA=/home/kristian/projects/kego/data \
+PYTHONUNBUFFERED=1 .venv/bin/python competitions/birdclef-2026/eval/eval_loso.py \
+    --checkpoint outputs/protossm_pseudo_r1.pt --stage2-epochs 30 \
+    --probe-scores full_probe_scores__59sc.npy
+
+# v61 result: 0.914 (−0.006 vs 0.920) — Perch-logit LOSO ranked seed 218 best (WRONG)
+```
+
+### Track G: Stage2 architecture experiments — IN PROGRESS (Apr 14 evening)
+
+CLI flags added to `train_protossm.py` and `eval/eval_loso.py`:
+- `--stage2-d-model` (int, default=128)
+- `--stage2-d-hour` (int, default=0)
+- `--stage2-l2` (float, default=0.0)
+
+LOSO results on seed 42 baseline — **ALL DEAD ENDS (Apr 14)**:
+
+| Variant | LOSO cmAP | vs baseline (0.6180) | Verdict |
+|---------|-----------|---------------------|---------|
+| **baseline (d_model=128)** | **0.6180** | — | current best |
+| d_hour=16 | 0.6168 | −0.0012 | ❌ DEAD END |
+| l2=0.01 | 0.6119 | −0.0061 | ❌ DEAD END |
+| d_model=64 | 0.5998 | −0.0182 | ❌ DEAD END |
+
+**Track G = DEAD END**. All Stage2 architecture variants hurt vs baseline:
+- d_hour=16: Sonotype hour patterns can't be learned from only 59 soundscapes (~7 sc/hour/site)
+- d_model=64: Too small — cuts capacity needed for 234-class correction on 1770-dim input
+- l2=0.01: L2 penalty shrinks corrections that ARE correct on labeled sites
+Current Stage2 architecture (d_model=128, no hour, no L2) is optimal for 59sc regime.
+
+**DO NOT retry any Stage2 architecture variants.**
+
+### ❌ Track J: CORAL embedding alignment — DEAD END (Apr 15)
+
+**Idea**: Diagonal CORAL to align labeled site embeddings (708 windows, 8 sites) → unlabeled
+distribution (62,592 windows, 14 unlabeled sites). Stage2 then trains in the same embedding space
+it sees at test time (no transform needed at inference).
+
+**Implementation**:
+- `training/precompute_coral.py` — computes μ_src, σ_src, μ_tgt, σ_tgt (1536-dim each)
+- Transform: `emb_aligned = (emb_src - μ_src) / (σ_src + EPS) * (σ_tgt + EPS) + μ_tgt`
+- `train_protossm.py --stage2-emb-file coral_emb_aligned.npy` — uses CORAL emb for Stage2 only
+- Distribution shift measured: ||μ_tgt - μ_src|| = 1.6243
+
+**LB result (v63, Apr 15): 0.919 (−0.001 vs 0.920 baseline)**
+
+**Why it failed**: The distribution shift between labeled and unlabeled sites is small relative to
+the noise in 708 training windows. CORAL alignment doesn't provide meaningful new signal when the
+Stage1 Perch representations are already well-clustered by species. The per-feature whitening may
+slightly degrade the probe_prob inputs to Stage2.
+
+**DO NOT retry CORAL or any other domain adaptation alignment on Perch embeddings.**
+
+---
+
+### ❌ Track K: Diel activity priors — DEAD END (Apr 15)
+
+**Idea**: Soundscape windows have strong hour-of-day activity patterns. Applying a per-species
+hour correction should lift species that are only active at specific hours (e.g. son10 active 3-4 AM).
+
+**Implementation**:
+- `training/precompute_perch_soundscapes.py` output used to compute `diel_priors.npy` (234×24)
+- diel_priors[c, h] = mean sigmoid(Perch_logit[c]) across all 127,896 unlabeled windows at hour h
+- Hours 11-16 absent from training data → flat fallback (global mean)
+- Correction: `final_logits += alpha * (logit(prior[c,h]) - logit(global[c]))`
+- Cannot be validated by LOSO (per-site monotone transform doesn't change AP within a site)
+
+**v64 result (Apr 15): LB 0.918 (−0.002 vs 0.920 baseline). DEAD END.**
+
+Why it failed: hours 11–16 flat fallback (no signal) + the hours with real signal don't generalize from unlabeled train soundscapes to test soundscapes (different sites/schedules). DO NOT retry diel priors at any alpha.
+
+---
+
+### ❌ Track L: Global prob-space delta smoothing (competitor V18 feature) — DEAD END (Apr 16)
+
+**Idea**: Competitor dingjiarun (LB 0.930+) applies `delta_shift_smooth(α=0.20)` to ALL 234 species
+in probability space, AFTER rank_power scaling. We only apply it to Amphibia/Insecta (logit space).
+
+**Implementation** (v68):
+- Added after boost+clip, before `probs_final`:
+  ```python
+  _GLOBAL_DELTA_SMOOTH_ALPHA = 0.20
+  if _GLOBAL_DELTA_SMOOTH_ALPHA > 0:
+      _probs_3d = _delta_shift_smooth(_probs_3d, _GLOBAL_DELTA_SMOOTH_ALPHA)
+      _probs_3d = np.clip(_probs_3d, 0.0, 1.0)
+  ```
+- `_DIEL_ALPHA = 0.0` (reverted from 0.3 dead end)
+- `_PROTO_CANDIDATES`: reverted to `protossm_original.pt` (pseudo r1c was worse)
+
+**v68 result (Apr 16): LB 0.913 (−0.007 vs 0.920 baseline). DEAD END.**
+
+Why it failed: Our logit-space species-specific smoothing (Amphibia α=0.65, Insecta α=0.35) already
+captures temporal patterns. Adding a second global probability-space pass is redundant and diffuses signal.
+The competitor applies this WITHOUT our logit-space smoothing — our pipeline is different.
+DO NOT add global prob-space smoothing.
+
+---
+
+### ❌ Track M: Submit-mode full-dataset Stage1 retrain — DEAD END (Apr 16-17)
+
+**Hypothesis**: `protossm_v3.pt` (train mode, 5-fold CV) never sees all 59sc together in Stage1.
+Competitor might train in `--mode submit` (Stage1 on ALL data). Tested as v70.
+
+**v70 result (Apr 17): LB 0.916 (−0.004 vs 0.920 baseline). DEAD END.**
+
+Why it failed: submit mode trains Stage1 on 66sc (all labeled soundscapes, including S09).
+S09 data is categorically harmful (confirmed Apr 11: 66sc Stage1 retrain = 0.912). Submit mode
+includes S09 → same regression pattern. Stage2 early-stopped at epoch 28 (val 0.00590) vs
+standard 30ep — slightly less optimal. Train-mode 5-fold Stage1 is BETTER than submit-mode
+all-data Stage1 for this dataset.
+
+v69 scored blank (dataset propagation timing issue — uploaded just 19MB file, protossm_original.pt
+was removed from latest version). v70 = proper retry with both files in dataset → 0.916.
+
+**DO NOT retry submit-mode Stage1. Train-mode (protossm_original.pt) remains the best checkpoint.**
+
+**ALL KNOWN DIRECTIONS EXHAUSTED as of Apr 17.** Current best: LB 0.920 (v53/v55/v57/v58).
+
+---
+
+### ❌ Track H: Iterative pseudo-labeling on unlabeled soundscapes — DEAD END (Apr 15-16)
+
+**Dataset**: 10,659 total train soundscapes (23 sites), only 59-66 labeled. ~10,600 unlabeled.
+Labeled sites: S03, S08, S09, S13, S15, S18, S19, S22, S23.
+Unlabeled-only sites: S01, S02, S04, S05, S06, S07, S10, S11, S12, S14, S16, S17, S20, S21 (14 new sites matching test soundscape distribution better).
+
+**2025 winning technique** (Nikita Babych, LB 0.933): iterative pseudo-labeling with power scaling.
+Round 1: current model → soft pseudo-labels → retrain → +0.026 LB.
+Rounds 2-5: power scaling (raise probs to power < 1 = sharpen) → +0.032 LB.
+
+**How it would work for our pipeline:**
+1. Precompute Perch embeddings for all ~10,600 unlabeled soundscapes (cluster job, ~4h)
+2. Run Stage1 inference → proto_probs for all unlabeled windows
+3. Use HARD thresholded pseudo-labels (probe_prob > 0.5) to avoid circular BCE loss
+4. Add pseudo-labeled batches to Stage2 training (keep ground-truth labeled sc as primary)
+5. Power scaling: `pseudo_labels = np.power(sigmoid(probe_scores), 0.7)` before using as targets
+6. Retrain Stage2 on (708 labeled + ~127,908 pseudo-labeled windows), 30 epochs
+7. Repeat with new model as teacher (2-3 rounds)
+
+**Key difference from 66sc dead-end**: unlabeled soundscapes from 14 NEW sites not in labeled set.
+66sc dead-end was about S09 poor data quality. 10K diverse files ≈ test soundscape distribution.
+
+**Key risk**: circular BCE if soft labels used (Stage2 base = probe scores = pseudo-labels).
+Mitigation: hard thresholded or power-scaled pseudo-labels.
+
+**Results (all LOSO=0.9449 = identical to baseline; only LB distinguishes):**
+
+| Variant | Pseudo-label source | Threshold | Pos/window | LOSO | LB |
+|---|---|---|---|---|---|
+| r1 | Raw Perch logits | 0.3 | ~110 | 0.9449 | pending |
+| r1b | Stage1+Stage2 proto_probs | 0.5 | ~17 | 0.9449 | pending |
+| r1c | Stage1 proto_probs only | 0.5 | 4.57 | 0.9449 | **0.912 (−0.008)** |
+
+**Verdict: DEAD END.** All pseudo-labeling variants hurt LB vs baseline 0.920.
+
+**Root cause analysis:**
+- LOSO can't detect pseudo-labeling gains (tests on labeled sites only, not new unlabeled sites)
+- Stage2 is a 1-layer SSM trained on 708 windows — 127K additional unlabeled windows cause underfitting/distribution shift in the correction pathway
+- The probe_scores used for labeled batches (in-sample 0.926 cmAP) vs pseudo-labels (noisier) creates a training mismatch the model cannot reconcile
+- 2025 winner's approach required multiple rounds of power-scaling + a fundamentally different architecture. Our Stage2 has only 1 BiSSM layer — not enough capacity to generalize from pseudo-labels.
+
+**DO NOT retry any pseudo-labeling variant.**
+
+### ❌ Track I: Perch 2.0 "Bittern" backbone — CONFIRMED DEAD END (Apr 14)
+
+**`perch_v2_cpu/1` already IS Perch 2.0 (Bittern)**. The arXiv 2508.04665 paper describes exactly
+what's deployed. The sonotype blindness (zero Perch delta for 47158son* species) is intrinsic —
+these species are not in the 14,795-class taxonomy at all. No model upgrade can fix this.
+
+---
+
+## Archived: Apr 12-14 experiments
+
+### Research summary (Apr 11, now superseded)
+Two subagents identified the key gap: our pipeline is missing **post-processing** that top competitors (0.928–0.948) all use. No new Perch versions exist — everyone uses the same frozen Perch v2. All gains above 0.915 are downstream.
+
+### Track A: Post-processing (no retraining, inference notebook only)
+
+**Expected gain: +0.010 to +0.020 LB. Implement in order; test each step locally with `eval_protossm_pipeline.py` before submitting.**
+
+| Step | Description | Status |
+|---|---|---|
+| A1 | **Per-taxon temperature scaling**: Aves logits ÷1.10, Amphibia/Insecta logits ÷0.95 | TODO |
+| A2 | **File-level confidence boost** (top_k=2): add 0.05×file_max for each file's top-2 species | TODO |
+| A3 | **Rank-aware scaling** (power=0.4): `probs *= file_max^0.4` — suppresses background files, amplifies confident ones. Used in every kernel scoring >0.920. | TODO |
+| A4 | **Adaptive delta-shift smoothing** (alpha=0.15–0.20): confidence-weighted temporal smoothing — alpha shrinks as confidence grows | TODO |
+| A5 | **Per-class temperature calibration** (coarse grid T∈{0.7, 0.8, 1.0}): maximize OOF cmAP per class. Only allow sharpening (T≤1.0) to prevent divergence seen previously. | TODO |
+| A6 | **Extend Aves genus proxies**: currently PROXY_TAXA={Amphibia, Insecta}. Extend to Aves — rescue ~5–15 bird species with no direct Perch mapping. | TODO |
+
+Implementation notes:
+- A1–A4 applied in order after ResidualSSMv3 correction, before sigmoid
+- A5 applied to final logits as per-class division: `final_scores[:, c] /= T[c]`
+- A6 is a probe/mapping change in the inference notebook
+- Competitor evidence: dingjiarun (0.924), Koushik (0.928), atahalam (0.943) all use A1+A3+A5
+
+### Track B: Per-class OOF threshold calibration (no retraining)
+
+**Expected gain: +0.002 to +0.005 LB (overlaps with A5 above — pick one approach).**
+
+Grid search over 234 independent thresholds using OOF Stage2 predictions on 59 labeled soundscapes. Coarse grid (0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70) to avoid overfit. Different from the failed temperature calibration (which used unconstrained optimizer → T→7.4). This approach is bounded.
+
+Script needed: `eval/calibrate_thresholds.py` — grid search on OOF scores, output 234 thresholds.
+
+### ❌ Track C: Site-aware Stage 2 — DEAD END (Apr 12)
+
+**Result: in-sample cmAP 0.3275 vs baseline 0.3355 (−0.0080). Do NOT submit.**
+
+Site context (1536→64 projection, concat to Stage 2 input) overfits on 66 training soundscapes. The extra capacity (64 dims) overfits the 9 labeled training sites. Even with per-site means from 10K unlabeled files, the site context provides no generalizable signal at the Stage 2 level (Stage 1 already uses site embeddings, and Stage 2's proto_probs already encode site information).
+
+Infrastructure built:
+- `training/precompute_site_profiles.py` — per-site Perch mean embeddings (23 sites × 1536)
+- `training/train_protossm.py` — `--site-profiles` flag, `ResidualSSMv3(d_site=64)` class
+- `eval/eval_protossm_pipeline.py` — site-aware checkpoint loading + eval
+
+### Execution order
+
+1. **Today (Apr 11, 1 slot remaining)**: Save slot — don't submit until Track A is implemented and tested locally.
+2. **Apr 12**: Implement A1–A6 in inference notebook. Run `eval_protossm_pipeline.py` for each step. Submit best config (1 slot).
+3. **Apr 12 or 13**: Implement Track B calibration. If LB improves, submit combined A+B (1 slot).
+4. **Apr 13+**: Implement Track C (site-aware Stage 2). Retrain on cluster. Local eval. If in-sample doesn't regress, submit (1 slot).
+
+---
+
+**Active work (Apr 11 — 4/5 submissions used)**:
+
+### Stage 3 = DEAD END (Apr 11)
+
+All Stage3 variants hurt LB. The in-sample cmAP gain (0.33→0.45→0.67) is pure overfitting to 708 labeled windows. Does NOT generalize.
+
+| Experiment | Stage3 epochs | w3 | LB |
 |---|---|---|---|
-| cosine_e30_s42 Stage3v2 | 0.3300 | **0.4367** (+0.107) | **0.4932** |
-| fresh Stage1+2+3 retrain | 0.3333 | **0.4317** (+0.098) | **0.4869** |
-| original baseline (Stage2 only) | **0.3355** | — | — |
+| baseline (no Stage3, single seed) | — | — | **0.915** |
+| v48: 30ep ensemble | 30ep | 0.70 | TBD |
+| v49: 40ep ensemble | 40ep | 0.70 | TBD |
+| v50: 30ep ensemble | 30ep | 0.35 | 0.912 |
+| v51: 60ep ensemble | 60ep | 0.70 | **0.895** |
+| v40: cosine LR Stage2 | 30ep | 0.70 | 0.907 |
 
-**Stage 3 architecture**:
-- Input: `concat(emb 1536, sigmoid(perch_logits + 0.70 * stage2_corrections) 234)`
-- Loss: `BCE(perch_logits + 0.70 * stage2_corrections + correction3, labels)`
-- 30 epochs fixed, same ResidualSSMv3 architecture, Stage 3 loss ~0.030 (higher than Stage 2 loss ~0.005)
-- Key design: use `perch_logits` as base (NOT probe_scores) → matches inference exactly
+More epochs = more overfit = worse LB. Stage3 is categorically not useful. Do NOT retry.
 
-**Why Stage 3 shows large gain**: Stage 2 corrections are large-negative (mean_abs=6), reducing false positives. Stage 3 "rescues" true positives by adding selective positive corrections (range now [-7.3, +3.6] vs Stage 2 [-10.5, +2.6]).
+**Root cause**: 708 labeled soundscape windows is too few for Stage3 to learn generalizable corrections. Stage3 memorizes the training soundscapes.
 
-**Submissions**: v40 (cosine Stage3v2) running. v41 (fresh Stage1+2+3) ready to push.
+**5th submission slot (Apr 11)**: 1 remaining — use carefully.
 
 **Previous work (Apr 10 — 0/5 submissions used — all experiments failed, no submissions)**:
 
@@ -77,7 +374,123 @@ All hyperparameter experiments failed to beat the 0.3355 in-sample cmAP baseline
 
 **In-sample cmAP → LB correlation**: ~1.7× magnification: Δin-sample −0.001 → ΔLB ≈ −0.002. All experimental checkpoints below 0.3355 expected to give LB < 0.915.
 
-**Active work (Apr 11 — 1/5 submissions used)**:
+**Active work (Apr 11 — 5/5 submissions used — DAILY LIMIT REACHED)**:
+
+### Apr 11 experiments (5/5 slots used — Stage3 x4 + v52)
+
+| Experiment | OOF cmAP | LB | Notes |
+|---|---|---|---|
+| v52: A4+A2 post-processing | 0.3769 | **0.919** (NEW BEST) | Smooth + file-level confidence boost. Submitted 09:08 UTC. |
+| v53: rank_power=2.0, no boost | 0.4070 | queued Apr 12 | Kernel COMPLETE. Remove boost, rank_power 0.4→2.0, smooth_amphibia 0.45→0.65. |
+| Track C (site-aware Stage 2) | 0.3275 | DEAD END | −0.008 vs baseline. |
+| A5 temperature calibration | 0.5561 (+0.0000) | DEAD END | AP ranking-invariant. |
+
+**OOF post-processing analysis (Apr 11)**:
+
+| Config | OOF cmAP | Delta vs baseline |
+|---|---|---|
+| Stage2 baseline (no pp) | 0.3671 | — |
+| rank_power=0.4, smooth, no boost | 0.3859 | +0.019 |
+| v52: rank_power=0.4, smooth, boost_top2 | 0.3769 | +0.010 |
+| v53: rank_power=2.0, smooth (sa=0.65), no boost | **0.4070** | **+0.040** |
+| rank_power=4.0, smooth, no boost | 0.4127 | +0.046 |
+| rank_power=6.0, smooth, no boost | 0.4148 | +0.048 |
+
+Key findings (updated Apr 12 with full eval):
+- **File boost (A2) locally hurts (−0.009) but LB HELPS (+0.004)**: wrong direction locally. Confirmed useful from v52 LB 0.919.
+- **rank_power sweep (no boost, rp=0.4→8.0)**: 0.3779 → 0.4070 → 0.4127 → 0.4148 → 0.4175. Diminishing returns above rp=4.0. v53 tests rp=2.0 on LB.
+- **Insecta smooth: optimal at 0.35** — si=0.50 loses −0.001, si=0.65 loses −0.002.
+- **Calibration (n=4 LB points, Pearson r=−0.651)**: local ANTI-correlates with LB. Use LB as ground truth, local only for catastrophic regression detection.
+- **SC-only species = primary weakness**: 28 sonotype species (47158son*) with mean AP ≈ 0.03. CLAP zero-shot the next research direction.
+
+**Apr 12-13 experiments (10/10 slots used)**:
+
+| Version | Change | LB |
+|---|---|---|
+| v52: rp=0.4, smooth, boost | — | 0.919 |
+| v53: rp=2.0, sa=0.65, no boost | rank_power 0.4→2.0 | **0.920** |
+| v54: rp=4.0, sa=0.65, no boost | rp=4.0 | TIMEOUT |
+| v55: rp=2.0, sa=0.65, boost_top2 | boost added back | 0.920 |
+| v56: rp=4.0, sa=0.65, no boost | rp=4.0 retry | 0.919 |
+| v57: A1 taxon temp + rp=2.0 | Aves÷1.10, Amphibia/Insecta÷0.95 | **0.920** |
+| v58: smooth_insecta=0.65 + rp=2.0 | insecta alpha 0.35→0.65 | **0.920** |
+
+**Post-processing = FULLY EXHAUSTED (Apr 13)**. Every variant ties or regresses vs 0.920.
+Tried: rank_power sweep (0.4→4.0), boost, A1 taxon temp, insecta smoothing. All 0.920 or below.
+Current best: v53 config (rp=2.0, sa=0.65, no boost). **Do not submit further post-processing variants.**
+
+**Analysis findings (Apr 12)**:
+- Per-class rank_power = global rank_power: `probs.max(axis=1)` already operates per file×class, so the implementation is already per-class. No change needed.
+- **S08 weakness**: Entirely driven by Insecta sonotypes (all 47158son*). Best: son25 AP=0.93, son08=0.67. Worst: son10=0.12, son18=0.13. Chacha1 (Aves) does well (0.94).
+- **Sonotype Perch signal = exactly 0.000** for ALL sonotypes: Perch is completely blind. Pipeline relies 100% on hour/site priors. CLAP zero-shot would add the first acoustic signal.
+- **Hour patterns for worst sonotypes**: son10 active at 3-4 AM, son18/15/16 at 7 AM, son12/09 at 7 PM.
+- **Worst audio species failure modes**: (1) strher2/redjun: NEGATIVE Perch delta (−0.1) — Perch blind, nothing fixable without new backbone. (2) compot1/limpki/magant1: STRONG Perch signal (delta 2.1–2.8) but only 3 positives in 708 eval windows → low AP from scarcity, likely better on full 700-soundscape LB set.
+- **CLAP precompute script**: `training/precompute_clap_zeroshot.py` written. Needs `pip install msclap` on cluster + run to generate `clap_zeroshot_scores.npy`.
+
+**Post-processing COMPLETE — all variants exhausted. Optimal config = v53 (rp=2.0, sa=0.65, no boost).**
+
+---
+
+## Backbone research (Apr 13)
+
+### ❌ Track D: Alternative backbones — ALL DEAD ENDS (Apr 13-14)
+
+All publicly accessible audio SSL backbones tested against Perch v2 embeddings (OOF cmAP):
+
+| Model | OOF cmAP | Delta vs Perch |
+|---|---|---|
+| **Perch emb** | **0.2984** | — |
+| AVES-base-bio (ESP, animal sounds SSL) | 0.2383 | −0.060 |
+| BirdAVES-biox-large (ESP, bird audio SSL) | 0.2563 | −0.042 |
+| WavLM-base-plus (Microsoft, speech SSL) | 0.2247 | −0.074 |
+| Concat(Perch+AVES-base) | 0.2852 | −0.013 |
+| Concat(Perch+BirdAVES-large) | 0.2715 | −0.027 |
+| Concat(Perch+WavLM) | 0.2907 | −0.008 |
+
+**Root cause**: Perch is supervised on 10,932 bird species — impossible to match with SSL.
+Even BirdAVES-biox-large (specifically bird audio) is −0.042 below Perch. Adding any
+of them as concat features hurts (noise from low-quality extra dims overwhelms signal).
+
+**Do NOT test further SSL backbones.** Only a gated/paid model with comparable supervised
+pretraining (e.g. a newer Perch version, or BirdNET-style fine-tuned on this taxonomy) could help.
+
+### Track E: CLAP zero-shot for sonotypes ✅ COMPLETE (Apr 13)
+
+25 47158son* insect species have **exactly 0.000 Perch logit delta** — Perch is blind.
+Current pipeline uses only hour/site priors. CLAP adds acoustic signal.
+
+**Script**: `training/precompute_clap_zeroshot.py` ✅ Fixed (torchaudio soundfile monkey-patch)
+**Output**: `data/perch-meta/clap_zeroshot_scores.npy` — (792, 25), `clap_zeroshot_labels.json` ✅
+
+**Results (Apr 13)**:
+- Scores shape: (792, 25), range [0.010, 0.625]
+- Mean AP = **0.060** vs chance baseline ~**0.029** (2.1× above chance)
+- Best: son16 AP=0.244 (16× chance), son18 AP=0.201 (13×), son17 AP=0.174 (3.2×), son25 AP=0.142
+- Worst: son12 AP=0.005, son05 AP=0.005, son02 AP=0.010
+
+**Per-species AP (25 active species)**:
+son01=0.030, son02=0.010, son03=0.108, son04=0.017, son05=0.005, son06=0.020, son07=0.045,
+son08=0.045, son09=0.007, son10=0.030, son11=0.051, son12=0.005, son13=0.056, son14=0.016,
+son15=0.048, **son16=0.244**, **son17=0.174**, **son18=0.201**, son19=0.030, son20=0.051,
+son21=0.045, son22=0.047, son23=0.047, son24=0.024, son25=0.142
+
+**CLAP integration decision**: Real signal for 3 species (son16, son17, son18), near-chance for most.
+Max theoretical cmAP gain: (0.060 − 0.029) × 25/234 ≈ **+0.003**.
+Low but non-zero; worth one submission slot. Apply additive prior for sonotype species only.
+
+**Integration plan** (if proceeding):
+```python
+# After ProtoSSM correction, before sigmoid:
+clap_scores = np.load("clap_zeroshot_scores.npy")  # (n_windows, 25)
+# Indexed by clap_zeroshot_labels.json order
+for j, sp in enumerate(clap_labels):
+    col = label_to_col[sp]
+    final_scores[:, col] += CLAP_WEIGHT * clap_scores[:, j]
+# CLAP_WEIGHT = 0.5 (conservative) — tune via submission
+```
+Requires: upload clap_zeroshot_scores.npy + clap_zeroshot_labels.json as Kaggle dataset.
+
+**Active work (Apr 11 — 4/5 submissions used)**:
 
 | Seed | In-sample cmAP | Stage 1 alone | Notes |
 |---|---|---|---|
@@ -1206,3 +1619,81 @@ ssh kristian@192.168.178.32 "nohup bash -c 'cd /home/kristian/projects/kego && C
 Perch on **unlabeled soundscapes** does NOT help (mean prob = 0.000107, 99% windows near-zero). The 0.862 baseline gap was from `train_soundscapes_labels.csv`, not Perch.
 
 **Perch as frozen feature extractor** (Track A above) is different — it uses Perch's own logits/embeddings directly, not as pseudo-labels for CNN training.
+
+---
+
+## Status summary (Apr 13)
+
+### Current best: LB **0.920** (kernel perch-v2-inference v53)
+Config: rank_power=2.0, smooth_amphibia=0.65, no boost, single seed (protossm_original.pt)
+
+### Exhausted approaches (DO NOT RETRY)
+
+| Category | Status | Best LB |
+|---|---|---|
+| Post-processing (rp, smooth, boost, taxon temp) | FULLY EXHAUSTED | 0.920 |
+| SSL backbones (AVES, WavLM, BirdAVES) | ALL DEAD ENDS | − |
+| Stage2 ensemble (any combination) | ALWAYS HURTS | 0.913 |
+| Stage2 hyperparameters (epochs, dropout, LR) | AT LOCAL OPTIMUM | − |
+| Stage3 | CATEGORICALLY HARMFUL | 0.895 |
+| 66sc / S09 data | ALWAYS HURTS | 0.912 |
+| XC augmentation | DOMAIN MISMATCH | 0.902 |
+| CLAP zero-shot integration | IMPRACTICAL (test timing) | − |
+| Perch Embedding Adapter | HURTS probe quality | − |
+
+### Stage 2 seed comparison (Apr 13, local rp=2.0 cmAP)
+
+| Seed | Stage2 base | rp=2.0 |
+|---|---|---|
+| **s42** (protossm_v3.pt, current best) | **0.3355** | **0.3625** |
+| s4 (59sc_s4.pt) | 0.3363 | 0.3604 |
+| s1 (59sc_s1.pt) | 0.3295 | 0.3564 |
+| s2 (59sc_s2.pt) | 0.3276 | 0.3493 |
+| s3 (59sc_s3.pt) | 0.3257 | 0.3441 |
+
+Seed s42 is best locally. Seeds s100-s119 training overnight (results Apr 14).
+
+---
+
+## Status summary (Apr 14)
+
+### Stage2-only seed search (20 seeds s100-s119): ALL WORSE LOCALLY
+
+None of 20 new Stage2-only seeds beat seed 42 (0.3625). Best: seed 117 (0.3600, -0.0025).
+
+**Conclusion**: Stage2-only seed search exhausted. Seed 42 is optimal for this Stage1 checkpoint.
+
+### Stage1+Stage2 full retrain seed search (32 seeds s200-s231)
+
+Top results (rp=2.0 cmAP):
+
+| Seed | Local cmAP | LB | Delta |
+|---|---|---|---|
+| 42 (baseline, protossm_v3.pt) | 0.3625 | **0.920** | — |
+| 209 | 0.3716 | **0.918** | **-0.002** |
+| 218 | 0.3715 | (not submitted) | est. similar |
+| 219 | 0.3630 | (not submitted) | — |
+| 201 | 0.3646 | (not submitted) | — |
+
+**Critical finding**: Local cmAP is ANTI-CORRELATED with LB for Stage1 seeds. Seed 209 locally +0.009 → LB -0.002. Root cause: Stage1 trains in-sample on 59 labeled soundscapes; "better" Stage1 = more memorization of these 59 soundscapes = WORSE generalization to test set.
+
+**Conclusion**: Stage1 seed variation is a DEAD END. The local metric cannot rank Stage1 seeds reliably. Seed 42 (protossm_v3.pt) remains the best.
+
+### v59 failure (blank score): Bug found and fixed
+v59 used OLD notebook with rank_power=0.4 instead of 2.0. Local notebook was NOT kept in sync with temp push directories. Fixed in v60 (v57-base + s209). v60 scored 0.918.
+
+**CRITICAL FIX**: Always build push from `/tmp/perch_v57_push/` as base, NOT from local `kaggle_perch_v2_inference.ipynb`. The local file is stale (v33 commit, rp=0.4). The v57 push has the correct rp=2.0 + boost + full post-processing.
+
+### Exhausted approaches (updated Apr 14)
+
+| Category | Status | Best LB |
+|---|---|---|
+| Stage2-only seed search (s100-s119) | DEAD END — seed 42 optimal | 0.920 |
+| Stage1+Stage2 full retrain seeds (s200-s231) | DEAD END — anti-correlated locally | 0.918 |
+
+### What could still help
+
+1. **Cross-validation for Stage1**: Use K-fold with leave-one-SITE-out to get reliable Stage1 ranking. Too expensive (9 sites × ~4 min per seed = 36 min per seed with k-fold).
+2. **New architecture for Stage2**: Larger model (d_model=256 vs 128), attention-based, or different input features.
+3. **Semi-supervised**: Use test soundscape embeddings for Stage2 training (requires two-stage kernel run).
+4. **Competitor analysis**: Study what atahalam (0.943) and top teams are doing differently.

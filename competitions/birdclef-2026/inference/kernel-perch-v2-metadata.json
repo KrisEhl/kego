@@ -10,6 +10,7 @@
   "enable_internet": false,
   "dataset_sources": [
     "jaejohn/perch-meta",
+    "aldisued/birdclef2026-stage1-seeds",
     "aldisued/birdclef2026-protossm-v3",
     "aldisued/birdclef2026-protossm-v2",
     "aldisued/birdclef2026-protossm-v1"

@@ -1,14 +1,29 @@
 {
-  "id": "aldisued/birdclef-2026-baseline-inference",
-  "title": "BirdCLEF 2026 Baseline Inference",
-  "code_file": "kaggle_inference.ipynb",
+  "id": "aldisued/birdclef-2026-perch-v2-inference",
+  "title": "BirdCLEF 2026 Perch v2 Inference",
+  "code_file": "kaggle_perch_v2_inference.ipynb",
   "language": "python",
   "kernel_type": "notebook",
   "is_private": true,
   "enable_gpu": false,
   "enable_tpu": false,
   "enable_internet": false,
-  "dataset_sources": ["aldisued/birdclef2026-soundscape-v7", "aldisued/birdclef2026-soundscape-v8-hgnetv2"],
-  "competition_sources": ["birdclef-2026"],
-  "kernel_sources": []
+  "dataset_sources": [
+    "jaejohn/perch-meta",
+    "aldisued/birdclef2026-stage1-seeds",
+    "aldisued/birdclef2026-protossm-v3",
+    "aldisued/birdclef2026-protossm-v2",
+    "aldisued/birdclef2026-protossm-v1",
+    "aldisued/birdclef2026-perch-xc-probes",
+    "aldisued/birdclef2026-train-embeddings"
+  ],
+  "competition_sources": [
+    "birdclef-2026"
+  ],
+  "kernel_sources": [
+    "kdmitrie/bc26-tensorflow-2-20-0"
+  ],
+  "model_sources": [
+    "google/bird-vocalization-classifier/tensorflow2/perch_v2_cpu/1"
+  ]
 }
