@@ -36,6 +36,7 @@ __pycache__/
 *.egg-info/
 
 *.log
+outputs/
 *.parquet
 
 # outputs
