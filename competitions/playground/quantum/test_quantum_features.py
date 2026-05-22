@@ -1,29 +1,32 @@
 """Quantum Feature Extraction Experiment.
 
-Compares LightGBM performance across 4 setups, all evaluated on the same holdout:
-  1. Vanilla (small):  700 train rows,  ablation-pruned features
-  2. Quantum (small):  700 train rows,  ablation-pruned + quantum features
-  2b. Quantum-only:    700 train rows,  quantum features only
-  3. Vanilla (full):   ~630K train rows, ablation-pruned features
-  4. Quantum (full):   ~630K train rows, ablation-pruned + quantum features
+Compares LightGBM performance across multiple setups, all evaluated on the same holdout:
+  1. Vanilla (small):          700 train rows,  ablation-pruned features
+  2. Vanilla (full):           ~630K train rows, ablation-pruned features
+  3. Rimay Quantum (small):    700 train rows,  ablation-pruned + Rimay quantum features
+  4. Rimay Quantum-only:       700 train rows,  Rimay quantum features only
+  5. Local Quantum (small):    700 train rows,  ablation-pruned + local quantum features
+  6. Local Quantum-only:       700 train rows,  local quantum features only
+  + Full-data variants with --full-quantum
 
-Quantum features are generated locally via a fast numpy statevector simulator
-(~1.5ms/sample), or optionally via Qiskit or the Kipu Quantum Rimay API.
+By default, local quantum features are generated via a fast numpy statevector
+simulator (~1.5ms/sample). Rimay features are loaded from previous results if
+available, or submitted via --submit. Use --no-local to skip local generation.
 
 Usage:
-  # Default: load quantum features from previous Rimay results
+  # Default: load Rimay results + generate local quantum features for comparison
   uv run python test_quantum_features.py
 
-  # Local simulation (no Rimay API needed)
-  uv run python test_quantum_features.py --local
+  # Skip local quantum feature generation
+  uv run python test_quantum_features.py --no-local
 
-  # Submit new Rimay job and wait for results
+  # Submit new Rimay job and wait for results (+ local by default)
   uv run python test_quantum_features.py --submit
 
   # Submit Rimay job without waiting
   uv run python test_quantum_features.py --submit --submit-only
 
-  # Full-data quantum features (~15 min for 630K rows)
+  # Full-data quantum features (~3 min for 630K rows)
   uv run python test_quantum_features.py --full-quantum
 
 Environment variables (for --rimay only):
@@ -40,7 +43,6 @@ Data directory (optional):
 import argparse
 import json
 import os
-import sys
 from pathlib import Path
 
 import lightgbm
@@ -339,12 +341,102 @@ def train_evaluate_lgb(
     return auc
 
 
+def _add_quantum_experiments(
+    experiments: list[tuple],
+    quantum_features: dict,
+    X_small: pd.DataFrame,
+    y_small: pd.Series,
+    X_holdout: pd.DataFrame,
+    X_full: pd.DataFrame,
+    y_full: pd.Series,
+    classical_features: list[str],
+    cats_in_ablation: list[str],
+    quantum_features_full: dict | None,
+    source_label: str,
+    key_prefix: str,
+    full_train_size: int,
+) -> list[str]:
+    """Add quantum experiments for a given source (Rimay or Local).
+
+    Returns the quantum feature names.
+    """
+    quantum_run = quantum_features[0]
+    quantum_feature_names = quantum_features.get(
+        "feature_names",
+        [f"qf_{i}" for i in range(quantum_run["Xq_train"].shape[1])],
+    )
+
+    X_small_quantum = concat_quantum_features(
+        X_small, quantum_run["Xq_train"], quantum_feature_names
+    )
+    X_holdout_quantum = concat_quantum_features(
+        X_holdout, quantum_run["Xq_test"], quantum_feature_names
+    )
+    X_small_qonly = pd.DataFrame(quantum_run["Xq_train"], columns=quantum_feature_names)
+    X_holdout_qonly = pd.DataFrame(
+        quantum_run["Xq_test"], columns=quantum_feature_names
+    )
+
+    experiments.append(
+        (
+            f"{key_prefix}_quantum_small",
+            f"Vanilla + {source_label} Quantum (700 rows)",
+            X_small_quantum,
+            y_small,
+            X_holdout_quantum,
+            LGB_PARAMS_SMALL,
+            cats_in_ablation,
+            quantum_feature_names,
+            classical_features,
+        ),
+    )
+    experiments.append(
+        (
+            f"{key_prefix}_quantum_only",
+            f"{source_label} Quantum Only (700 rows)",
+            X_small_qonly,
+            y_small,
+            X_holdout_qonly,
+            LGB_PARAMS_SMALL,
+            None,
+            None,
+            None,
+        ),
+    )
+
+    if quantum_features_full is not None:
+        quantum_full_run = quantum_features_full[0]
+        X_full_quantum = concat_quantum_features(
+            X_full, quantum_full_run["Xq_train"], quantum_feature_names
+        )
+        X_holdout_quantum_full = concat_quantum_features(
+            X_holdout, quantum_full_run["Xq_test"], quantum_feature_names
+        )
+        experiments.append(
+            (
+                f"{key_prefix}_quantum_full",
+                f"Vanilla + {source_label} Quantum ({full_train_size} rows)",
+                X_full_quantum,
+                y_full,
+                X_holdout_quantum_full,
+                LGB_PARAMS_FULL,
+                cats_in_ablation,
+                quantum_feature_names,
+                classical_features,
+            )
+        )
+
+    return quantum_feature_names
+
+
 def run_evaluation(
     quantum_train: pd.DataFrame,
     holdout: pd.DataFrame,
     full_train: pd.DataFrame,
-    quantum_features: dict | None = None,
-    quantum_features_full: dict | None = None,
+    rimay_quantum_features: dict | None = None,
+    rimay_quantum_features_full: dict | None = None,
+    local_quantum_features: dict | None = None,
+    local_quantum_features_full: dict | None = None,
 ) -> dict:
     """Run all experiments, ablation for each, and print combined summary.
 
@@ -374,7 +466,7 @@ def run_evaluation(
     experiments: list[tuple] = [
         (
             "vanilla_small",
-            "Exp 1: Vanilla (700 rows)",
+            "Vanilla (700 rows)",
             X_qt,
             y_qt,
             X_ho,
@@ -385,7 +477,7 @@ def run_evaluation(
         ),
         (
             "vanilla_full",
-            f"Exp 3: Vanilla ({len(full_train)} rows)",
+            f"Vanilla ({len(full_train)} rows)",
             X_ft,
             y_ft,
             X_ho,
@@ -396,76 +488,40 @@ def run_evaluation(
         ),
     ]
 
-    # Add quantum experiments if features available
-    quantum_feature_names: list[str] = []
-    if quantum_features is not None:
-        quantum_run = quantum_features[0]
-        quantum_feature_names = quantum_features.get(
-            "feature_names",
-            [f"qf_{i}" for i in range(quantum_run["Xq_train"].shape[1])],
+    # Add Rimay quantum experiments
+    if rimay_quantum_features is not None:
+        _add_quantum_experiments(
+            experiments=experiments,
+            quantum_features=rimay_quantum_features,
+            X_small=X_qt,
+            y_small=y_qt,
+            X_holdout=X_ho,
+            X_full=X_ft,
+            y_full=y_ft,
+            classical_features=classical_features,
+            cats_in_ablation=cats_in_ablation,
+            quantum_features_full=rimay_quantum_features_full,
+            source_label="Rimay",
+            key_prefix="rimay",
+            full_train_size=len(full_train),
         )
 
-        X_qt_quantum = concat_quantum_features(
-            X_qt, quantum_run["Xq_train"], quantum_feature_names
-        )
-        X_ho_quantum = concat_quantum_features(
-            X_ho, quantum_run["Xq_test"], quantum_feature_names
-        )
-        X_qt_qonly = pd.DataFrame(
-            quantum_run["Xq_train"], columns=quantum_feature_names
-        )
-        X_ho_qonly = pd.DataFrame(quantum_run["Xq_test"], columns=quantum_feature_names)
-
-        experiments.insert(
-            1,
-            (
-                "quantum_small",
-                "Exp 2: Vanilla + Quantum (700 rows)",
-                X_qt_quantum,
-                y_qt,
-                X_ho_quantum,
-                LGB_PARAMS_SMALL,
-                cats_in_ablation,
-                quantum_feature_names,
-                classical_features,
-            ),
-        )
-        experiments.insert(
-            2,
-            (
-                "quantum_only",
-                "Exp 2b: Quantum Only (700 rows)",
-                X_qt_qonly,
-                y_qt,
-                X_ho_qonly,
-                LGB_PARAMS_SMALL,
-                None,
-                None,
-                None,
-            ),
-        )
-
-    if quantum_features_full is not None:
-        quantum_full_run = quantum_features_full[0]
-        X_ft_quantum = concat_quantum_features(
-            X_ft, quantum_full_run["Xq_train"], quantum_feature_names
-        )
-        X_ho_quantum_full = concat_quantum_features(
-            X_ho, quantum_full_run["Xq_test"], quantum_feature_names
-        )
-
-        experiments.append(
-            (
-                "quantum_full",
-                f"Exp 4: Vanilla + Quantum ({len(full_train)} rows)",
-                X_ft_quantum,
-                y_ft,
-                X_ho_quantum_full,
-                LGB_PARAMS_FULL,
-                cats_in_ablation,
-                quantum_feature_names,
-                classical_features,
-            )
+    # Add Local quantum experiments
+    if local_quantum_features is not None:
+        _add_quantum_experiments(
+            experiments=experiments,
+            quantum_features=local_quantum_features,
+            X_small=X_qt,
+            y_small=y_qt,
+            X_holdout=X_ho,
+            X_full=X_ft,
+            y_full=y_ft,
+            classical_features=classical_features,
+            cats_in_ablation=cats_in_ablation,
+            quantum_features_full=local_quantum_features_full,
+            source_label="Local",
+            key_prefix="local",
+            full_train_size=len(full_train),
         )
 
     # ── Run experiments + ablation ──
@@ -510,10 +566,11 @@ def run_evaluation(
     print(f"{'=' * 70}")
 
     baseline = results.get("vanilla_small", 0.0)
-    for key, label, *_ in experiments:
+    for experiment_number, (key, label, *_) in enumerate(experiments, 1):
         delta = results[key] - baseline
         marker = " <-- baseline" if key == "vanilla_small" else ""
-        print(f"\n  {label:<55s} {results[key]:>8.5f} {delta:>+8.5f}{marker}")
+        numbered_label = f"Exp {experiment_number}: {label}"
+        print(f"\n  {numbered_label:<55s} {results[key]:>8.5f} {delta:>+8.5f}{marker}")
         print_ablation_summary(ablations[key], metric)
 
     return results
@@ -642,8 +699,9 @@ def main():
     )
     parser.add_argument(
         "--local",
-        action="store_true",
-        help="Generate quantum features locally instead of loading from Rimay",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Generate local quantum features for comparison (default: True)",
     )
     parser.add_argument(
         "--submit",
@@ -683,16 +741,13 @@ def main():
     quantum_train.to_csv(RESULTS_DIR / "quantum_train.csv", index=False)
     holdout.to_csv(RESULTS_DIR / "holdout.csv", index=False)
 
-    quantum_features_full = None
+    rimay_quantum_features = None
+    rimay_quantum_features_full = None
+    local_quantum_features = None
+    local_quantum_features_full = None
 
-    if args.local:
-        quantum_features = generate_quantum_features_fast(
-            quantum_train,
-            holdout,
-            RAW_FEATURES,
-            TARGET,
-        )
-    elif args.submit:
+    # ── Rimay quantum features ──
+    if args.submit:
         X_train_raw = quantum_train[RAW_FEATURES].reset_index(drop=True).astype(float)
         y_train_raw = quantum_train[[TARGET]].reset_index(drop=True).astype(int)
         X_test_raw = holdout[RAW_FEATURES].reset_index(drop=True).astype(float)
@@ -712,29 +767,38 @@ def main():
             return
 
         wait_for_result(execution)
-        quantum_features = download_quantum_features(
+        rimay_quantum_features = download_quantum_features(
             metadata["output_datapool_id"],
             RESULTS_DIR,
             metadata["num_runs"],
         )
     else:
-        # Default: load existing Rimay results
+        # Load existing Rimay results if available
         metadata_path = RESULTS_DIR / "rimay_metadata.json"
-        if not metadata_path.exists():
-            print(f"ERROR: No Rimay results found at {metadata_path}")
-            print(
-                "  Run with --submit to submit a new job, or --local for local simulation."
+        if metadata_path.exists():
+            with open(metadata_path) as file:
+                metadata = json.load(file)
+            rimay_quantum_features = download_quantum_features(
+                metadata["output_datapool_id"],
+                RESULTS_DIR,
+                metadata["num_runs"],
             )
-            sys.exit(1)
-        with open(metadata_path) as file:
-            metadata = json.load(file)
-        quantum_features = download_quantum_features(
-            metadata["output_datapool_id"],
-            RESULTS_DIR,
-            metadata["num_runs"],
+        else:
+            print(
+                f"  No Rimay results found at {metadata_path}, skipping Rimay experiments."
+            )
+            print("  Run with --submit to submit a new job.")
+
+    # ── Local quantum features ──
+    if args.local:
+        local_quantum_features = generate_quantum_features_fast(
+            quantum_train,
+            holdout,
+            RAW_FEATURES,
+            TARGET,
         )
 
-    # Full-data quantum features (~630K train + 300 holdout)
+    # ── Full-data quantum features (~630K train + 300 holdout) ──
     if args.full_quantum:
         print(f"\n{'=' * 60}")
         print("  Generating quantum features for full dataset...")
@@ -766,7 +830,7 @@ def main():
             np.save(cache_holdout, Xq_ho)
             print(f"\n  Cached to {RESULTS_DIR}/quantum_features_full_*.npy")
 
-        quantum_features_full = {
+        full_quantum_data = {
             0: {
                 "Xq_train": Xq_ft,
                 "Xq_test": Xq_ho,
@@ -775,14 +839,21 @@ def main():
             },
             "feature_names": quantum_feature_names,
         }
+        # Assign to whichever sources are active
+        if rimay_quantum_features is not None:
+            rimay_quantum_features_full = full_quantum_data
+        if args.local:
+            local_quantum_features_full = full_quantum_data
 
     # Run evaluation (includes ablation and final summary)
     run_evaluation(
         quantum_train,
         holdout,
         full_train,
-        quantum_features,
-        quantum_features_full,
+        rimay_quantum_features=rimay_quantum_features,
+        rimay_quantum_features_full=rimay_quantum_features_full,
+        local_quantum_features=local_quantum_features,
+        local_quantum_features_full=local_quantum_features_full,
     )
 
 

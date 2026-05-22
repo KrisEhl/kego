@@ -100,4 +100,5 @@ members = [
     "competitions/ai-masters-fraud-detection",
     "competitions/ai-mathematical-olympiad-progress-prize-3",
     "competitions/birdclef-2026",
+    "competitions/rogii-wellbore-geology-prediction",
 ]
