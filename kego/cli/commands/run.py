@@ -73,35 +73,77 @@ def _pre_create_runs(
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
-    p = subparsers.add_parser("run", help="Dispatch a training script")
-    p.add_argument("script", help="Path to training script")
+    p = subparsers.add_parser(
+        "run",
+        help="Dispatch a training script",
+        description=(
+            "Dispatch a training script locally or on the Ray cluster. "
+            "Any arguments after '--' (or unrecognised flags) are forwarded verbatim to the script."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  # Run locally (single fold)\n"
+            "  uv run kego run competitions/birdclef-2026/training/train_cnn.py\n"
+            "\n"
+            "  # Run locally with extra script args\n"
+            "  uv run kego run competitions/birdclef-2026/training/train_cnn.py --epochs 30 --tag my-exp\n"
+            "\n"
+            "  # Submit one fold to cluster\n"
+            "  uv run kego run competitions/birdclef-2026/training/train_cnn.py --target cluster --fold 0\n"
+            "\n"
+            "  # Fan-out all 5 folds on cluster (each gets its own Ray job)\n"
+            "  uv run kego run competitions/birdclef-2026/training/train_cnn.py --target cluster --folds 0,1,2,3,4\n"
+            "\n"
+            "  # Smoke-test on cluster with 1 GPU\n"
+            "  uv run kego run competitions/birdclef-2026/training/train_cnn.py --target cluster --debug --gpu 1\n"
+            "\n"
+            "  # Heavy GPU job (≥20 GB VRAM) — request 1 full GPU\n"
+            "  uv run kego run competitions/birdclef-2026/training/train_cnn.py --target cluster --gpu 1 --cpu 2\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "script",
+        metavar="SCRIPT",
+        help="Path to the training script (relative or absolute)",
+    )
     p.add_argument(
         "--target",
         choices=["local", "cluster"],
         default="local",
-        help="Compute target (default: local)",
+        help="Compute target: 'local' runs in-process; 'cluster' submits via Ray (default: local)",
     )
-    p.add_argument("--name", help="Experiment name (auto-generated if omitted)")
-    p.add_argument("--fold", type=int, help="Single fold index")
-    p.add_argument("--folds", help="Comma-separated fold indices, e.g. 0,1,2,3")
+    p.add_argument(
+        "--name",
+        metavar="NAME",
+        help="Experiment name logged to MLflow (auto-generated from script + params if omitted)",
+    )
+    p.add_argument(
+        "--fold", type=int, metavar="N", help="Single fold index to run (e.g. 0)"
+    )
+    p.add_argument(
+        "--folds",
+        metavar="N,N,...",
+        help="Comma-separated fold indices to fan out on cluster, e.g. 0,1,2,3,4 (cluster only; local always runs one fold)",
+    )
     p.add_argument(
         "--debug",
         action="store_true",
-        help="Smoke-test mode (forwards --debug to script)",
+        help="Smoke-test mode: forwards --debug to the script (script should handle fast/small run)",
     )
     p.add_argument(
         "--gpu",
         type=float,
         default=0.5,
         metavar="N",
-        help="Number of GPUs per fold (default: 0.5)",
+        help="GPUs per fold requested from Ray scheduler (default: 0.5; use 1 for heavy models)",
     )
     p.add_argument(
         "--cpu",
         type=float,
         default=1,
         metavar="N",
-        help="Number of CPUs per fold (default: 1)",
+        help="CPUs per fold requested from Ray (default: 1)",
     )
     p.set_defaults(func=_run)
 

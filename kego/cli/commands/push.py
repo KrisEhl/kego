@@ -54,17 +54,49 @@ def _rsync_from_cluster(
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     p = subparsers.add_parser(
-        "push", help="Upload model checkpoints to Kaggle Datasets"
+        "push",
+        help="Upload model checkpoints to Kaggle Datasets",
+        description=(
+            "Package checkpoint files matching '<run_name>_fold*.pt' and upload them as a "
+            "Kaggle dataset ('{kaggle_user}/{competition_slug}-{run_name}'). "
+            "If checkpoints are not present locally, they are rsynced from the cluster "
+            "via the ssh_host configured in kego.toml."
+        ),
+        epilog=(
+            "Examples:\n"
+            "  # Push by full run name (from kego ls output)\n"
+            "  uv run kego push birdclef-soundscape-v7\n"
+            "\n"
+            "  # Push by kego experiment ID prefix (first 6+ chars from kego ls)\n"
+            "  uv run kego push a3f9c2\n"
+            "\n"
+            "  # Push for a different competition (when not in that directory)\n"
+            "  uv run kego push birdclef-soundscape-v7 --competition birdclef-2026\n"
+            "\n"
+            "Checkpoint naming convention: <run_name>_fold<N>.pt\n"
+            "Dataset ID produced:           <kaggle_user>/<competitionslug>-<run_name>\n"
+            "  e.g. aldisued/birdclef2026-birdclef-soundscape-v7\n"
+            "\n"
+            "After pushing, submit to Kaggle with:\n"
+            "  uv run kego submit <ID_OR_NAME>\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
         "experiment",
         metavar="ID_OR_NAME",
-        help="Kego experiment ID (prefix) or run name",
+        help=(
+            "Kego experiment ID prefix (e.g. 'a3f9c2') or full run name "
+            "(e.g. 'birdclef-soundscape-v7') — shown in 'kego ls' output"
+        ),
     )
     p.add_argument(
         "--competition",
         metavar="SLUG",
-        help="Competition slug (auto-detected from cwd if omitted)",
+        help=(
+            "Competition slug as defined in kego.toml [competition].slug "
+            "(auto-detected from cwd if omitted, e.g. 'birdclef-2026')"
+        ),
     )
     p.set_defaults(func=_push)
 
