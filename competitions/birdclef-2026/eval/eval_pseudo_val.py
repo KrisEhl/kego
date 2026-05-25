@@ -65,9 +65,7 @@ def load_meta(path: Path) -> dict:
     }
 
 
-def select_pseudo_val_files(
-    npz_data: dict, n_val: int, rng: np.random.RandomState
-) -> list[str]:
+def select_pseudo_val_files(npz_data: dict, n_val: int, rng: np.random.RandomState) -> list[str]:
     """Return list of soundscape filenames from PSEUDO_VAL_STATIONS, deduplicated."""
     all_filenames = [str(k).split(":")[0] for k in npz_data["filenames"]]
     unique = sorted(set(all_filenames))
@@ -75,9 +73,7 @@ def select_pseudo_val_files(
     candidates = [f for f in unique if f.split("_")[3] in PSEUDO_VAL_STATIONS]
     if len(candidates) == 0:
         # Fall back to all unlabeled files if station filter finds nothing
-        print(
-            f"WARNING: No files matching stations {PSEUDO_VAL_STATIONS} — using all files"
-        )
+        print(f"WARNING: No files matching stations {PSEUDO_VAL_STATIONS} — using all files")
         candidates = unique
     if len(candidates) > n_val:
         chosen = rng.choice(candidates, size=n_val, replace=False)
@@ -171,16 +167,10 @@ def run_ensemble(
                         fmin=m["fmin"],
                         htk=m["htk"],
                     )
-                t = (
-                    spec_to_tensor_minmax(spec)
-                    if m["minmax_norm"]
-                    else spec_to_tensor(spec)
-                )
+                t = spec_to_tensor_minmax(spec) if m["minmax_norm"] else spec_to_tensor(spec)
                 window_tensors.append(t)
             batch = torch.stack(window_tensors).to(device)
-            out = model(
-                batch
-            )  # (n_windows, n_species) — sigmoid already applied for baseline
+            out = model(batch)  # (n_windows, n_species) — sigmoid already applied for baseline
             fold_preds_windows.append(out.cpu().numpy())
 
         if not fold_preds_windows:
@@ -255,9 +245,7 @@ def main() -> None:
 
     # Select pseudo-val files
     rng = np.random.RandomState(SEED)
-    val_files = select_pseudo_val_files(
-        {"filenames": data["filenames"]}, args.n_val, rng
-    )
+    val_files = select_pseudo_val_files({"filenames": data["filenames"]}, args.n_val, rng)
     print(f"Pseudo-val files: {len(val_files)} from stations {PSEUDO_VAL_STATIONS}")
     station_counts: dict[str, int] = {}
     for f in val_files:
@@ -269,9 +257,7 @@ def main() -> None:
     # Load checkpoints
     ckpt_paths = sorted(CKPT_DIR.glob(args.ckpt_pattern))
     if not ckpt_paths:
-        print(
-            f"ERROR: No checkpoints found matching '{args.ckpt_pattern}' in {CKPT_DIR}"
-        )
+        print(f"ERROR: No checkpoints found matching '{args.ckpt_pattern}' in {CKPT_DIR}")
         sys.exit(1)
     print(f"\nLoading {len(ckpt_paths)} checkpoints...")
     models_meta = []
@@ -315,9 +301,7 @@ def main() -> None:
     print(f"Pseudo-val cmAP: {cmap:.4f}")
     print(f"  (lower bound: random = {bin_labels.mean():.4f}, upper = 1.0)")
     print(f"  Mean max-prob (preds): {preds.max(axis=1).mean():.4f}")
-    print(
-        f"  Windows with pred≥0.3: {(preds.max(axis=1) >= 0.3).sum():,}/{len(preds):,}"
-    )
+    print(f"  Windows with pred≥0.3: {(preds.max(axis=1) >= 0.3).sum():,}/{len(preds):,}")
 
     # Top/bottom classes
     ap_arr = np.full(n_species, np.nan)

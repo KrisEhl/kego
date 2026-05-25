@@ -21,20 +21,8 @@ print(f"{output.columns}")
 display(input)
 display(output)
 
-display(
-    input.filter(
-        (pl.col("game_id") == 2023110200)
-        & (pl.col("play_id") == 108)
-        & (pl.col("nfl_id") == 47899)
-    )
-)
-display(
-    output.filter(
-        (pl.col("game_id") == 2023110200)
-        & (pl.col("play_id") == 108)
-        & (pl.col("nfl_id") == 47899)
-    )
-)
+display(input.filter((pl.col("game_id") == 2023110200) & (pl.col("play_id") == 108) & (pl.col("nfl_id") == 47899)))
+display(output.filter((pl.col("game_id") == 2023110200) & (pl.col("play_id") == 108) & (pl.col("nfl_id") == 47899)))
 
 
 def plot_histogram_all(df):
@@ -47,9 +35,7 @@ def plot_histogram_all(df):
         spacing_y=0.02,
     )
     for axes, column in zip(axes, df.columns):
-        kego.plotting.plot_histogram(
-            column, df=df, axes=axes, font_size=4, title=column
-        )
+        kego.plotting.plot_histogram(column, df=df, axes=axes, font_size=4, title=column)
 
     figure.savefig("histograms_all.pdf")
 

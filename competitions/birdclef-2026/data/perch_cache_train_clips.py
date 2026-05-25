@@ -79,17 +79,13 @@ if PERCH_MODEL_DIR and Path(PERCH_MODEL_DIR).exists():
         # Map competition species by scientific_name (not ebird code)
         perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
         taxonomy_sci = taxonomy["scientific_name"].astype(str).tolist()
-        comp_to_perch = np.array(
-            [perch_to_idx.get(sci, -1) for sci in taxonomy_sci], dtype=np.int32
-        )
+        comp_to_perch = np.array([perch_to_idx.get(sci, -1) for sci in taxonomy_sci], dtype=np.int32)
     else:
         # Perch v4: labels are ebird codes
         perch_labels_df = pd.read_csv(assets_dir / "label.csv")
         perch_labels = perch_labels_df.iloc[:, 0].astype(str).tolist()
         perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
-        comp_to_perch = np.array(
-            [perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32
-        )
+        comp_to_perch = np.array([perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32)
 else:
     import tensorflow_hub as hub
 
@@ -100,8 +96,7 @@ else:
     matches = glob.glob("/tmp/tfhub_modules/**/label.csv", recursive=True)
     if not matches:
         raise FileNotFoundError(
-            "Perch label.csv not found in tfhub cache. "
-            "Run perch_cache_soundscapes.py first to populate it."
+            "Perch label.csv not found in tfhub cache. Run perch_cache_soundscapes.py first to populate it."
         )
     perch_label_csv_path = matches[0]
     with open(perch_label_csv_path) as f:
@@ -109,9 +104,7 @@ else:
         lines = [l.strip() for l in f if l.strip()]
     perch_labels = [l.split(",")[0] for l in lines if not l.startswith("ebird")]
     perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
-    comp_to_perch = np.array(
-        [perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32
-    )
+    comp_to_perch = np.array([perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32)
 
 print(f"Loaded in {time.time() - t0:.1f}s")
 
@@ -146,9 +139,7 @@ print(f"Embedding dim: {EMB_DIM}  |  logit dim: {_logits.shape[-1]}")
 def logits_to_comp_probs(raw_logits: np.ndarray) -> np.ndarray:
     """Map (B, n_perch) logits → (B, n_species) sigmoid probs."""
     comp_probs = np.zeros((len(raw_logits), n_species), dtype=np.float32)
-    comp_probs[:, perch_coverage] = 1.0 / (
-        1.0 + np.exp(-raw_logits[:, comp_to_perch[perch_coverage]])
-    )
+    comp_probs[:, perch_coverage] = 1.0 / (1.0 + np.exp(-raw_logits[:, comp_to_perch[perch_coverage]]))
     return comp_probs
 
 
@@ -163,11 +154,7 @@ def parse_labels(row) -> list[str]:
     labels = [str(row["primary_label"]).strip()]
     sec = str(row.get("secondary_labels", "") or "")
     if sec and sec != "nan":
-        labels += [
-            s.strip()
-            for s in sec.replace("[", "").replace("]", "").replace("'", "").split()
-            if s.strip()
-        ]
+        labels += [s.strip() for s in sec.replace("[", "").replace("]", "").replace("'", "").split() if s.strip()]
     return labels
 
 
@@ -193,9 +180,7 @@ print(f"\nRunning Perch inference (batch_size={BATCH_SIZE}) ...")
 t_start = time.time()
 n_total = len(train_df)
 pending = train_df[
-    ~train_df.apply(
-        lambda r: f"{r['primary_label']}/{Path(str(r['filename'])).stem}", axis=1
-    ).isin(done_ids)
+    ~train_df.apply(lambda r: f"{r['primary_label']}/{Path(str(r['filename'])).stem}", axis=1).isin(done_ids)
 ].reset_index(drop=True)
 print(f"  Clips to process: {len(pending)} / {n_total}")
 
@@ -273,8 +258,7 @@ for i, row in pending.iterrows():
         rate = n_processed / max(elapsed, 1)
         eta = (len(pending) - n_processed) / max(rate, 1e-9)
         print(
-            f"  [{done_total}/{n_total}] {rate:.1f} clips/s | "
-            f"ETA {eta / 60:.0f}min | errors {n_errors}",
+            f"  [{done_total}/{n_total}] {rate:.1f} clips/s | ETA {eta / 60:.0f}min | errors {n_errors}",
             flush=True,
         )
 

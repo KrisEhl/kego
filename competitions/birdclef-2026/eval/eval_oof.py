@@ -87,9 +87,7 @@ def dataset_kwargs_from_ckpt(ckpt: dict) -> dict:
     htk = ckpt.get("htk", False)
 
     # Pick the correct spec cache from checkpoint params
-    if ckpt.get("backbone", "").startswith("hgnetv2") and not ckpt.get(
-        "baseline", False
-    ):
+    if ckpt.get("backbone", "").startswith("hgnetv2") and not ckpt.get("baseline", False):
         # HGNetV2 BirdModel (--hgnetv2 without --baseline)
         cache_dir = CACHE_DIR_HGNETV2
     elif ckpt.get("baseline", False):
@@ -203,9 +201,7 @@ def eval_soundscapes(
                     fmin=fmin,
                     htk=htk,
                 )
-                tensor = (
-                    spec_to_tensor_minmax(spec) if minmax_norm else spec_to_tensor(spec)
-                )
+                tensor = spec_to_tensor_minmax(spec) if minmax_norm else spec_to_tensor(spec)
                 chunks.append(tensor)
                 pos += CLIP_SAMPLES
             if not chunks:
@@ -318,9 +314,7 @@ def main() -> None:
             pin_memory=True,
         )
 
-        model = load_model_from_ckpt(
-            ckpt, n_species, device, default_backbone=args.backbone
-        )
+        model = load_model_from_ckpt(ckpt, n_species, device, default_backbone=args.backbone)
         is_prob = ckpt.get("baseline", False) or ckpt.get("sed", False)
 
         preds, labels = run_inference(model, val_loader, device, is_prob_model=is_prob)
@@ -345,9 +339,7 @@ def main() -> None:
     print("\n--- OOF aggregate ---")
     oof_cmap, oof_aps = compute_cmap(all_preds, all_labels)
     try:
-        oof_auc = roc_auc_score(
-            (all_labels > 0).astype(int), all_preds, average="macro"
-        )
+        oof_auc = roc_auc_score((all_labels > 0).astype(int), all_preds, average="macro")
     except ValueError:
         oof_auc = float("nan")
     print(f"OOF cmAP   : {oof_cmap:.4f}")
@@ -369,15 +361,11 @@ def main() -> None:
     ap_df_sorted = ap_df.sort_values("ap")
     print("\n--- Bottom 15 species by AP (hardest) ---")
     print(
-        ap_df_sorted.head(15)[
-            ["primary_label", "common_name", "class_name", "ap", "n_positive"]
-        ].to_string(index=False)
+        ap_df_sorted.head(15)[["primary_label", "common_name", "class_name", "ap", "n_positive"]].to_string(index=False)
     )
     print("\n--- Top 15 species by AP ---")
     print(
-        ap_df_sorted.tail(15)[
-            ["primary_label", "common_name", "class_name", "ap", "n_positive"]
-        ].to_string(index=False)
+        ap_df_sorted.tail(15)[["primary_label", "common_name", "class_name", "ap", "n_positive"]].to_string(index=False)
     )
 
     out_csv = OUT / "oof_per_class_ap.csv"
@@ -395,9 +383,7 @@ def main() -> None:
             ckpt_path = OUT / f"{args.backbone}_fold{fold}.pt"
             if ckpt_path.exists():
                 ckpt = torch.load(ckpt_path, map_location=device)
-                model = load_model_from_ckpt(
-                    ckpt, n_species, device, default_backbone=args.backbone
-                )
+                model = load_model_from_ckpt(ckpt, n_species, device, default_backbone=args.backbone)
                 cfg = dataset_kwargs_from_ckpt(ckpt)
                 is_prob = ckpt.get("baseline", False) or ckpt.get("sed", False)
                 sc_models_cfg.append(

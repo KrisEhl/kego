@@ -161,12 +161,8 @@ def plot_feature_scatter() -> None:
             h_pct = h_counts / h_counts.sum()
             s_pct = s_counts / s_counts.sum()
             w = 0.35
-            ax.bar(
-                x - w / 2, h_pct, w, color=HEALTHY_COLOR, alpha=0.8, label="No disease"
-            )
-            ax.bar(
-                x + w / 2, s_pct, w, color=SICK_COLOR, alpha=0.8, label="Heart disease"
-            )
+            ax.bar(x - w / 2, h_pct, w, color=HEALTHY_COLOR, alpha=0.8, label="No disease")
+            ax.bar(x + w / 2, s_pct, w, color=SICK_COLOR, alpha=0.8, label="Heart disease")
             ax.set_xticks(x)
             ax.set_xticklabels(categories, rotation=15, ha="right", fontsize=8)
         else:

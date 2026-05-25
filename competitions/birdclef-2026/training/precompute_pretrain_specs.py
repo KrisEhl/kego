@@ -63,9 +63,7 @@ def _worker(args: tuple) -> tuple[str, bool, str]:
         info = sf.info(audio_path)
         max_frames = int(MAX_DURATION * info.samplerate)
         frames_to_read = min(info.frames, max_frames)
-        y, file_sr = sf.read(
-            audio_path, frames=frames_to_read, dtype="float32", always_2d=False
-        )
+        y, file_sr = sf.read(audio_path, frames=frames_to_read, dtype="float32", always_2d=False)
         if y.ndim == 2:
             y = y.mean(axis=1)
         if file_sr != SR:
@@ -89,13 +87,9 @@ def _worker(args: tuple) -> tuple[str, bool, str]:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--years", nargs="+", type=int, default=[2021, 2022, 2023, 2024]
-    )
+    parser.add_argument("--years", nargs="+", type=int, default=[2021, 2022, 2023, 2024])
     parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument(
-        "--check", action="store_true", help="Report completeness only, no compute"
-    )
+    parser.add_argument("--check", action="store_true", help="Report completeness only, no compute")
     args = parser.parse_args()
 
     for year in args.years:

@@ -16,12 +16,8 @@ def _resolve_defaults(
     spacing_y: float | None,
     axes_style: kego.constants.AXES_STYLE_TYPE,
 ) -> tuple[bool, None | str, None | str, float, float]:
-    if axes_style == "axes_single" and (
-        facet_column is not None or facet_row is not None
-    ):
-        raise ValueError(
-            f"Cannot specify {facet_column=} or {facet_row=} when axes is given!"
-        )
+    if axes_style == "axes_single" and (facet_column is not None or facet_row is not None):
+        raise ValueError(f"Cannot specify {facet_column=} or {facet_row=} when axes is given!")
     if marginal_x == "default":
         if facet_column is None and facet_row is None and axes_style == "axes_grid":
             marginal_x = "histogram"
@@ -63,22 +59,16 @@ def _check_parameter_consistency(
     df: pd.DataFrame | None,
 ):
     if (bool(marginal_x) + bool(marginal_y)) not in [0, 2]:
-        raise NotImplementedError(
-            f"{bool(marginal_x)=} anbool(d) {marginal_y=} both have to be on/off"
-        )
+        raise NotImplementedError(f"{bool(marginal_x)=} anbool(d) {marginal_y=} both have to be on/off")
     if (bool(marginal_x) or bool(marginal_y)) and (facet_column or facet_row):
         raise NotImplementedError(
             f"Cannot use ({marginal_x=} or {marginal_y}) at the same time as ({facet_column=} or {facet_row})"
         )
     if (facet_column or facet_row) and df is None:
-        raise NotImplementedError(
-            f"Cannot use {facet_column=} and/or {facet_row}, when {df=} is not given!"
-        )
+        raise NotImplementedError(f"Cannot use {facet_column=} and/or {facet_row}, when {df=} is not given!")
 
 
-def _prepare_facet(
-    df: pd.DataFrame | None, facet: str | None
-) -> tuple[np.ndarray | None, int, np.ndarray | None]:
+def _prepare_facet(df: pd.DataFrame | None, facet: str | None) -> tuple[np.ndarray | None, int, np.ndarray | None]:
     if facet is not None and isinstance(df, pd.DataFrame) and facet in df:
         facet_values = np.unique(df[facet].values)
         masks = np.array([df[facet] == val for val in facet_values])
@@ -166,13 +156,9 @@ def _set_masks(
     for i_row in range(n_rows):
         for i_column in range(n_columns):
             if column_masks is not None:
-                masks[i_row, i_column] = _add_masks(
-                    masks[i_row, i_column], column_masks[i_column]
-                )
+                masks[i_row, i_column] = _add_masks(masks[i_row, i_column], column_masks[i_column])
             if row_masks is not None:
-                masks[i_row, i_column] = _add_masks(
-                    masks[i_row, i_column], row_masks[i_row]
-                )
+                masks[i_row, i_column] = _add_masks(masks[i_row, i_column], row_masks[i_row])
     return masks
 
 
@@ -189,13 +175,9 @@ def _determine_axes_titles(
     for i_row in range(n_rows):
         for i_column in range(n_columns):
             if facet_row and facet_row_title is not None:
-                titles[i_row, i_column] = _add_titles(
-                    [titles[i_row, i_column], facet_row_title[i_row]]
-                )
+                titles[i_row, i_column] = _add_titles([titles[i_row, i_column], facet_row_title[i_row]])
             if facet_column and facet_column_title is not None:
-                titles[i_row, i_column] = _add_titles(
-                    [titles[i_row, i_column], facet_column_title[i_column]]
-                )
+                titles[i_row, i_column] = _add_titles([titles[i_row, i_column], facet_column_title[i_column]])
     return titles
 
 

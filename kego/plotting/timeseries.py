@@ -81,9 +81,7 @@ def plot_timeseries(
     Returns
     -------
     """
-    fig, ax = kego.plotting.figures.create_figure_axes(
-        figure=fig, axes=ax, font_size=None
-    )
+    fig, ax = kego.plotting.figures.create_figure_axes(figure=fig, axes=ax, font_size=None)
     if ds is not None and isinstance(y, str):
         if label_y is None:
             label_y = y

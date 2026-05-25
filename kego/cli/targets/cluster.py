@@ -84,9 +84,7 @@ def _submit_http(
         with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
             result = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        raise RuntimeError(
-            f"Ray job submission failed (HTTP {e.code}): {e.read().decode()}"
-        ) from e
+        raise RuntimeError(f"Ray job submission failed (HTTP {e.code}): {e.read().decode()}") from e
     except OSError as e:
         raise RuntimeError(
             f"Cannot reach Ray cluster at {config.cluster.ray_address} — "
@@ -114,14 +112,9 @@ def submit_fold(
 ) -> str:
     """Submit one fold as a Ray job. Returns the Ray submission ID."""
     cluster_script = _cluster_script_path(script, config)
-    runtime_env = _build_runtime_env(
-        config, experiment_name, run_name, experiment_id, cli_params, mlflow_run_id
-    )
+    runtime_env = _build_runtime_env(config, experiment_name, run_name, experiment_id, cli_params, mlflow_run_id)
     args_str = " ".join(script_args)
-    entrypoint = (
-        f"cd {config.cluster.uv_project_dir} && "
-        f"uv run python -m kego.cli.runner {cluster_script} {args_str}"
-    )
+    entrypoint = f"cd {config.cluster.uv_project_dir} && uv run python -m kego.cli.runner {cluster_script} {args_str}"
     return _submit_http(config, entrypoint, runtime_env, num_gpus, num_cpus)
 
 

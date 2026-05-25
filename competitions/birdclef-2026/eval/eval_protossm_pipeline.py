@@ -77,9 +77,7 @@ def run_eval(
         residual_ssm_v3b.load_state_dict(ckpt["residual_ssm_v3b_state_dict"])
         residual_ssm_v3b.eval()
         ckpt_rw = ckpt.get("residual_weight", residual_weight)
-        print(
-            f"ResidualSSMv3b (Stage 3) loaded (checkpoint residual_weight={ckpt_rw})."
-        )
+        print(f"ResidualSSMv3b (Stage 3) loaded (checkpoint residual_weight={ckpt_rw}).")
     else:
         print("No Stage 3 (residual_ssm_v3b_state_dict) in checkpoint.")
 
@@ -92,9 +90,7 @@ def run_eval(
     # 59sc NPZ → use checkpoint's probe_scores_file (trained on 59sc).
     # 66sc NPZ (default) → always use full_probe_scores.npy (792 rows).
     if npz_file is not None and "59" in npz_file:
-        probe_scores_file = ckpt.get("config", {}).get(
-            "probe_scores_file", "full_probe_scores.npy"
-        )
+        probe_scores_file = ckpt.get("config", {}).get("probe_scores_file", "full_probe_scores.npy")
     else:
         probe_scores_file = "full_probe_scores.npy"
     data = load_data(DATA_ROOT, npz_file=eval_npz, probe_scores_file=probe_scores_file)
@@ -114,9 +110,7 @@ def run_eval(
         site_to_idx = ckpt["site_to_idx"]
         print(f"Using checkpoint site_to_idx ({len(site_to_idx)} sites)")
 
-    all_batches = build_file_batches(
-        emb, logits, labels, sites, hours, filenames, site_to_idx
-    )
+    all_batches = build_file_batches(emb, logits, labels, sites, hours, filenames, site_to_idx)
     print(f"File batches: {len(all_batches)}")
 
     file_to_rows: dict[str, list[int]] = {}
@@ -195,9 +189,7 @@ def run_eval(
 
     # Stage 3 blend weight sensitivity (if present)
     if residual_ssm_v3b is not None:
-        print(
-            f"\n--- Stage 3 blend weight sensitivity (stage2_w={residual_weight:.2f}) ---"
-        )
+        print(f"\n--- Stage 3 blend weight sensitivity (stage2_w={residual_weight:.2f}) ---")
         for w3 in [0.0, 0.25, 0.35, 0.50, 0.70, 1.00]:
             p = 1.0 / (1.0 + np.exp(-(final_logits + w3 * correction3_arr)))
             cmAP(p, f"stage3 w={w3:.2f}")
@@ -218,27 +210,15 @@ def run_eval(
 
         # Build archetype index arrays (only for active classes)
         _idx_amphibia = np.array(
-            [
-                label_to_idx[c]
-                for c in active_labels
-                if class_name_map.get(c) == "Amphibia"
-            ],
+            [label_to_idx[c] for c in active_labels if class_name_map.get(c) == "Amphibia"],
             dtype=np.int32,
         )
         _idx_insecta = np.array(
-            [
-                label_to_idx[c]
-                for c in active_labels
-                if class_name_map.get(c) == "Insecta"
-            ],
+            [label_to_idx[c] for c in active_labels if class_name_map.get(c) == "Insecta"],
             dtype=np.int32,
         )
         _idx_rare = np.array(
-            [
-                label_to_idx[c]
-                for c in active_labels
-                if class_name_map.get(c) in _RARE_TAXA
-            ],
+            [label_to_idx[c] for c in active_labels if class_name_map.get(c) in _RARE_TAXA],
             dtype=np.int32,
         )
         _idx_aves = np.array(
@@ -292,12 +272,7 @@ def run_eval(
                 boost_mask = np.zeros_like(file_max)
                 for fi in range(n_files):
                     boost_mask[fi, top_idx[fi]] = 1.0
-                probs = (
-                    probs
-                    + boost_alpha
-                    * file_max[:, np.newaxis, :]
-                    * boost_mask[:, np.newaxis, :]
-                )
+                probs = probs + boost_alpha * file_max[:, np.newaxis, :] * boost_mask[:, np.newaxis, :]
                 probs = np.clip(probs, 0.0, 1.0)
             return probs.reshape(n_total, n_cls)
 
@@ -323,9 +298,7 @@ def run_eval(
             p = apply_postproc(final_logits, smooth_amphibia=sa)
             cmAP(p, f"smooth_amphibia={sa:.2f}")
         # No smoothing at all (rank+boost only)
-        p = apply_postproc(
-            final_logits, smooth_amphibia=0.0, smooth_insecta=0.0, smooth_rare=0.0
-        )
+        p = apply_postproc(final_logits, smooth_amphibia=0.0, smooth_insecta=0.0, smooth_rare=0.0)
         cmAP(p, "rank+boost only (no smooth)")
 
     # Correction stats
@@ -341,9 +314,7 @@ def run_eval(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Evaluate ProtoSSM v3 + ResidualSSMv3 pipeline on labeled soundscapes"
-    )
+    parser = argparse.ArgumentParser(description="Evaluate ProtoSSM v3 + ResidualSSMv3 pipeline on labeled soundscapes")
     parser.add_argument(
         "--checkpoint",
         default="outputs/protossm_v3.pt",

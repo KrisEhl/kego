@@ -52,9 +52,7 @@ def cosine_sim_to_prototype(Z, prototype):
     return Z_norm @ p_norm
 
 
-def build_class_features(
-    Z, raw_col, prior_col, base_col, proto_sim_col=None, family_mean_col=None
-):
+def build_class_features(Z, raw_col, prior_col, base_col, proto_sim_col=None, family_mean_col=None):
     p, n, m, mx, mn, rng = seq_features_1d(base_col)
     parts = [
         Z,
@@ -107,11 +105,7 @@ def fit_prior_tables(prior_df, Y_prior, class_names):
         return (
             to_i,
             np.array(n_list, dtype=np.float32),
-            (
-                np.stack(p_list).astype(np.float32)
-                if p_list
-                else np.zeros((0, Y_prior.shape[1]), np.float32)
-            ),
+            (np.stack(p_list).astype(np.float32) if p_list else np.zeros((0, Y_prior.shape[1]), np.float32)),
         )
 
     site_to_i, site_n, site_p = _table(site_keys, "site")
@@ -124,11 +118,7 @@ def fit_prior_tables(prior_df, Y_prior, class_names):
         sh_n_list.append(len(idx))
         sh_p_list.append(Y_prior[idx].mean(axis=0))
     sh_n = np.array(sh_n_list, dtype=np.float32)
-    sh_p = (
-        np.stack(sh_p_list).astype(np.float32)
-        if sh_p_list
-        else np.zeros((0, Y_prior.shape[1]), np.float32)
-    )
+    sh_p = np.stack(sh_p_list).astype(np.float32) if sh_p_list else np.zeros((0, Y_prior.shape[1]), np.float32)
 
     return dict(
         global_p=global_p,
@@ -242,9 +232,7 @@ def main():
     scores_full_raw = arrs["scores_full_raw"].astype(np.float32)
     emb_full = arrs["emb_full"].astype(np.float32)
 
-    print(
-        f"Perch meta: {meta_full.shape}, scores: {scores_full_raw.shape}, emb: {emb_full.shape}"
-    )
+    print(f"Perch meta: {meta_full.shape}, scores: {scores_full_raw.shape}, emb: {emb_full.shape}")
     print(f"Species: {N_CLASSES}, Labeled soundscape rows: {len(sc_labels)}")
 
     # Build Y_FULL ground-truth labels aligned to meta_full rows.
@@ -260,9 +248,7 @@ def main():
         fname = row["filename"]
         end_sec = _parse_end_sec(str(row["end"]))
         species_list = [
-            s.strip()
-            for s in str(row["primary_label"]).split(";")
-            if s.strip() and s.strip() in label_to_idx
+            s.strip() for s in str(row["primary_label"]).split(";") if s.strip() and s.strip() in label_to_idx
         ]
         key = (fname, end_sec)
         sc_label_map[key] = species_list
@@ -277,10 +263,7 @@ def main():
             Y_FULL[i, label_to_idx[sp]] = 1.0
 
     n_pos = Y_FULL.sum(axis=0)
-    print(
-        f"Y_FULL: {Y_FULL.shape}, positive labels: {n_pos.sum():.0f}, "
-        f"classes with ≥1 pos: {(n_pos >= 1).sum()}"
-    )
+    print(f"Y_FULL: {Y_FULL.shape}, positive labels: {n_pos.sum():.0f}, classes with ≥1 pos: {(n_pos >= 1).sum()}")
 
     # Fit prior tables on all labeled soundscape data
     tables = fit_prior_tables(meta_full, Y_FULL, class_names_ordered)
@@ -297,9 +280,7 @@ def main():
     n_comp = min(args.pca_dim, emb_scaled.shape[0] - 1, emb_scaled.shape[1])
     emb_pca = PCA(n_components=n_comp)
     Z_FULL = emb_pca.fit_transform(emb_scaled).astype(np.float32)
-    print(
-        f"PCA: {n_comp} components, {emb_pca.explained_variance_ratio_.sum():.4f} var explained"
-    )
+    print(f"PCA: {n_comp} components, {emb_pca.explained_variance_ratio_.sum():.4f} var explained")
 
     # Class prototypes + family mapping
     CLASS_PROTOTYPES = {}
@@ -312,13 +293,8 @@ def main():
     for ci, label in enumerate(PRIMARY_LABELS):
         fam = CLASS_NAME_MAP.get(label, "Unknown")
         FAMILY_GROUPS.setdefault(fam, []).append(ci)
-    FAMILY_IDX_MAP = {
-        f: np.array(idxs, dtype=np.int32) for f, idxs in FAMILY_GROUPS.items()
-    }
-    CLASS_FAMILY = {
-        ci: CLASS_NAME_MAP.get(label, "Unknown")
-        for ci, label in enumerate(PRIMARY_LABELS)
-    }
+    FAMILY_IDX_MAP = {f: np.array(idxs, dtype=np.int32) for f, idxs in FAMILY_GROUPS.items()}
+    CLASS_FAMILY = {ci: CLASS_NAME_MAP.get(label, "Unknown") for ci, label in enumerate(PRIMARY_LABELS)}
 
     # Train full probe models (for baseline cmAP)
     pos_counts = Y_FULL.sum(axis=0)
@@ -328,11 +304,7 @@ def main():
         y = Y_FULL[:, ci]
         if y.sum() == 0 or y.sum() == len(y):
             continue
-        proto_sim = (
-            cosine_sim_to_prototype(Z_FULL, CLASS_PROTOTYPES[ci])
-            if ci in CLASS_PROTOTYPES
-            else None
-        )
+        proto_sim = cosine_sim_to_prototype(Z_FULL, CLASS_PROTOTYPES[ci]) if ci in CLASS_PROTOTYPES else None
         fam = CLASS_FAMILY[ci]
         other_fam = FAMILY_IDX_MAP.get(fam, np.array([]))
         other_fam = other_fam[other_fam != ci]
@@ -345,20 +317,14 @@ def main():
             proto_sim_col=proto_sim,
             family_mean_col=fam_mean,
         )
-        clf = LogisticRegression(
-            C=args.probe_c, max_iter=400, solver="liblinear", class_weight="balanced"
-        )
+        clf = LogisticRegression(C=args.probe_c, max_iter=400, solver="liblinear", class_weight="balanced")
         clf.fit(X, y)
         probe_models[ci] = clf
 
     # In-sample probe predictions (for reference — these will be overconfident)
     insample_scores = oof_base.copy()
     for ci, clf in probe_models.items():
-        proto_sim = (
-            cosine_sim_to_prototype(Z_FULL, CLASS_PROTOTYPES[ci])
-            if ci in CLASS_PROTOTYPES
-            else None
-        )
+        proto_sim = cosine_sim_to_prototype(Z_FULL, CLASS_PROTOTYPES[ci]) if ci in CLASS_PROTOTYPES else None
         fam = CLASS_FAMILY[ci]
         other_fam = FAMILY_IDX_MAP.get(fam, np.array([]))
         other_fam = other_fam[other_fam != ci]
@@ -372,9 +338,7 @@ def main():
             family_mean_col=fam_mean,
         )
         pred = clf.decision_function(X).astype(np.float32)
-        insample_scores[:, ci] = (1 - args.probe_alpha) * oof_base[
-            :, ci
-        ] + args.probe_alpha * pred
+        insample_scores[:, ci] = (1 - args.probe_alpha) * oof_base[:, ci] + args.probe_alpha * pred
 
     # OOF probe predictions (GroupKFold by FILENAME, for calibration)
     # Group by file (not site) to get balanced folds: 59 files / 5 folds ≈ 12 files each
@@ -392,9 +356,7 @@ def main():
         # Re-fit PCA and scaler on training fold
         scaler_f = StandardScaler()
         pca_f = PCA(n_components=n_comp)
-        Z_tr = pca_f.fit_transform(scaler_f.fit_transform(emb_full[tr_idx])).astype(
-            np.float32
-        )
+        Z_tr = pca_f.fit_transform(scaler_f.fit_transform(emb_full[tr_idx])).astype(np.float32)
         Z_va = pca_f.transform(scaler_f.transform(emb_full[va_idx])).astype(np.float32)
 
         for ci in probe_idx_fold:
@@ -403,26 +365,14 @@ def main():
                 continue
 
             proto = Z_tr[y_tr == 1].mean(axis=0) if (y_tr == 1).sum() > 0 else None
-            proto_sim_tr = (
-                cosine_sim_to_prototype(Z_tr, proto) if proto is not None else None
-            )
-            proto_sim_va = (
-                cosine_sim_to_prototype(Z_va, proto) if proto is not None else None
-            )
+            proto_sim_tr = cosine_sim_to_prototype(Z_tr, proto) if proto is not None else None
+            proto_sim_va = cosine_sim_to_prototype(Z_va, proto) if proto is not None else None
 
             fam = CLASS_FAMILY[ci]
             other_fam = FAMILY_IDX_MAP.get(fam, np.array([]))
             other_fam = other_fam[other_fam != ci]
-            fam_tr = (
-                oof_base[tr_idx][:, other_fam].mean(axis=1)
-                if len(other_fam) > 0
-                else None
-            )
-            fam_va = (
-                oof_base[va_idx][:, other_fam].mean(axis=1)
-                if len(other_fam) > 0
-                else None
-            )
+            fam_tr = oof_base[tr_idx][:, other_fam].mean(axis=1) if len(other_fam) > 0 else None
+            fam_va = oof_base[va_idx][:, other_fam].mean(axis=1) if len(other_fam) > 0 else None
 
             X_tr = build_class_features(
                 Z_tr,
@@ -448,9 +398,7 @@ def main():
             )
             clf.fit(X_tr, y_tr)
             raw_pred = clf.decision_function(X_va).astype(np.float32)
-            oof_probe_scores[va_idx, ci] = (1 - args.probe_alpha) * oof_base[
-                va_idx, ci
-            ] + args.probe_alpha * raw_pred
+            oof_probe_scores[va_idx, ci] = (1 - args.probe_alpha) * oof_base[va_idx, ci] + args.probe_alpha * raw_pred
 
     # Baseline OOF cmAP (no temperature)
     valid_cls = [c for c in range(N_CLASSES) if Y_FULL[:, c].sum() > 0]
@@ -458,10 +406,7 @@ def main():
     def sigmoid(x):
         return 1.0 / (1.0 + np.exp(-x))
 
-    aps_base = [
-        average_precision_score(Y_FULL[:, c], sigmoid(oof_probe_scores[:, c]))
-        for c in valid_cls
-    ]
+    aps_base = [average_precision_score(Y_FULL[:, c], sigmoid(oof_probe_scores[:, c])) for c in valid_cls]
     cmap_base = float(np.mean(aps_base))
     print(f"\nOOF cmAP (no temperature, {len(valid_cls)} classes): {cmap_base:.4f}")
 
@@ -486,16 +431,9 @@ def main():
         if best_t < 1.0:
             n_calibrated += 1
 
-    aps_cal = [
-        average_precision_score(
-            Y_FULL[:, c], sigmoid(oof_probe_scores[:, c] / temps[c])
-        )
-        for c in valid_cls
-    ]
+    aps_cal = [average_precision_score(Y_FULL[:, c], sigmoid(oof_probe_scores[:, c] / temps[c])) for c in valid_cls]
     cmap_cal = float(np.mean(aps_cal))
-    print(
-        f"OOF cmAP (with per-class T grid, {n_calibrated} classes sharpened): {cmap_cal:.4f}"
-    )
+    print(f"OOF cmAP (with per-class T grid, {n_calibrated} classes sharpened): {cmap_cal:.4f}")
     print(f"Delta: {cmap_cal - cmap_base:+.4f}")
     print(
         "T_c distribution: ",
@@ -503,10 +441,7 @@ def main():
     )
 
     # Also check in-sample cmAP for reference
-    aps_insample = [
-        average_precision_score(Y_FULL[:, c], sigmoid(insample_scores[:, c]))
-        for c in valid_cls
-    ]
+    aps_insample = [average_precision_score(Y_FULL[:, c], sigmoid(insample_scores[:, c])) for c in valid_cls]
     print(f"In-sample cmAP (no OOF, reference): {np.mean(aps_insample):.4f}")
 
     # Save temperatures

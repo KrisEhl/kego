@@ -220,9 +220,7 @@ def build_file_batches(
     return batches
 
 
-def compute_pos_weights(
-    labels: np.ndarray, cap: float = POS_WEIGHT_CAP
-) -> torch.Tensor:
+def compute_pos_weights(labels: np.ndarray, cap: float = POS_WEIGHT_CAP) -> torch.Tensor:
     """Frequency-based per-class positive weights (1/sqrt(pos_count)), capped."""
     pos_counts = labels.sum(axis=0).astype(np.float32)
     pos_counts = np.maximum(pos_counts, 1.0)
@@ -271,9 +269,7 @@ def train_adapter(
 
             optimizer.zero_grad()
             pred = model(emb_t, logits_t)
-            loss = F.binary_cross_entropy_with_logits(
-                pred, labels_t, pos_weight=pos_weights
-            )
+            loss = F.binary_cross_entropy_with_logits(pred, labels_t, pos_weight=pos_weights)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -290,9 +286,7 @@ def train_adapter(
                 logits_t = torch.tensor(batch["logits"], dtype=torch.float32)
                 labels_t = torch.tensor(batch["labels"], dtype=torch.float32)
                 pred = model(emb_t, logits_t)
-                val_loss = F.binary_cross_entropy_with_logits(
-                    pred, labels_t, pos_weight=pos_weights
-                )
+                val_loss = F.binary_cross_entropy_with_logits(pred, labels_t, pos_weight=pos_weights)
                 val_losses.append(val_loss.item())
 
         mean_val = float(np.mean(val_losses))
@@ -313,9 +307,7 @@ def train_adapter(
 
         if mean_val < best_val_loss:
             best_val_loss = mean_val
-            best_adapter_state = {
-                k: v.clone() for k, v in model.adapter.state_dict().items()
-            }
+            best_adapter_state = {k: v.clone() for k, v in model.adapter.state_dict().items()}
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
@@ -340,9 +332,7 @@ def train_adapter(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Train PerchEmbeddingAdapter for Pantanal-specific embeddings"
-    )
+    parser = argparse.ArgumentParser(description="Train PerchEmbeddingAdapter for Pantanal-specific embeddings")
     parser.add_argument(
         "--output",
         default="outputs/perch_adapter.pt",
@@ -424,17 +414,14 @@ def main() -> None:
     train_row_mask = np.isin(filenames, [b["filename"] for b in train_batches])
     pos_weights = compute_pos_weights(labels[train_row_mask], cap=POS_WEIGHT_CAP)
     print(
-        f"Pos weights: min={pos_weights.min():.3f}, max={pos_weights.max():.3f}, "
-        f"mean={pos_weights.mean():.3f}",
+        f"Pos weights: min={pos_weights.min():.3f}, max={pos_weights.max():.3f}, mean={pos_weights.mean():.3f}",
         flush=True,
     )
 
     # -----------------------------------------------------------------------
     # Build model
     # -----------------------------------------------------------------------
-    adapter = PerchEmbeddingAdapter(
-        d_emb=D_EMB, d_logits=D_LOGITS, d_hidden=D_HIDDEN, dropout=DROPOUT
-    )
+    adapter = PerchEmbeddingAdapter(d_emb=D_EMB, d_logits=D_LOGITS, d_hidden=D_HIDDEN, dropout=DROPOUT)
     model = AdapterWithHead(adapter, n_classes=N_CLASSES)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -444,8 +431,7 @@ def main() -> None:
         flush=True,
     )
     print(
-        f"Initial α = {adapter.log_alpha.exp().item():.4f} "
-        f"(log_alpha={adapter.log_alpha.item():.3f})",
+        f"Initial α = {adapter.log_alpha.exp().item():.4f} (log_alpha={adapter.log_alpha.item():.3f})",
         flush=True,
     )
 
@@ -503,9 +489,7 @@ def main() -> None:
             emb_adapted_list.append(adapted)
 
     emb_adapted = np.concatenate(emb_adapted_list, axis=0).astype(np.float32)
-    assert emb_adapted.shape == emb.shape, (
-        f"Shape mismatch: {emb_adapted.shape} vs {emb.shape}"
-    )
+    assert emb_adapted.shape == emb.shape, f"Shape mismatch: {emb_adapted.shape} vs {emb.shape}"
 
     # Compute delta stats for diagnostics
     delta = emb_adapted - emb
@@ -514,8 +498,7 @@ def main() -> None:
         flush=True,
     )
     print(
-        f"Delta stats: mean={delta.mean():.6f}, std={delta.std():.6f}, "
-        f"max_abs={np.abs(delta).max():.6f}",
+        f"Delta stats: mean={delta.mean():.6f}, std={delta.std():.6f}, max_abs={np.abs(delta).max():.6f}",
         flush=True,
     )
 

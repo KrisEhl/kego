@@ -19,9 +19,7 @@ class Normalizer:
 
         self.features = features
         if self.features is None:
-            self.features = list(
-                set(kego.lists.flatten_list([df.columns for df in self.dfs]))
-            )
+            self.features = list(set(kego.lists.flatten_list([df.columns for df in self.dfs])))
 
         self.features = [c for c in self.features if c not in columns_to_ignore]
 
@@ -31,12 +29,8 @@ class Normalizer:
         for feature in self.features:
             if any([df[feature].dtype == "object" for df in self.dfs]):
                 FEATURES_CATEGORICAL.append(feature)
-                self.dfs = [
-                    df.assign(**{feature: df[feature].fillna("NAN")}) for df in self.dfs
-                ]
-        print(
-            f"In these features, there are {len(FEATURES_CATEGORICAL)} CATEGORICAL FEATURES: {FEATURES_CATEGORICAL}"
-        )
+                self.dfs = [df.assign(**{feature: df[feature].fillna("NAN")}) for df in self.dfs]
+        print(f"In these features, there are {len(FEATURES_CATEGORICAL)} CATEGORICAL FEATURES: {FEATURES_CATEGORICAL}")
         self.features_categorical = FEATURES_CATEGORICAL
         combined = pd.concat(self.dfs, axis=0, ignore_index=True)
 
@@ -62,7 +56,5 @@ class Normalizer:
                     combined[feature] = combined[feature].astype("int32")
 
         n_dfs = [0, *np.cumsum([len(df) for df in self.dfs]).tolist()]
-        self.dfs = [
-            combined.loc[n_dfs[i] : n_dfs[i + 1] - 1] for i in range(len(self.dfs))
-        ]
+        self.dfs = [combined.loc[n_dfs[i] : n_dfs[i + 1] - 1] for i in range(len(self.dfs))]
         return self.dfs

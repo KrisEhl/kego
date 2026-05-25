@@ -39,9 +39,7 @@ def train_rna_model(
 
     # Create dataset and dataloader
     dataset = RNADataset(train_sequences, train_labels)
-    dataloader = DataLoader(
-        dataset, batch_size=batch_size, shuffle=True, collate_fn=dataset.collate_fn
-    )
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=dataset.collate_fn)
 
     # Initialize model
     model = RNABaselineModel().to(device)

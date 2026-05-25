@@ -69,9 +69,7 @@ def execute_python(code: str, timeout: int = 15) -> str:
         f.write("from math import *\nimport sympy\n" + code)
         tmp = f.name
     try:
-        r = subprocess.run(
-            [sys.executable, tmp], capture_output=True, text=True, timeout=timeout
-        )
+        r = subprocess.run([sys.executable, tmp], capture_output=True, text=True, timeout=timeout)
         out = r.stdout
         if r.returncode != 0 and r.stderr:
             out += f"\n[err]: {r.stderr[:300]}"
@@ -91,9 +89,7 @@ def extract_answer(text: str) -> int | None:
         v = int(m.group(1))
         if 0 <= v <= 99999:
             return v
-    for m in re.finditer(
-        r"(?:answer\s+is|answer:|final\s+answer[:\s]+|=\s*)(\d+)", text, re.IGNORECASE
-    ):
+    for m in re.finditer(r"(?:answer\s+is|answer:|final\s+answer[:\s]+|=\s*)(\d+)", text, re.IGNORECASE):
         v = int(m.group(1))
         if 0 <= v <= 99999:
             return v
@@ -117,9 +113,7 @@ def _chat(client: OpenAI, model: str, messages: list, temperature: float) -> str
     return r.choices[0].message.content or ""
 
 
-def solve_tir(
-    problem: str, client: OpenAI, model: str, temperature: float = 0.0
-) -> int | None:
+def solve_tir(problem: str, client: OpenAI, model: str, temperature: float = 0.0) -> int | None:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": problem},
@@ -135,18 +129,14 @@ def solve_tir(
             ans = extract_answer(reply)
             if ans is not None:
                 return ans
-            messages.append(
-                {"role": "user", "content": "Give your final answer as \\boxed{N}."}
-            )
+            messages.append({"role": "user", "content": "Give your final answer as \\boxed{N}."})
         elif extract_answer(reply) is not None:
             break
     all_text = "\n".join(m["content"] for m in messages if m["role"] == "assistant")
     return extract_answer(all_text)
 
 
-def solve_tir_full(
-    problem: str, client: OpenAI, model: str, temperature: float = 0.0
-) -> tuple[int | None, str]:
+def solve_tir_full(problem: str, client: OpenAI, model: str, temperature: float = 0.0) -> tuple[int | None, str]:
     """Like solve_tir but also returns the full assistant reasoning text."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -162,13 +152,9 @@ def solve_tir_full(
         if not code_blocks:
             ans = extract_answer(reply)
             if ans is not None:
-                full_text = "\n".join(
-                    m["content"] for m in messages if m["role"] == "assistant"
-                )
+                full_text = "\n".join(m["content"] for m in messages if m["role"] == "assistant")
                 return ans, full_text
-            messages.append(
-                {"role": "user", "content": "Give your final answer as \\boxed{N}."}
-            )
+            messages.append({"role": "user", "content": "Give your final answer as \\boxed{N}."})
         elif extract_answer(reply) is not None:
             break
     all_text = "\n".join(m["content"] for m in messages if m["role"] == "assistant")
@@ -241,9 +227,7 @@ def genselect(
     for i, (ans, text) in enumerate(valid, 1):
         snippet = text[:3000] + "..." if len(text) > 3000 else text
         parts.append(f"--- Solution {i} (answer: {ans}) ---\n{snippet}")
-    user_msg = (
-        "\n\n".join(parts) + "\n\nWhich solution is most reliable? Reply BEST: <index>."
-    )
+    user_msg = "\n\n".join(parts) + "\n\nWhich solution is most reliable? Reply BEST: <index>."
 
     try:
         if judge == "anthropic":
@@ -289,10 +273,7 @@ def solve_with_voting(
 
     if parallel and n > 1:
         with ThreadPoolExecutor(max_workers=n) as pool:
-            futures = {
-                pool.submit(_run_sample, i, problem, client, model, aggregation): i
-                for i in range(n)
-            }
+            futures = {pool.submit(_run_sample, i, problem, client, model, aggregation): i for i in range(n)}
             for fut in as_completed(futures):
                 idx, ans, text = fut.result()
                 results.append((idx, ans, text))
@@ -361,18 +342,12 @@ def load_reference() -> list[dict]:
     import pandas as pd
 
     ref_path = (
-        Path(__file__).parent.parent.parent
-        / "data"
-        / "ai-mathematical-olympiad-progress-prize-3"
-        / "reference.csv"
+        Path(__file__).parent.parent.parent / "data" / "ai-mathematical-olympiad-progress-prize-3" / "reference.csv"
     )
     if not ref_path.exists():
         raise FileNotFoundError(f"Reference CSV not found: {ref_path}")
     df = pd.read_csv(ref_path)
-    return [
-        {"id": row["id"], "problem": row["problem"], "answer": int(row["answer"])}
-        for _, row in df.iterrows()
-    ]
+    return [{"id": row["id"], "problem": row["problem"], "answer": int(row["answer"])} for _, row in df.iterrows()]
 
 
 # ---------------------------------------------------------------------------
@@ -399,9 +374,7 @@ def run_eval(
     correct = 0
     rows = []
 
-    judge_label = (
-        f"{aggregation}/{judge}" if aggregation == "genselect" else aggregation
-    )
+    judge_label = f"{aggregation}/{judge}" if aggregation == "genselect" else aggregation
     parallel_label = "parallel" if parallel else "sequential"
     print(
         f"\nEvaluating {len(problems)} problems | model={model} | n={n} | tag={tag} | agg={judge_label} | sampling={parallel_label}\n"
@@ -450,15 +423,11 @@ def run_eval(
     total_time = time.time() - t0
     print("=" * 60)
     print(f"maj@{n} accuracy: {correct}/{len(problems)} = {acc:.1%}")
-    print(
-        f"Total time: {total_time / 60:.1f} min ({total_time / len(problems):.0f}s/problem)"
-    )
+    print(f"Total time: {total_time / 60:.1f} min ({total_time / len(problems):.0f}s/problem)")
     print(f"Results: {out_path}")
 
     with open(out_path, "w", newline="") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=["id", "predicted", "true", "correct", "votes"]
-        )
+        writer = csv.DictWriter(f, fieldnames=["id", "predicted", "true", "correct", "votes"])
         writer.writeheader()
         writer.writerows(rows)
 
@@ -475,13 +444,9 @@ def main() -> None:
         choices=["aime_2025", "aime_2024", "both", "reference"],
         default="aime_2025",
     )
-    parser.add_argument(
-        "--n", type=int, default=8, help="Samples per problem (majority vote)"
-    )
+    parser.add_argument("--n", type=int, default=8, help="Samples per problem (majority vote)")
     parser.add_argument("--limit", type=int, default=0, help="Max problems (0 = all)")
-    parser.add_argument(
-        "--offset", type=int, default=0, help="Skip first N problems (resume)"
-    )
+    parser.add_argument("--offset", type=int, default=0, help="Skip first N problems (resume)")
     parser.add_argument(
         "--aggregation",
         choices=["majority", "genselect"],

@@ -78,9 +78,7 @@ RESIDUAL_V3_MAX_EPOCHS = 150  # max epochs when early stopping is enabled
 RESIDUAL_V3_PATIENCE = 15  # early stopping patience for Stage 2 val loss
 RESIDUAL_V3_VAL_FRAC = 0.20  # fraction of soundscapes held out for Stage 2 ES
 RESIDUAL_V3_LR = 3e-4
-RESIDUAL_WEIGHT_DEFAULT = (
-    0.70  # default weight applied to Stage 2 correction at inference
-)
+RESIDUAL_WEIGHT_DEFAULT = 0.70  # default weight applied to Stage 2 correction at inference
 
 # Training — shared
 LR = 8e-4
@@ -156,9 +154,7 @@ def load_data(
     else:
         emb = npz["emb_full"].astype(np.float32)  # (708, 1536)
 
-    meta_file = npz_file.replace("full_perch_arrays", "full_perch_meta").replace(
-        ".npz", ".parquet"
-    )
+    meta_file = npz_file.replace("full_perch_arrays", "full_perch_meta").replace(".npz", ".parquet")
     meta = pd.read_parquet(PERCH_META_DIR / meta_file)
     meta["window_sec"] = meta["row_id"].str.extract(r"_(\d+)$").astype(int)
 
@@ -210,9 +206,7 @@ def load_data(
     # full = in-sample probes (trained on all 708 windows) → matches inference-time probe quality
     # oof  = OOF probes (train mode diagnostic only; weaker due to small per-fold training sets)
     full_probe_path = PERCH_META_DIR / probe_scores_file
-    oof_probe_path = PERCH_META_DIR / probe_scores_file.replace(
-        "full_probe_scores", "oof_probe_scores"
-    )
+    oof_probe_path = PERCH_META_DIR / probe_scores_file.replace("full_probe_scores", "oof_probe_scores")
     if full_probe_path.exists():
         probe_scores_full = np.load(full_probe_path).astype(np.float32)
         assert probe_scores_full.shape == scores.shape
@@ -263,9 +257,7 @@ class SelectiveSSM(nn.Module):
         self.in_proj = nn.Linear(d_model, d_model * 2)
 
         # Depthwise conv over time axis (groups=d_model → per-channel)
-        self.conv1d = nn.Conv1d(
-            d_model, d_model, kernel_size=3, padding=1, groups=d_model
-        )
+        self.conv1d = nn.Conv1d(d_model, d_model, kernel_size=3, padding=1, groups=d_model)
 
         # Input-dependent projections
         self.dt_proj = nn.Linear(d_model, d_model)
@@ -408,9 +400,7 @@ class ResidualSSMv3(nn.Module):
             nn.LayerNorm(d_model),
             nn.Dropout(dropout),
         )
-        self.ssm_layers = nn.ModuleList(
-            [BidirectionalSSMBlock(d_model, d_state, dropout) for _ in range(n_layers)]
-        )
+        self.ssm_layers = nn.ModuleList([BidirectionalSSMBlock(d_model, d_state, dropout) for _ in range(n_layers)])
         self.out_proj = nn.Linear(d_model, n_classes)
         nn.init.zeros_(self.out_proj.weight)
         nn.init.zeros_(self.out_proj.bias)
@@ -438,9 +428,7 @@ class ResidualSSMv3(nn.Module):
             ctx = self.site_proj(site_profile.unsqueeze(0)).expand(T, -1)  # (T, d_site)
             parts.append(ctx)
         if self.hour_embed is not None and hour_idx is not None:
-            h_t = torch.tensor(
-                max(0, min(23, int(hour_idx))), dtype=torch.long, device=emb.device
-            )
+            h_t = torch.tensor(max(0, min(23, int(hour_idx))), dtype=torch.long, device=emb.device)
             hour_ctx = self.hour_embed(h_t).unsqueeze(0).expand(T, -1)  # (T, d_hour)
             parts.append(hour_ctx)
         h = self.in_proj(torch.cat(parts, dim=-1))  # (T, d_model)
@@ -455,9 +443,7 @@ class TemporalCrossAttention(nn.Module):
     def __init__(self, d_model: int, n_heads: int, dropout: float):
         super().__init__()
         self.norm = nn.LayerNorm(d_model)
-        self.attn = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True
-        )
+        self.attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -514,12 +500,7 @@ class ProtoSSM(nn.Module):
         )
 
         # Stacked bidirectional SSM blocks
-        self.ssm_layers = nn.ModuleList(
-            [
-                BidirectionalSSMBlock(d_model, d_state, dropout)
-                for _ in range(n_ssm_layers)
-            ]
-        )
+        self.ssm_layers = nn.ModuleList([BidirectionalSSMBlock(d_model, d_state, dropout) for _ in range(n_ssm_layers)])
 
         # Temporal cross-attention after final SSM block
         self.cross_attn = TemporalCrossAttention(d_model, cross_attn_heads, dropout)
@@ -607,16 +588,12 @@ def focal_bce_with_logits(
     pos_weight: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Focal binary cross-entropy loss."""
-    bce = F.binary_cross_entropy_with_logits(
-        logits, targets, pos_weight=pos_weight, reduction="none"
-    )
+    bce = F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight, reduction="none")
     p_t = torch.exp(-bce)
     return ((1 - p_t) ** gamma * bce).mean()
 
 
-def compute_pos_weights(
-    labels: np.ndarray, cap: float = POS_WEIGHT_CAP
-) -> torch.Tensor:
+def compute_pos_weights(labels: np.ndarray, cap: float = POS_WEIGHT_CAP) -> torch.Tensor:
     """Frequency-based per-class positive weights (1/sqrt(pos_count)), capped."""
     pos_counts = labels.sum(axis=0).astype(np.float32)
     pos_counts = np.maximum(pos_counts, 1.0)
@@ -673,9 +650,7 @@ def init_prototypes(
             # Set all n_prototypes for this class to the mean
             start = cls_idx * model.n_prototypes
             end = start + model.n_prototypes
-            model.prototypes.data[start:end] = cls_mean.unsqueeze(0).expand(
-                model.n_prototypes, -1
-            )
+            model.prototypes.data[start:end] = cls_mean.unsqueeze(0).expand(model.n_prototypes, -1)
     model.train()
 
 
@@ -768,9 +743,7 @@ def train_model(
         history:     dict of lists (train_loss, val_loss)
     """
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=20, eta_min=1e-5
-    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, eta_min=1e-5)
 
     swa_model = torch.optim.swa_utils.AveragedModel(model)
     swa_scheduler = torch.optim.swa_utils.SWALR(optimizer, swa_lr=SWA_LR)
@@ -816,9 +789,7 @@ def train_model(
             logits_out, aux_out = model(emb_t, logits_perch, site_t, hour_t)
 
             # Focal BCE
-            loss_focal = focal_bce_with_logits(
-                logits_out, labels_smooth, gamma=FOCAL_GAMMA, pos_weight=pos_weights
-            )
+            loss_focal = focal_bce_with_logits(logits_out, labels_smooth, gamma=FOCAL_GAMMA, pos_weight=pos_weights)
 
             # Perch KD (MSE on sigmoid outputs)
             loss_kd = F.mse_loss(torch.sigmoid(logits_out), torch.sigmoid(logits_perch))
@@ -864,12 +835,8 @@ def train_model(
 
                     logits_out, aux_out = model(emb_t, logits_perch, site_t, hour_t)
 
-                    loss_focal = focal_bce_with_logits(
-                        logits_out, labels_t, gamma=FOCAL_GAMMA, pos_weight=pos_weights
-                    )
-                    loss_kd = F.mse_loss(
-                        torch.sigmoid(logits_out), torch.sigmoid(logits_perch)
-                    )
+                    loss_focal = focal_bce_with_logits(logits_out, labels_t, gamma=FOCAL_GAMMA, pos_weight=pos_weights)
+                    loss_kd = F.mse_loss(torch.sigmoid(logits_out), torch.sigmoid(logits_perch))
                     tax_targets = (labels_t.mean(0) @ tax_matrix).clamp(0, 1)
                     loss_aux = F.binary_cross_entropy_with_logits(aux_out, tax_targets)
                     v_loss = loss_focal + KD_WEIGHT * loss_kd + AUX_WEIGHT * loss_aux
@@ -1056,14 +1023,10 @@ def train_residual_ssm_v3(
     Returns:
         trained ResidualSSMv3
     """
-    optimizer = torch.optim.AdamW(
-        residual_ssm.parameters(), lr=RESIDUAL_V3_LR, weight_decay=1e-4
-    )
+    optimizer = torch.optim.AdamW(residual_ssm.parameters(), lr=RESIDUAL_V3_LR, weight_decay=1e-4)
     # Cosine annealing scheduler: LR decays from RESIDUAL_V3_LR to 1e-6 over all epochs.
     # Helps find sharper minima without fixed-LR oscillation in later epochs.
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=epochs, eta_min=1e-6
-    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
     rng = np.random.default_rng(42)
     n_files = len(all_batches)
 
@@ -1081,12 +1044,8 @@ def train_residual_ssm_v3(
             row_idx = file_to_rows[batch["filename"]]
 
             emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)  # (T, 1536)
-            proto_l = torch.tensor(
-                proto_logits[row_idx], dtype=torch.float32
-            )  # (T, 234)
-            proto_p = torch.tensor(
-                proto_probs[row_idx], dtype=torch.float32
-            )  # (T, 234)
+            proto_l = torch.tensor(proto_logits[row_idx], dtype=torch.float32)  # (T, 234)
+            proto_p = torch.tensor(proto_probs[row_idx], dtype=torch.float32)  # (T, 234)
             labels_t = torch.tensor(labels[row_idx], dtype=torch.float32)  # (T, 234)
 
             # Embedding noise augmentation: perturb input embeddings during training
@@ -1120,9 +1079,7 @@ def train_residual_ssm_v3(
             for xi in xc_idxs:
                 emb_t, proto_l, proto_p, labels_t = xc_batches[xi]
                 correction = residual_ssm(emb_t, proto_p)
-                loss = xc_loss_weight * F.binary_cross_entropy_with_logits(
-                    proto_l + correction, labels_t
-                )
+                loss = xc_loss_weight * F.binary_cross_entropy_with_logits(proto_l + correction, labels_t)
                 optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(residual_ssm.parameters(), 1.0)
@@ -1145,12 +1102,8 @@ def train_residual_ssm_v3(
                     site_prof = None
                     if site_profiles is not None:
                         site_prof = site_profiles.get(batch["site_idx"])
-                    correction = residual_ssm(
-                        emb_t, proto_p, site_prof, hour_idx=batch["hour_idx"]
-                    )
-                    val_loss = F.binary_cross_entropy_with_logits(
-                        proto_l + correction, labels_t
-                    )
+                    correction = residual_ssm(emb_t, proto_p, site_prof, hour_idx=batch["hour_idx"])
+                    val_loss = F.binary_cross_entropy_with_logits(proto_l + correction, labels_t)
                     val_losses.append(val_loss.item())
 
             val_loss_mean = float(np.mean(val_losses))
@@ -1164,9 +1117,7 @@ def train_residual_ssm_v3(
 
             if val_loss_mean < best_val_loss:
                 best_val_loss = val_loss_mean
-                best_state = {
-                    k: v.clone() for k, v in residual_ssm.state_dict().items()
-                }
+                best_state = {k: v.clone() for k, v in residual_ssm.state_dict().items()}
                 no_improve = 0
             else:
                 no_improve += 1
@@ -1178,10 +1129,7 @@ def train_residual_ssm_v3(
                     break
         else:
             if verbose and epoch % 10 == 0:
-                print(
-                    f"  [ResidualSSMv3] Epoch {epoch:3d}/{epochs}"
-                    f"  loss={train_loss:.5f}"
-                )
+                print(f"  [ResidualSSMv3] Epoch {epoch:3d}/{epochs}  loss={train_loss:.5f}")
 
     if val_batches is not None and best_state is not None:
         residual_ssm.load_state_dict(best_state)
@@ -1246,9 +1194,7 @@ def predict_batches_logits(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Train ProtoSSM v3 on Perch soundscape embeddings"
-    )
+    parser = argparse.ArgumentParser(description="Train ProtoSSM v3 on Perch soundscape embeddings")
     parser.add_argument(
         "--mode",
         choices=["train", "submit"],
@@ -1486,9 +1432,7 @@ def main() -> None:
     # File-level batches (each file = 12 windows in sequence order)
     # Re-sort meta so window_sec order is preserved per file
     # (already sorted in the NPZ — verified above)
-    all_batches = build_file_batches(
-        emb, logits, labels, sites, hours, filenames, site_to_idx
-    )
+    all_batches = build_file_batches(emb, logits, labels, sites, hours, filenames, site_to_idx)
     print(f"File batches: {len(all_batches)} files × 12 windows")
 
     # -----------------------------------------------------------------------
@@ -1541,19 +1485,13 @@ def main() -> None:
 
         if args.stage1_checkpoint is not None:
             # Load Stage 1 weights from existing checkpoint (skip retraining).
-            print(
-                f"\n--- Submit mode: Stage 1 — loading from {args.stage1_checkpoint} ---"
-            )
-            s1_ckpt = torch.load(
-                args.stage1_checkpoint, map_location="cpu", weights_only=False
-            )
+            print(f"\n--- Submit mode: Stage 1 — loading from {args.stage1_checkpoint} ---")
+            s1_ckpt = torch.load(args.stage1_checkpoint, map_location="cpu", weights_only=False)
             model.load_state_dict(s1_ckpt["model_state_dict"], strict=False)
             model.eval()
             print("Stage 1 loaded (no retraining).")
         else:
-            print(
-                f"\n--- Submit mode: Stage 1 — ProtoSSM on all {len(all_batches)} files ---"
-            )
+            print(f"\n--- Submit mode: Stage 1 — ProtoSSM on all {len(all_batches)} files ---")
             print(f"Epochs={epochs}, patience={patience}")
             init_prototypes(model, emb, labels)
             model, history = train_model(
@@ -1574,9 +1512,7 @@ def main() -> None:
         print("\n--- Stage 1 complete — collecting in-sample proto predictions ---")
         proto_logits_train = predict_batches_logits(model, all_batches)  # (708, 234)
         proto_probs_train = 1.0 / (1.0 + np.exp(-proto_logits_train))
-        print(
-            f"Proto logits: {proto_logits_train.shape}, mean={proto_logits_train.mean():.4f}"
-        )
+        print(f"Proto logits: {proto_logits_train.shape}, mean={proto_logits_train.mean():.4f}")
 
         # Stage 2 base: probe-augmented logits (match inference pipeline) or proto logits fallback
         # BCE loss: BCE(stage2_base_logits + correction, labels)
@@ -1590,11 +1526,7 @@ def main() -> None:
             s2_emb_path = Path(args.stage2_emb_file)
             if not s2_emb_path.is_absolute():
                 candidate = PERCH_META_DIR / s2_emb_path
-                s2_emb_path = (
-                    candidate
-                    if candidate.exists()
-                    else DATA_ROOT / args.stage2_emb_file
-                )
+                s2_emb_path = candidate if candidate.exists() else DATA_ROOT / args.stage2_emb_file
             emb_stage2 = np.load(s2_emb_path).astype(np.float32)
             print(f"Stage 2 emb: CORAL-aligned from {s2_emb_path}: {emb_stage2.shape}")
 
@@ -1610,9 +1542,7 @@ def main() -> None:
             for sp_i, sp_name in enumerate(_sp_names):
                 if sp_name in site_to_idx:
                     idx = site_to_idx[sp_name]
-                    site_profiles_dict[idx] = torch.tensor(
-                        _sp_profiles[sp_i], dtype=torch.float32
-                    )
+                    site_profiles_dict[idx] = torch.tensor(_sp_profiles[sp_i], dtype=torch.float32)
             # Global mean as fallback for unknown sites
             _global_mean = torch.tensor(_sp["global_mean"].astype(np.float32))
             # idx=0 is padding/unknown in site_to_idx
@@ -1635,19 +1565,13 @@ def main() -> None:
         # Load Stage 2 from existing checkpoint if --stage2-checkpoint provided
         _stage2_loaded = False
         if getattr(args, "stage2_checkpoint", None) is not None:
-            s2_ckpt = torch.load(
-                args.stage2_checkpoint, map_location="cpu", weights_only=False
-            )
+            s2_ckpt = torch.load(args.stage2_checkpoint, map_location="cpu", weights_only=False)
             if "residual_ssm_state_dict" in s2_ckpt:
                 residual_ssm.load_state_dict(s2_ckpt["residual_ssm_state_dict"])
                 _stage2_loaded = True
-                print(
-                    f"\n--- Stage 2 — ResidualSSMv3 loaded from {args.stage2_checkpoint} (no retraining) ---"
-                )
+                print(f"\n--- Stage 2 — ResidualSSMv3 loaded from {args.stage2_checkpoint} (no retraining) ---")
             else:
-                print(
-                    "WARNING: no residual_ssm_state_dict in stage2-checkpoint — Stage 2 will be retrained."
-                )
+                print("WARNING: no residual_ssm_state_dict in stage2-checkpoint — Stage 2 will be retrained.")
 
         # Build XC augmentation batches if --xc-cache provided
         xc_batches = None
@@ -1655,9 +1579,7 @@ def main() -> None:
             xc_cache_path = Path(args.xc_cache)
             if not xc_cache_path.is_absolute():
                 xc_cache_path = COMPETITION_DATA / args.xc_cache
-            xc_batches = build_xc_batches(
-                xc_cache_path, model, species_list, seed=args.seed
-            )
+            xc_batches = build_xc_batches(xc_cache_path, model, species_list, seed=args.seed)
 
         if not _stage2_loaded and args.stage2_epochs is not None:
             # Fixed-epoch mode: use all soundscapes, no val split.
@@ -1687,16 +1609,10 @@ def main() -> None:
             # Use args.seed so different seeds get different train/val splits (K-fold diversity).
             rng_split = np.random.default_rng(args.seed)
             n_val_files = max(1, int(len(all_batches) * RESIDUAL_V3_VAL_FRAC))
-            val_file_idx = rng_split.choice(
-                len(all_batches), size=n_val_files, replace=False
-            )
+            val_file_idx = rng_split.choice(len(all_batches), size=n_val_files, replace=False)
             val_file_set = {all_batches[i]["filename"] for i in val_file_idx}
-            stage2_train_batches = [
-                b for b in all_batches if b["filename"] not in val_file_set
-            ]
-            stage2_val_batches = [
-                b for b in all_batches if b["filename"] in val_file_set
-            ]
+            stage2_train_batches = [b for b in all_batches if b["filename"] not in val_file_set]
+            stage2_val_batches = [b for b in all_batches if b["filename"] in val_file_set]
             print(
                 f"\n--- Stage 2 — ResidualSSMv3 (max {RESIDUAL_V3_MAX_EPOCHS} epochs, early stopping, "
                 f"base={stage2_base_name}) ---"
@@ -1734,10 +1650,7 @@ def main() -> None:
         if getattr(args, "stage3_epochs", None) is not None:
             fixed_ep3 = args.stage3_epochs
             rw = args.residual_weight
-            print(
-                f"\n--- Stage 3 — ResidualSSMv3b ({fixed_ep3} epochs, "
-                f"second-pass correction, rw={rw}) ---"
-            )
+            print(f"\n--- Stage 3 — ResidualSSMv3b ({fixed_ep3} epochs, second-pass correction, rw={rw}) ---")
 
             # Compute in-sample Stage 2 corrections over all training windows
             residual_ssm.eval()
@@ -1746,9 +1659,7 @@ def main() -> None:
             with torch.no_grad():
                 for fn_key, row_idx in file_to_rows.items():
                     emb_t = torch.tensor(emb[row_idx], dtype=torch.float32)
-                    proto_p = torch.tensor(
-                        proto_probs_train[row_idx], dtype=torch.float32
-                    )
+                    proto_p = torch.tensor(proto_probs_train[row_idx], dtype=torch.float32)
                     s_prof = None
                     if site_profiles_dict is not None:
                         s_prof = site_profiles_dict.get(fn_to_site_idx.get(fn_key, 0))
@@ -1764,9 +1675,7 @@ def main() -> None:
                 f"stage2 correction mean_abs={np.abs(stage2_corrections).mean():.4f}"
             )
 
-            residual_ssm_v3b = ResidualSSMv3(
-                dropout=getattr(args, "stage2_dropout", DROPOUT_RESIDUAL)
-            )
+            residual_ssm_v3b = ResidualSSMv3(dropout=getattr(args, "stage2_dropout", DROPOUT_RESIDUAL))
             residual_ssm_v3b = train_residual_ssm_v3(
                 residual_ssm=residual_ssm_v3b,
                 emb=emb,
@@ -1789,9 +1698,7 @@ def main() -> None:
         # appeared positively — their correction is driven by all-negative BCE loss and
         # thus systematically negative, hurting recall for those species.
         positive_mask = labels.sum(axis=0) > 0  # (234,) bool
-        print(
-            f"Positive mask: {positive_mask.sum()} / {len(positive_mask)} species have positives"
-        )
+        print(f"Positive mask: {positive_mask.sum()} / {len(positive_mask)} species have positives")
 
         # Store d_site and stage2_n_layers in config so inference code knows the architecture
         config["d_site"] = _d_site
@@ -1818,9 +1725,7 @@ def main() -> None:
         if residual_ssm_v3b is not None:
             save_dict["residual_ssm_v3b_state_dict"] = residual_ssm_v3b.state_dict()
             save_dict["residual_weight"] = args.residual_weight
-            print(
-                f"Stage 3 ResidualSSMv3b saved (residual_weight={args.residual_weight})"
-            )
+            print(f"Stage 3 ResidualSSMv3b saved (residual_weight={args.residual_weight})")
         torch.save(save_dict, output_path)
         print(f"Saved to {output_path}")
 
@@ -1848,9 +1753,7 @@ def main() -> None:
         fold_models = []
         fold_val_aps = []
 
-        for fold, (train_idx, val_idx) in enumerate(
-            gkf.split(file_indices, groups=file_groups)
-        ):
+        for fold, (train_idx, val_idx) in enumerate(gkf.split(file_indices, groups=file_groups)):
             t_fold = time.time()
             print(f"\n=== Fold {fold + 1}/{N_FOLDS} ===")
             batches_tr = [all_batches[i] for i in train_idx]
@@ -1863,9 +1766,7 @@ def main() -> None:
             train_row_idx = []
             for b in batches_tr:
                 train_row_idx.extend(file_to_rows[b["filename"]])
-            fold_pos_weights = compute_pos_weights(
-                labels[train_row_idx], cap=POS_WEIGHT_CAP
-            )
+            fold_pos_weights = compute_pos_weights(labels[train_row_idx], cap=POS_WEIGHT_CAP)
 
             model = ProtoSSM(n_tax_groups=len(group_names))
             init_prototypes(model, emb[train_row_idx], labels[train_row_idx])
@@ -1905,24 +1806,18 @@ def main() -> None:
                         aps.append(ap)
                 mean_ap = float(np.mean(aps)) if aps else float("nan")
                 fold_val_aps.append(mean_ap)
-                print(
-                    f"  Fold {fold + 1} OOF mean-AP ({len(aps)} classes): {mean_ap:.4f}"
-                )
+                print(f"  Fold {fold + 1} OOF mean-AP ({len(aps)} classes): {mean_ap:.4f}")
 
             fold_models.append(model.state_dict())
             t_fold_end = time.time() - t_fold
-            print(
-                f"  Fold {fold + 1} time: {t_fold_end:.1f}s ({t_fold_end / 60:.1f}min)"
-            )
+            print(f"  Fold {fold + 1} time: {t_fold_end:.1f}s ({t_fold_end / 60:.1f}min)")
 
         if fold_val_aps:
             print(f"\nOOF cmAP across folds (ProtoSSM): {np.mean(fold_val_aps):.4f}")
 
         # Stage 2: train ResidualSSMv3 using probe-augmented logits as the base
         # This matches the inference pipeline where correction is applied to probe-quality scores
-        print(
-            f"\n--- Stage 2 (OOF): ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs, base={stage2_base_name}) ---"
-        )
+        print(f"\n--- Stage 2 (OOF): ResidualSSMv3 ({RESIDUAL_V3_EPOCHS} epochs, base={stage2_base_name}) ---")
         print(f"OOF proto logits shape: {oof_proto_logits.shape}")
         residual_ssm_oof = ResidualSSMv3(n_layers=getattr(args, "stage2_n_layers", 1))
         residual_ssm_oof = train_residual_ssm_v3(
@@ -1948,30 +1843,18 @@ def main() -> None:
                 proto_p = torch.tensor(oof_proto_probs[row_idx], dtype=torch.float32)
                 correction = residual_ssm_oof(emb_t, proto_p).numpy()
                 # Apply to stage2_base (same base used for training → OOF eval is meaningful)
-                oof_pipeline_logits[row_idx] = (
-                    stage2_base_logits[row_idx] + 0.35 * correction
-                )
+                oof_pipeline_logits[row_idx] = stage2_base_logits[row_idx] + 0.35 * correction
 
         from sklearn.metrics import average_precision_score
 
         active_cls_all = np.where(labels.sum(0) > 0)[0]
         # Baseline: stage2_base alone (probe-augmented or raw Perch)
-        aps_base = [
-            average_precision_score(labels[:, c], stage2_base_logits[:, c])
-            for c in active_cls_all
-        ]
+        aps_base = [average_precision_score(labels[:, c], stage2_base_logits[:, c]) for c in active_cls_all]
         # After correction
         oof_probs_pipeline = 1.0 / (1.0 + np.exp(-oof_pipeline_logits))
-        aps_corrected = [
-            average_precision_score(labels[:, c], oof_probs_pipeline[:, c])
-            for c in active_cls_all
-        ]
-        print(
-            f"OOF pipeline cmAP ({stage2_base_name} baseline): {np.mean(aps_base):.4f}"
-        )
-        print(
-            f"OOF pipeline cmAP (+ResidualSSMv3 ×0.35):        {np.mean(aps_corrected):.4f}"
-        )
+        aps_corrected = [average_precision_score(labels[:, c], oof_probs_pipeline[:, c]) for c in active_cls_all]
+        print(f"OOF pipeline cmAP ({stage2_base_name} baseline): {np.mean(aps_base):.4f}")
+        print(f"OOF pipeline cmAP (+ResidualSSMv3 ×0.35):        {np.mean(aps_corrected):.4f}")
         oof_scores = oof_probs_pipeline  # store pipeline probabilities as final OOF
 
         # Retrain on full dataset for the final artifact
@@ -1993,9 +1876,7 @@ def main() -> None:
 
         # Final Stage 2 on full data (in-sample, for the saved artifact)
         print(f"\n--- Retraining Stage 2 (full data, base={stage2_base_name}) ---")
-        proto_logits_full = predict_batches_logits(
-            model_final, all_batches
-        )  # (708, 234) — ProtoSSM probs input only
+        proto_logits_full = predict_batches_logits(model_final, all_batches)  # (708, 234) — ProtoSSM probs input only
         proto_probs_full = 1.0 / (1.0 + np.exp(-proto_logits_full))
         residual_ssm_final = ResidualSSMv3(n_layers=getattr(args, "stage2_n_layers", 1))
         residual_ssm_final = train_residual_ssm_v3(

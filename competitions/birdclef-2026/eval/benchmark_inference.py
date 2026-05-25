@@ -70,9 +70,7 @@ class GEMFreqPool(nn.Module):
 class AttentionSEDHead(nn.Module):
     def __init__(self, feat_dim, num_classes, dropout=0.1):
         super().__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(feat_dim, feat_dim), nn.ReLU(inplace=True), nn.Dropout(dropout)
-        )
+        self.fc = nn.Sequential(nn.Linear(feat_dim, feat_dim), nn.ReLU(inplace=True), nn.Dropout(dropout))
         self.att_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
         self.cls_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
 
@@ -86,9 +84,7 @@ class AttentionSEDHead(nn.Module):
 class BirdModel(nn.Module):
     def __init__(self, backbone, n_classes, pretrained=False):
         super().__init__()
-        self.backbone = timm.create_model(
-            backbone, pretrained=pretrained, num_classes=n_classes, in_chans=3
-        )
+        self.backbone = timm.create_model(backbone, pretrained=pretrained, num_classes=n_classes, in_chans=3)
 
     def forward(self, x):
         return self.backbone(x)
@@ -97,9 +93,7 @@ class BirdModel(nn.Module):
 class BirdModelBaseline(nn.Module):
     def __init__(self, backbone, n_classes, pretrained=False, dropout=0.1):
         super().__init__()
-        self.encoder = timm.create_model(
-            backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
-        )
+        self.encoder = timm.create_model(backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3)
         # Probe actual output dim — num_features is unreliable for some backbones (e.g. hgnetv2)
         with torch.no_grad():
             _dummy = torch.zeros(1, 3, 64, 128)
@@ -241,18 +235,14 @@ def main():
     parser = argparse.ArgumentParser(description="BirdCLEF inference benchmark")
     parser.add_argument("--tag", default="soundscape-v7", help="Checkpoint tag")
     parser.add_argument("--n-folds", type=int, default=4)
-    parser.add_argument(
-        "--soundscapes", type=str, default=None, help="Path to soundscape directory"
-    )
+    parser.add_argument("--soundscapes", type=str, default=None, help="Path to soundscape directory")
     parser.add_argument(
         "--n-test-soundscapes",
         type=int,
         default=780,
         help="Number of test soundscapes to extrapolate to",
     )
-    parser.add_argument(
-        "--max-files", type=int, default=None, help="Limit files for quick testing"
-    )
+    parser.add_argument("--max-files", type=int, default=None, help="Limit files for quick testing")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -320,9 +310,7 @@ def main():
     print(f"\n  Files benchmarked:       {len(results)}")
     print(f"  Mean time per file:      {mean_per_file:.2f}s")
     print(f"  Models loaded:           {len(models_cfg)}")
-    print(
-        f"  Windows per file (mean): {np.mean([r['n_windows'] for r in results]):.1f}"
-    )
+    print(f"  Windows per file (mean): {np.mean([r['n_windows'] for r in results]):.1f}")
     print()
     print(f"  Extrapolation to {n_test} test soundscapes:")
     print(f"    Estimated total:       {est_total_s:.0f}s = {est_total_s / 60:.1f} min")
@@ -332,14 +320,10 @@ def main():
     if margin_s > 0:
         print(f"    Margin:                +{margin_s:.0f}s ({margin_pct:.0f}%) — OK")
     else:
-        print(
-            f"    OVER BUDGET:           {-margin_s:.0f}s ({-margin_pct:.0f}%) over limit!"
-        )
+        print(f"    OVER BUDGET:           {-margin_s:.0f}s ({-margin_pct:.0f}%) over limit!")
 
     # Bottleneck
-    bottleneck = max(
-        ("load", "mel", "infer"), key=lambda k: np.mean([r[k] for r in results])
-    )
+    bottleneck = max(("load", "mel", "infer"), key=lambda k: np.mean([r[k] for r in results]))
     print(f"\n  Bottleneck: {bottleneck}")
 
 

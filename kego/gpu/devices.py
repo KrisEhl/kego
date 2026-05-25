@@ -2,9 +2,7 @@ import torch
 
 
 def available_gpus():
-    available_gpus = [
-        torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())
-    ]
+    available_gpus = [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())]
     return available_gpus
 
 

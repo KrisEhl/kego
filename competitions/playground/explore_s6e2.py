@@ -26,11 +26,7 @@ from kego.plotting.figures import create_axes_grid, save_figure
 # ---------------------------------------------------------------------------
 # Paths & constants
 # ---------------------------------------------------------------------------
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 OUTPUT_DIR = project_root / "competitions" / "playground" / "plots_s6e2"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -80,12 +76,8 @@ section("CATEGORICAL FEATURE ANALYSIS — Value distributions & target rates")
 for col in CAT_FEATURES:
     print(f"\n  --- {col} ---")
     vals = sorted(train[col].unique())
-    print(
-        f"  {'Value':>6s}  {'Count':>8s}  {'%':>7s}  {'Target%':>8s}  {'Test%':>7s}  {'Orig%':>7s}  Notes"
-    )
-    print(
-        f"  {'-' * 6}  {'-' * 8}  {'-' * 7}  {'-' * 8}  {'-' * 7}  {'-' * 7}  {'-' * 20}"
-    )
+    print(f"  {'Value':>6s}  {'Count':>8s}  {'%':>7s}  {'Target%':>8s}  {'Test%':>7s}  {'Orig%':>7s}  Notes")
+    print(f"  {'-' * 6}  {'-' * 8}  {'-' * 7}  {'-' * 8}  {'-' * 7}  {'-' * 7}  {'-' * 20}")
 
     train_total = len(train)
     test_total = len(test)
@@ -120,9 +112,7 @@ for col in CAT_FEATURES:
     is_monotonic_dec = all(a >= b for a, b in zip(target_rates, target_rates[1:]))
     if not is_monotonic_inc and not is_monotonic_dec and len(vals) > 2:
         print("  ** NON-MONOTONIC target rate: NOT truly ordinal!")
-        print(
-            f"     Target rates by value: {dict(zip(vals, [f'{r:.3f}' for r in target_rates]))}"
-        )
+        print(f"     Target rates by value: {dict(zip(vals, [f'{r:.3f}' for r in target_rates]))}")
 
 
 # ===========================================================================
@@ -142,9 +132,7 @@ for col in CONT_FEATURES:
     print(f"\n  --- {col} ---")
     print(f"  Range:          [{train[col].min():.1f}, {train[col].max():.1f}]")
     print(f"  IQR:            [{q1:.1f}, {q3:.1f}], IQR={iqr:.1f}")
-    print(
-        f"  Mild outliers:  {len(mild)} ({len(mild) / len(train) * 100:.2f}%)  bounds=[{lower:.1f}, {upper:.1f}]"
-    )
+    print(f"  Mild outliers:  {len(mild)} ({len(mild) / len(train) * 100:.2f}%)  bounds=[{lower:.1f}, {upper:.1f}]")
     print(
         f"  Extreme:        {len(extreme)} ({len(extreme) / len(train) * 100:.2f}%)  bounds=[{extreme_lower:.1f}, {extreme_upper:.1f}]"
     )
@@ -160,9 +148,7 @@ for col in CONT_FEATURES:
     # Check for suspicious values (0s in columns that shouldn't have them)
     n_zero = (train[col] == 0).sum()
     if n_zero > 0 and col not in ("ST depression",):
-        print(
-            f"  ** Zero values: {n_zero} ({n_zero / len(train) * 100:.2f}%) — possible missing data"
-        )
+        print(f"  ** Zero values: {n_zero} ({n_zero / len(train) * 100:.2f}%) — possible missing data")
         if col in original.columns:
             orig_zero = (original[col] == 0).sum()
             print(f"     Original data: {orig_zero}/{len(original)} zeros")
@@ -212,18 +198,14 @@ for col in all_features:
         tr_dist = train[col].value_counts(normalize=True).sort_index()
         te_dist = test[col].value_counts(normalize=True).sort_index()
         all_vals = sorted(set(tr_dist.index) | set(te_dist.index))
-        max_diff = max(
-            abs(tr_dist.get(v, 0) - te_dist.get(v, 0)) * 100 for v in all_vals
-        )
+        max_diff = max(abs(tr_dist.get(v, 0) - te_dist.get(v, 0)) * 100 for v in all_vals)
         flag = " ** SHIFT" if max_diff > 1 else ""
         print(f"  {col:<25s}  max_cat_diff={max_diff:.2f}%{flag}")
     else:
         ks_stat, ks_p = stats.ks_2samp(train[col], test[col])
         mean_diff = train[col].mean() - test[col].mean()
         flag = " ** SIGNIFICANT" if ks_p < 0.01 else ""
-        print(
-            f"  {col:<25s}  KS={ks_stat:.4f}  p={ks_p:.4g}  mean_diff={mean_diff:+.3f}{flag}"
-        )
+        print(f"  {col:<25s}  KS={ks_stat:.4f}  p={ks_p:.4g}  mean_diff={mean_diff:+.3f}{flag}")
 
 
 # ===========================================================================
@@ -236,9 +218,7 @@ dup_mask = train.duplicated(subset=feature_cols, keep=False)
 n_dup_rows = dup_mask.sum()
 n_dup_groups = train[dup_mask].groupby(feature_cols).ngroups
 
-print(
-    f"  Rows involved in duplicates: {n_dup_rows} ({n_dup_rows / len(train) * 100:.2f}%)"
-)
+print(f"  Rows involved in duplicates: {n_dup_rows} ({n_dup_rows / len(train) * 100:.2f}%)")
 print(f"  Unique duplicate groups: {n_dup_groups}")
 
 # Check target consistency in duplicates
@@ -246,9 +226,7 @@ if n_dup_rows > 0:
     dup_groups = train[dup_mask].groupby(feature_cols)[TARGET]
     inconsistent = dup_groups.apply(lambda g: g.nunique() > 1)
     n_inconsistent = inconsistent.sum()
-    print(
-        f"  Groups with INCONSISTENT targets: {n_inconsistent} ({n_inconsistent / max(n_dup_groups, 1) * 100:.1f}%)"
-    )
+    print(f"  Groups with INCONSISTENT targets: {n_inconsistent} ({n_inconsistent / max(n_dup_groups, 1) * 100:.1f}%)")
     if n_inconsistent > 0:
         print("  ** Same features, different labels — noisy labels!")
 
@@ -268,9 +246,7 @@ section("RARE & SUSPICIOUS CROSS-TABULATIONS")
 # Thallium x Chest pain type (the two strongest categorical predictors)
 print("\n  Thallium x Chest pain type (count / target_rate):")
 ct = pd.crosstab(train["Thallium"], train["Chest pain type"], margins=True)
-ct_target = pd.crosstab(
-    train["Thallium"], train["Chest pain type"], values=train[TARGET], aggfunc="mean"
-)
+ct_target = pd.crosstab(train["Thallium"], train["Chest pain type"], values=train[TARGET], aggfunc="mean")
 print("  Counts:")
 print(ct.to_string().replace("\n", "\n  "))
 print("\n  Target rates:")
@@ -279,9 +255,7 @@ print(ct_target.round(3).to_string().replace("\n", "\n  "))
 # Thallium x Exercise angina
 print("\n\n  Thallium x Exercise angina (count / target_rate):")
 ct2 = pd.crosstab(train["Thallium"], train["Exercise angina"], margins=True)
-ct2_target = pd.crosstab(
-    train["Thallium"], train["Exercise angina"], values=train[TARGET], aggfunc="mean"
-)
+ct2_target = pd.crosstab(train["Thallium"], train["Exercise angina"], values=train[TARGET], aggfunc="mean")
 print("  Counts:")
 print(ct2.to_string().replace("\n", "\n  "))
 print("\n  Target rates:")
@@ -342,15 +316,11 @@ for idx, col in enumerate(CAT_FEATURES):
 
     # Target rate on secondary axis
     ax2 = ax.twinx()
-    ax2.plot(
-        x, target_rates, "o-", color="#C44E52", markersize=5, linewidth=2, zorder=3
-    )
+    ax2.plot(x, target_rates, "o-", color="#C44E52", markersize=5, linewidth=2, zorder=3)
     ax2.set_ylabel("Target Rate", fontsize=8, color="#C44E52")
     ax2.set_ylim(0, 1)
     ax2.tick_params(axis="y", labelsize=7)
-    ax2.axhline(
-        train[TARGET].mean(), color="#C44E52", linestyle="--", alpha=0.3, linewidth=1
-    )
+    ax2.axhline(train[TARGET].mean(), color="#C44E52", linestyle="--", alpha=0.3, linewidth=1)
 
 save_figure(fig, filename=str(OUTPUT_DIR / "categorical_traps.png"), dpi=150)
 plt.close(fig)
@@ -418,11 +388,7 @@ for idx, col in enumerate(CAT_FEATURES):
 
     tr_pcts = [(train[col] == v).mean() * 100 for v in vals]
     te_pcts = [(test[col] == v).mean() * 100 for v in vals]
-    orig_pcts = (
-        [(original[col] == v).mean() * 100 for v in vals]
-        if col in original.columns
-        else [0] * len(vals)
-    )
+    orig_pcts = [(original[col] == v).mean() * 100 for v in vals] if col in original.columns else [0] * len(vals)
 
     x = np.arange(len(vals))
     w = 0.25
@@ -459,12 +425,8 @@ for idx, col in enumerate(CONT_FEATURES):
         max(train[col].max(), test[col].max()),
         61,
     )
-    ax.hist(
-        train[col], bins=bins, alpha=0.5, color="#4C72B0", label="Train", density=True
-    )
-    ax.hist(
-        test[col], bins=bins, alpha=0.5, color="#55A868", label="Test", density=True
-    )
+    ax.hist(train[col], bins=bins, alpha=0.5, color="#4C72B0", label="Train", density=True)
+    ax.hist(test[col], bins=bins, alpha=0.5, color="#55A868", label="Test", density=True)
     if col in original.columns:
         ax.hist(
             original[col],
@@ -496,13 +458,8 @@ fig5, axes5 = plt.subplots(1, 3, figsize=(18, 5))
 # 5a: Thallium value counts by target
 vals = sorted(train["Thallium"].unique())
 x = np.arange(len(vals))
-for i, (label_val, color, name) in enumerate(
-    [(0, "#4C72B0", "Absence"), (1, "#C44E52", "Presence")]
-):
-    counts = [
-        (train[(train["Thallium"] == v) & (train[TARGET] == label_val)].shape[0])
-        for v in vals
-    ]
+for i, (label_val, color, name) in enumerate([(0, "#4C72B0", "Absence"), (1, "#C44E52", "Presence")]):
+    counts = [(train[(train["Thallium"] == v) & (train[TARGET] == label_val)].shape[0]) for v in vals]
     axes5[0].bar(x + i * 0.35, counts, 0.35, label=name, color=color, alpha=0.8)
 axes5[0].set_xticks(x + 0.175)
 axes5[0].set_xticklabels([str(v) for v in vals])
@@ -512,12 +469,8 @@ axes5[0].set_xlabel("Thallium value")
 axes5[0].set_ylabel("Count")
 
 # 5b: Thallium x Chest pain type heatmap (target rate)
-ct_target = pd.crosstab(
-    train["Thallium"], train["Chest pain type"], values=train[TARGET], aggfunc="mean"
-)
-im = axes5[1].imshow(
-    ct_target.values, cmap="RdYlGn_r", aspect="auto", norm=Normalize(vmin=0, vmax=1)
-)
+ct_target = pd.crosstab(train["Thallium"], train["Chest pain type"], values=train[TARGET], aggfunc="mean")
+im = axes5[1].imshow(ct_target.values, cmap="RdYlGn_r", aspect="auto", norm=Normalize(vmin=0, vmax=1))
 axes5[1].set_xticks(range(len(ct_target.columns)))
 axes5[1].set_xticklabels(ct_target.columns.astype(str))
 axes5[1].set_yticks(range(len(ct_target.index)))
@@ -541,12 +494,8 @@ axes5[1].set_ylabel("Thallium")
 plt.colorbar(im, ax=axes5[1], fraction=0.046)
 
 # 5c: Thallium x Exercise angina heatmap (target rate)
-ct2_target = pd.crosstab(
-    train["Thallium"], train["Exercise angina"], values=train[TARGET], aggfunc="mean"
-)
-im2 = axes5[2].imshow(
-    ct2_target.values, cmap="RdYlGn_r", aspect="auto", norm=Normalize(vmin=0, vmax=1)
-)
+ct2_target = pd.crosstab(train["Thallium"], train["Exercise angina"], values=train[TARGET], aggfunc="mean")
+im2 = axes5[2].imshow(ct2_target.values, cmap="RdYlGn_r", aspect="auto", norm=Normalize(vmin=0, vmax=1))
 axes5[2].set_xticks(range(len(ct2_target.columns)))
 axes5[2].set_xticklabels(ct2_target.columns.astype(str))
 axes5[2].set_yticks(range(len(ct2_target.index)))
@@ -569,9 +518,7 @@ axes5[2].set_xlabel("Exercise angina")
 axes5[2].set_ylabel("Thallium")
 plt.colorbar(im2, ax=axes5[2], fraction=0.046)
 
-fig5.suptitle(
-    "Thallium Deep Dive (dominant predictor, values 3/6/7 are NOT ordinal)", fontsize=12
-)
+fig5.suptitle("Thallium Deep Dive (dominant predictor, values 3/6/7 are NOT ordinal)", fontsize=12)
 fig5.tight_layout()
 save_figure(fig5, filename=str(OUTPUT_DIR / "thallium_deep_dive.png"), dpi=150)
 plt.close(fig5)
@@ -614,9 +561,7 @@ for idx, col in enumerate(CONT_FEATURES):
     ax = axes7[idx]
     data_0 = train.loc[train[TARGET] == 0, col]
     data_1 = train.loc[train[TARGET] == 1, col]
-    bp = ax.boxplot(
-        [data_0, data_1], labels=["Absence", "Presence"], patch_artist=True, widths=0.6
-    )
+    bp = ax.boxplot([data_0, data_1], labels=["Absence", "Presence"], patch_artist=True, widths=0.6)
     bp["boxes"][0].set_facecolor("#4C72B0")
     bp["boxes"][1].set_facecolor("#C44E52")
     for box in bp["boxes"]:
@@ -741,9 +686,7 @@ print(f"  Wrong:   {n_wrong} ({n_wrong / len(train) * 100:.2f}%)  FP={n_fp}  FN=
 
 # Confident mistakes (prob > 0.8 wrong direction)
 confident_wrong = train[(train["correct"] == 0) & (train["confidence"] > 0.3)]
-print(
-    f"  Confidently wrong (|prob-0.5|>0.3): {len(confident_wrong)} ({len(confident_wrong) / len(train) * 100:.3f}%)"
-)
+print(f"  Confidently wrong (|prob-0.5|>0.3): {len(confident_wrong)} ({len(confident_wrong) / len(train) * 100:.3f}%)")
 
 # --- Per-feature: misclassification rate in outlier vs non-outlier regions ---
 section("MISCLASSIFICATION vs OUTLIERS (continuous features)")
@@ -778,12 +721,8 @@ section("MISCLASSIFICATION by CATEGORICAL VALUE")
 for col in CAT_FEATURES:
     vals = sorted(train[col].unique())
     print(f"\n  --- {col} ---")
-    print(
-        f"  {'Value':>6s}  {'Count':>8s}  {'ErrRate':>8s}  {'FP%':>7s}  {'FN%':>7s}  {'ConfWrong':>10s}  Notes"
-    )
-    print(
-        f"  {'-' * 6}  {'-' * 8}  {'-' * 8}  {'-' * 7}  {'-' * 7}  {'-' * 10}  {'-' * 20}"
-    )
+    print(f"  {'Value':>6s}  {'Count':>8s}  {'ErrRate':>8s}  {'FP%':>7s}  {'FN%':>7s}  {'ConfWrong':>10s}  Notes")
+    print(f"  {'-' * 6}  {'-' * 8}  {'-' * 8}  {'-' * 7}  {'-' * 7}  {'-' * 10}  {'-' * 20}")
 
     overall_err = 1 - train["correct"].mean()
     for v in vals:
@@ -848,9 +787,7 @@ for col in CONT_FEATURES:
     grouped["conf_wrong"] = conf_wrong_by_bin.values
 
     print(f"\n  --- {col} ---")
-    print(
-        f"  {'Bin':<25s}  {'Count':>7s}  {'Target%':>8s}  {'Err%':>7s}  {'ConfWrong':>10s}"
-    )
+    print(f"  {'Bin':<25s}  {'Count':>7s}  {'Target%':>8s}  {'Err%':>7s}  {'ConfWrong':>10s}")
     for interval, row in grouped.iterrows():
         print(
             f"  {interval!s:<25s}  {int(row['count']):>7d}  "  # type: ignore[index]

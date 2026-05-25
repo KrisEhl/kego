@@ -29,11 +29,7 @@ from kego.tracking import load_predictions_from_mlflow  # noqa: E402
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 
 
@@ -47,11 +43,7 @@ def _impute_cholesterol(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if (df["Cholesterol"] == 0).any():
         df["_age_bin"] = pd.cut(df["Age"], bins=[0, 40, 50, 60, 100])
-        median_map = (
-            df[df["Cholesterol"] > 0]
-            .groupby(["Sex", "_age_bin"])["Cholesterol"]
-            .median()
-        )
+        median_map = df[df["Cholesterol"] > 0].groupby(["Sex", "_age_bin"])["Cholesterol"].median()
         mask = df["Cholesterol"] == 0
         for idx in df[mask].index:
             key = (df.loc[idx, "Sex"], df.loc[idx, "_age_bin"])
@@ -78,12 +70,7 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["vessels_x_thallium"] = df["Number of vessels fluro"] * df["Thallium"]
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
 
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["abnormal_count"] = (
         (df["Thallium"] >= 6).astype(int)
         + (df["Number of vessels fluro"] >= 1).astype(int)
@@ -112,9 +99,9 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         grp_mean = df.groupby("Sex")[col].transform("mean")
         df[f"{col}_dev_sex"] = df[col] - grp_mean
 
-    df["signal_conflict"] = (
-        (df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)
-    ).astype(int) + ((df["Thallium"] == 3) & (df["Chest pain type"] == 4)).astype(int)
+    df["signal_conflict"] = ((df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)).astype(int) + (
+        (df["Thallium"] == 3) & (df["Chest pain type"] == 4)
+    ).astype(int)
 
     return df
 
@@ -125,9 +112,7 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Compare stacking approaches on holdout AUC"
-    )
+    parser = argparse.ArgumentParser(description="Compare stacking approaches on holdout AUC")
     parser.add_argument(
         "--folds",
         type=int,
@@ -147,13 +132,8 @@ def main():
         logger.error("MLFLOW_TRACKING_URI must be set")
         sys.exit(1)
 
-    logger.info(
-        f"Loading predictions from experiments: {args.experiment} "
-        f"(folds_n={args.folds})"
-    )
-    model_names, all_oof, all_holdout, _ = load_predictions_from_mlflow(
-        args.experiment, tracking_uri, folds=args.folds
-    )
+    logger.info(f"Loading predictions from experiments: {args.experiment} (folds_n={args.folds})")
+    model_names, all_oof, all_holdout, _ = load_predictions_from_mlflow(args.experiment, tracking_uri, folds=args.folds)
     if not model_names:
         logger.error("No predictions loaded, exiting")
         sys.exit(1)
@@ -167,9 +147,7 @@ def main():
     original["id"] = -1
     train_full = pd.concat([train_full, original], ignore_index=True)
 
-    train, holdout, _ = split_dataset(
-        train_full, train_size=0.8, validate_size=0.2, stratify_column=TARGET
-    )
+    train, holdout, _ = split_dataset(train_full, train_size=0.8, validate_size=0.2, stratify_column=TARGET)
     train = train.reset_index(drop=True)
     holdout = holdout.reset_index(drop=True)
 
@@ -182,9 +160,7 @@ def main():
     train_labels = train[TARGET].values
     holdout_labels = holdout[TARGET].values
 
-    logger.info(
-        f"Train: {len(train)}, Holdout: {len(holdout)}, Features: {len(features)}"
-    )
+    logger.info(f"Train: {len(train)}, Holdout: {len(holdout)}, Features: {len(features)}")
     logger.info(f"Models: {model_names}")
 
     compare_stacking_methods(

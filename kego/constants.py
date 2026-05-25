@@ -21,8 +21,4 @@ DEFAULT_FONTSIZE_LARGE: float = 20
 DEFAULT_FONTSIZE_SMALL: float = 12
 DEFAULT_FIGURE_SIZE: tuple[float, float] = (10.0, 6.0)
 
-PATH_DATA = (
-    Path(os.environ.get("KEGO_PATH_DATA", _PATH_FILE / "../data"))
-    .expanduser()
-    .absolute()
-)
+PATH_DATA = Path(os.environ.get("KEGO_PATH_DATA", _PATH_FILE / "../data")).expanduser().absolute()

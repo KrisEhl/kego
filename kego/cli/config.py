@@ -102,9 +102,7 @@ def load_config(
         ray_address=c["ray_address"],
         mlflow_uri=c["mlflow_uri"],
         repo_path=c.get("repo_path", "~/projects/kego"),
-        uv_project_dir=c.get(
-            "uv_project_dir", "~/projects/kego/competitions/playground"
-        ),
+        uv_project_dir=c.get("uv_project_dir", "~/projects/kego/competitions/playground"),
         data_path=c.get("data_path", "/home/kristian/projects/kego/data"),
         ssh_host=c.get("ssh_host", ""),
         mlflow_dir=c.get("mlflow_dir", "~/mlflow"),

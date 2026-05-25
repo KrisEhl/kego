@@ -39,35 +39,25 @@ PAT_MODE = re.compile(r"Mode: (.+)")
 PAT_FOLDS = re.compile(r"(\d+) folds")
 PAT_FOLD_FROM_LID = re.compile(r"/(\d+)f$")
 PAT_LAUNCHED = re.compile(r"Launched \d+ Ray tasks")
-PAT_RESUMED = re.compile(
-    r"Resuming: skipped (\d+) completed tasks.*launching (\d+) new"
-)
+PAT_RESUMED = re.compile(r"Resuming: skipped (\d+) completed tasks.*launching (\d+) new")
 
 # Planned task lines: "- catboost/raw/5f seed=42 (GPU 0.25)" or "(CPU)"
 PAT_PLANNED = re.compile(rf"- ({LID}) seed=(\d+) \((?:CPU|GPU(?: ([\d.]+))?)\)")
 
 # Driver-side completion: "[1/20] catboost/raw/5f seed=42 ... Holdout AUC: 0.9123"
-PAT_DRIVER_COMPLETED = re.compile(
-    rf"\[(\d+)/(\d+)\] ({LID}) seed=(\d+).*?(?:Holdout|OOF) AUC: ([\d.]+)"
-)
+PAT_DRIVER_COMPLETED = re.compile(rf"\[(\d+)/(\d+)\] ({LID}) seed=(\d+).*?(?:Holdout|OOF) AUC: ([\d.]+)")
 
 # Driver-side failure: "[3/20] Task failed: catboost/raw/5f seed=42 ..."
 PAT_DRIVER_FAILED = re.compile(r"\[(\d+)/(\d+)\] Task failed.*")
 
 # Worker starting: "[catboost/raw/5f] Starting seed=42"
-PAT_WORKER_STARTING = re.compile(
-    rf"pid=(\d+)(?:, ip=([\d.]+))?.*?\[({LID})\] Starting seed=(\d+)"
-)
+PAT_WORKER_STARTING = re.compile(rf"pid=(\d+)(?:, ip=([\d.]+))?.*?\[({LID})\] Starting seed=(\d+)")
 
 # Worker finished with IP: "ip=1.2.3.4) ... [model] Finished seed=42 ... (3m05s)"
-PAT_WORKER_FINISHED_IP = re.compile(
-    rf"ip=([\d.]+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)"
-)
+PAT_WORKER_FINISHED_IP = re.compile(rf"ip=([\d.]+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)")
 
 # Worker finished on head (no ip=): "pid=123) ... [model] Finished seed=42 ... (3m05s)"
-PAT_WORKER_FINISHED_HEAD = re.compile(
-    rf"pid=(\d+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)"
-)
+PAT_WORKER_FINISHED_HEAD = re.compile(rf"pid=(\d+)\).*?\[({LID})\] Finished seed=(\d+).*?\((\d+)m(\d+)s\)")
 
 # Worker-side start/finish (simpler, for set-building)
 PAT_STARTED = re.compile(rf"\[({LID})\] Starting seed=(\d+)")
@@ -441,9 +431,7 @@ def compute_state(parsed, now, job_id):
                         dur = (finish_ts - start_ts).total_seconds()
                         if dur > 0:
                             parsed.task_durations[(mname, seed)] = int(dur)
-                            model_durations.setdefault(_base_model(mname), []).append(
-                                dur
-                            )
+                            model_durations.setdefault(_base_model(mname), []).append(dur)
         model_avg_dur = {m: sum(ds) / len(ds) for m, ds in model_durations.items()}
 
     # --- Build completed list ---
@@ -510,9 +498,7 @@ def compute_state(parsed, now, job_id):
         folds_n = _folds_for(mname, parsed.default_folds)
         fold_counts[(mname, seed)] = min(cnt, folds_n)
 
-        dur_values = re.findall(
-            rf"pid={pid}.*?\d+\s+[\d.]+\s+[\d.]+\s+[\d.]+\s+([\d.]+)", after
-        )
+        dur_values = re.findall(rf"pid={pid}.*?\d+\s+[\d.]+\s+[\d.]+\s+[\d.]+\s+([\d.]+)", after)
         if dur_values:
             task_epoch_secs[(mname, seed)] = sum(float(d) for d in dur_values)
 
@@ -563,9 +549,7 @@ def compute_state(parsed, now, job_id):
 
     # n_done / n_total — include resumed tasks from prior runs
     n_done = (completed[-1].index if completed else 0) + parsed.resumed_count
-    n_total = (
-        completed[-1].total if completed else len(parsed.planned)
-    ) + parsed.resumed_count
+    n_total = (completed[-1].total if completed else len(parsed.planned)) + parsed.resumed_count
 
     return JobState(
         job_id=job_id,
@@ -601,20 +585,14 @@ def display(state, now):
 
     # --- Completed tasks ---
     if state.resumed_count and not state.completed:
-        print(
-            f"  Progress: {state.resumed_count}/{state.n_total} tasks done ({state.resumed_count} from prior run)"
-        )
+        print(f"  Progress: {state.resumed_count}/{state.n_total} tasks done ({state.resumed_count} from prior run)")
     if state.completed:
         idx_width = len(str(state.n_total))
         max_model_len = max(len(c.learner_id) for c in state.completed)
         resumed_str = (
-            f" ({state.resumed_count} from prior run + {len(state.completed)} new)"
-            if state.resumed_count
-            else ""
+            f" ({state.resumed_count} from prior run + {len(state.completed)} new)" if state.resumed_count else ""
         )
-        print(
-            f"  Progress: {state.n_done}/{state.n_total} tasks completed{resumed_str}"
-        )
+        print(f"  Progress: {state.n_done}/{state.n_total} tasks completed{resumed_str}")
         top_threshold = max(c.auc for c in state.completed) - 0.0001
         for c in state.completed:
             dur_str = ""
@@ -654,11 +632,7 @@ def display(state, now):
             print(f"    \033[31m{idx} {f.raw_line}\033[0m")
 
     # --- Running / Queued / Unscheduled tasks ---
-    all_names = (
-        [r.learner_id for r in state.running]
-        + [m for m, s in state.queued]
-        + [m for m, s in state.unscheduled]
-    )
+    all_names = [r.learner_id for r in state.running] + [m for m, s in state.queued] + [m for m, s in state.unscheduled]
     max_name_len = max(len(n) for n in all_names) if all_names else 10
 
     if state.running:
@@ -682,19 +656,14 @@ def display(state, now):
                 parts.append(f"~{_fmt_secs(r.remaining_secs)} left")
 
             eta_str = f"  ({', '.join(parts)})" if parts else ""
-            print(
-                f"    {r.learner_id:<{max_name_len}}  seed={r.seed:<4} "
-                f"{dev}{gpu_str}{eta_str}"
-            )
+            print(f"    {r.learner_id:<{max_name_len}}  seed={r.seed:<4} {dev}{gpu_str}{eta_str}")
 
     # --- Queued tasks (launched Ray futures not yet seen starting) ---
     if state.queued:
         print(f"  Queued ({len(state.queued)}):")
         for mname, seed in state.queued:
             dev = _device_label(mname, gpu_amount=state.gpu_amounts.get((mname, seed)))
-            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(
-                _base_model(mname)
-            )
+            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(_base_model(mname))
             est_str = f"  (~{_fmt_secs(est)} est)" if est else ""
             print(f"    {mname:<{max_name_len}}  seed={seed:<4} {dev}{est_str}")
 
@@ -703,9 +672,7 @@ def display(state, now):
         print(f"  Unscheduled ({len(state.unscheduled)}):")
         for mname, seed in state.unscheduled:
             dev = _device_label(mname, gpu_amount=state.gpu_amounts.get((mname, seed)))
-            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(
-                _base_model(mname)
-            )
+            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(_base_model(mname))
             est_str = f"  (~{_fmt_secs(est)} est)" if est else ""
             print(f"    {mname:<{max_name_len}}  seed={seed:<4} {dev}{est_str}")
 
@@ -724,9 +691,7 @@ def display(state, now):
                 cpu_remaining.append(rem)
 
         for mname, seed in list(state.queued) + list(state.unscheduled):
-            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(
-                _base_model(mname), 300
-            )
+            est = state.unsched_est.get((mname, seed)) or state.model_avg_dur.get(_base_model(mname), 300)
             if _is_gpu_model(mname):
                 gpu_remaining.append(est)
             else:
@@ -741,8 +706,7 @@ def display(state, now):
         detail = []
         if gpu_remaining:
             detail.append(
-                f"{len(gpu_remaining)} GPU tasks, "
-                f"~{_fmt_secs(sum(gpu_remaining))} work / {N_GPU_WORKERS} GPUs"
+                f"{len(gpu_remaining)} GPU tasks, ~{_fmt_secs(sum(gpu_remaining))} work / {N_GPU_WORKERS} GPUs"
             )
         if cpu_remaining:
             detail.append(f"{len(cpu_remaining)} CPU tasks")

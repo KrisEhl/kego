@@ -72,9 +72,7 @@ def load_audio(path: Path) -> np.ndarray:
             offset = start / native_sr
         else:
             offset = 0.0
-        y, _ = librosa.load(
-            path, sr=SR, mono=True, offset=offset, duration=CLIP_DURATION
-        )
+        y, _ = librosa.load(path, sr=SR, mono=True, offset=offset, duration=CLIP_DURATION)
     except Exception:
         y, _ = librosa.load(path, sr=SR, mono=True, duration=CLIP_DURATION)
     return y
@@ -108,9 +106,7 @@ def spec_to_tensor(spec: np.ndarray) -> torch.Tensor:
     return torch.from_numpy(img).float()
 
 
-def specaugment(
-    spec: np.ndarray, freq_mask: int = 20, time_mask: int = 30
-) -> np.ndarray:
+def specaugment(spec: np.ndarray, freq_mask: int = 20, time_mask: int = 30) -> np.ndarray:
     spec = spec.copy()
     n_mels, t = spec.shape
     fill = spec.mean()
@@ -127,9 +123,7 @@ def gain_augment(spec: np.ndarray, max_db: float = 12.0) -> np.ndarray:
     return spec + np.random.uniform(-max_db, max_db)
 
 
-def load_spec_crop(
-    audio_path: Path, cache_path: Path | None, augment: bool
-) -> np.ndarray:
+def load_spec_crop(audio_path: Path, cache_path: Path | None, augment: bool) -> np.ndarray:
     """Load from cache (.npy) if available, else decode audio on-the-fly."""
     if cache_path is not None and cache_path.exists():
         spec = np.load(cache_path).astype(np.float32)
@@ -197,16 +191,12 @@ class MultiYearDataset(Dataset):
     ):
         self.species_to_idx = species_to_idx
         self.augment = augment
-        self.rows: list[
-            tuple[Path, Path | None, int]
-        ] = []  # (audio_path, cache_path, label)
+        self.rows: list[tuple[Path, Path | None, int]] = []  # (audio_path, cache_path, label)
 
         for year in years:
             year_dir = DATA_ROOT / f"birdclef-{year}"
             # 2021 uses train_short_audio/, all other years use train_audio/
-            audio_dir = year_dir / (
-                "train_short_audio" if year == 2021 else "train_audio"
-            )
+            audio_dir = year_dir / ("train_short_audio" if year == 2021 else "train_audio")
             cache_dir = year_dir / "specs_cache_pretrain"
 
             df = _load_csv(year_dir)
@@ -226,15 +216,11 @@ class MultiYearDataset(Dataset):
                 audio_path = audio_dir / fname
                 if not audio_path.exists():
                     # Try without extension or with .ogg
-                    audio_path = audio_dir / (
-                        fname if fname.endswith(".ogg") else fname + ".ogg"
-                    )
+                    audio_path = audio_dir / (fname if fname.endswith(".ogg") else fname + ".ogg")
 
                 stem = Path(fname).stem
                 subdir = Path(fname).parent
-                cache_path = (
-                    cache_dir / subdir / f"{stem}.npy" if cache_dir.exists() else None
-                )
+                cache_path = cache_dir / subdir / f"{stem}.npy" if cache_dir.exists() else None
 
                 self.rows.append((audio_path, cache_path, species_to_idx[label]))
 
@@ -268,9 +254,7 @@ class PretrainModel(nn.Module):
 
     def __init__(self, n_classes: int, backbone: str = BACKBONE):
         super().__init__()
-        self.encoder = timm.create_model(
-            backbone, pretrained=True, num_classes=0, global_pool="avg", in_chans=3
-        )
+        self.encoder = timm.create_model(backbone, pretrained=True, num_classes=0, global_pool="avg", in_chans=3)
         feat_dim = self.encoder.num_features
         self.head = nn.Linear(feat_dim, n_classes)
 
@@ -279,11 +263,7 @@ class PretrainModel(nn.Module):
 
     def backbone_state_dict(self) -> dict:
         """Return encoder-only weights — compatible with BirdModelBaseline.encoder."""
-        return {
-            k.removeprefix("encoder."): v
-            for k, v in self.state_dict().items()
-            if k.startswith("encoder.")
-        }
+        return {k.removeprefix("encoder."): v for k, v in self.state_dict().items() if k.startswith("encoder.")}
 
 
 # ---------------------------------------------------------------------------
@@ -328,9 +308,7 @@ def eval_epoch(model, loader, device) -> tuple[float, float]:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--years", nargs="+", type=int, default=[2021, 2022, 2023, 2024]
-    )
+    parser.add_argument("--years", nargs="+", type=int, default=[2021, 2022, 2023, 2024])
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -365,9 +343,7 @@ def main():
         year_dir = DATA_ROOT / f"birdclef-{year}"
         df = _load_csv(year_dir)
         if df is not None:
-            all_species.update(
-                df["primary_label"].dropna().astype(str).str.strip().unique()
-            )
+            all_species.update(df["primary_label"].dropna().astype(str).str.strip().unique())
     species_list = sorted(all_species)
     species_to_idx = {s: i for i, s in enumerate(species_list)}
     n_classes = len(species_list)
@@ -399,9 +375,7 @@ def main():
             return len(self.subset)
 
         def __getitem__(self, idx):
-            audio_path, cache_path, label = self.subset.dataset.rows[
-                self.subset.indices[idx]
-            ]
+            audio_path, cache_path, label = self.subset.dataset.rows[self.subset.indices[idx]]
             spec = load_spec_crop(audio_path, cache_path, augment=True)
             return spec_to_tensor(spec), label
 

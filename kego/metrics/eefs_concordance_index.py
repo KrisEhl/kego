@@ -8,9 +8,7 @@ class ParticipantVisibleError(Exception):
     pass
 
 
-def score(
-    solution: pd.DataFrame, submission: pd.DataFrame, row_id_column_name: str = "id"
-) -> float:
+def score(solution: pd.DataFrame, submission: pd.DataFrame, row_id_column_name: str = "id") -> float:
     """
     >>> import pandas as pd
     >>> row_id_column_name = "id"

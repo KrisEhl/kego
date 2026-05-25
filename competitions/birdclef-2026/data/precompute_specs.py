@@ -71,11 +71,7 @@ def compute_and_save_pcen(args: tuple) -> tuple[str, bool, str]:
     src = audio_dir / filename
     stem = Path(filename).stem
     subdir = Path(filename).parent if not is_soundscape else Path(".")
-    dst = (
-        cache_dir / subdir / f"{stem}.npy"
-        if not is_soundscape
-        else cache_dir / f"{stem}.npy"
-    )
+    dst = cache_dir / subdir / f"{stem}.npy" if not is_soundscape else cache_dir / f"{stem}.npy"
 
     if dst.exists():
         return filename, True, "cached"
@@ -89,9 +85,7 @@ def compute_and_save_pcen(args: tuple) -> tuple[str, bool, str]:
         else:
             frames_to_read = info.frames
 
-        y, file_sr = sf.read(
-            src, frames=frames_to_read, dtype="float32", always_2d=False
-        )
+        y, file_sr = sf.read(src, frames=frames_to_read, dtype="float32", always_2d=False)
         if y.ndim == 2:
             y = y.mean(axis=1)
 
@@ -108,9 +102,7 @@ def compute_and_save_pcen(args: tuple) -> tuple[str, bool, str]:
             fmax=FMAX,
             htk=htk,
         )
-        pcen = librosa.pcen(mel * (2**31), sr=SR, hop_length=hop_length).astype(
-            np.float16
-        )
+        pcen = librosa.pcen(mel * (2**31), sr=SR, hop_length=hop_length).astype(np.float16)
         np.save(dst, pcen)
         return filename, True, "ok"
     except Exception as e:
@@ -147,9 +139,7 @@ def compute_and_save(args: tuple) -> tuple[str, bool, str]:
         else:
             frames_to_read = info.frames
 
-        y, file_sr = sf.read(
-            src, frames=frames_to_read, dtype="float32", always_2d=False
-        )
+        y, file_sr = sf.read(src, frames=frames_to_read, dtype="float32", always_2d=False)
         if y.ndim == 2:
             y = y.mean(axis=1)
 
@@ -280,29 +270,15 @@ def main() -> None:
 
     if args.check:
         if is_soundscape:
-            cached = sum(
-                1 for f in filenames if (cache_dir / f"{Path(f).stem}.npy").exists()
-            )
+            cached = sum(1 for f in filenames if (cache_dir / f"{Path(f).stem}.npy").exists())
         else:
-            cached = sum(
-                1
-                for f in filenames
-                if (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()
-            )
+            cached = sum(1 for f in filenames if (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists())
         print(f"Cache: {cached}/{len(filenames)} files ({cached / len(filenames):.1%})")
         if cached < len(filenames):
             if is_soundscape:
-                missing = [
-                    f
-                    for f in filenames
-                    if not (cache_dir / f"{Path(f).stem}.npy").exists()
-                ]
+                missing = [f for f in filenames if not (cache_dir / f"{Path(f).stem}.npy").exists()]
             else:
-                missing = [
-                    f
-                    for f in filenames
-                    if not (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()
-                ]
+                missing = [f for f in filenames if not (cache_dir / Path(f).parent / f"{Path(f).stem}.npy").exists()]
             print(f"Missing: {missing[:5]}{'...' if len(missing) > 5 else ''}")
         return
 
@@ -326,9 +302,7 @@ def main() -> None:
         for f in filenames
     ]
 
-    print(
-        f"Computing {'PCEN' if args.pcen else 'log-mel'} specs for {len(tasks)} files with {args.workers} workers..."
-    )
+    print(f"Computing {'PCEN' if args.pcen else 'log-mel'} specs for {len(tasks)} files with {args.workers} workers...")
     print(f"n_mels={n_mels}, n_fft={n_fft}, hop={hop_length}, fmin={fmin}, htk={htk}")
     print(f"Output: {cache_dir}")
 

@@ -160,12 +160,8 @@ def get_norm(
         return matplotlib.colors.LogNorm(vmin=vmin, vmax=vmax)
     elif norm == "symlog":
         if norm_symlog_linear_threshold is None:
-            raise ValueError(
-                f"{norm_symlog_linear_threshold=} needs to specified to use {norm=}"
-            )
-        return matplotlib.colors.SymLogNorm(
-            vmin=vmin, vmax=vmax, linthresh=norm_symlog_linear_threshold
-        )
+            raise ValueError(f"{norm_symlog_linear_threshold=} needs to specified to use {norm=}")
+        return matplotlib.colors.SymLogNorm(vmin=vmin, vmax=vmax, linthresh=norm_symlog_linear_threshold)
     elif norm == "linear" or norm is None:
         return matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
     else:

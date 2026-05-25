@@ -204,9 +204,7 @@ def plot_histogram_2d(
         spacing_y,
         axes_style,
     )
-    kego.plotting.histogram_2d_utils._check_parameter_consistency(
-        facet_column, facet_row, marginal_x, marginal_y, df
-    )
+    kego.plotting.histogram_2d_utils._check_parameter_consistency(facet_column, facet_row, marginal_x, marginal_y, df)
 
     (
         column_masks,
@@ -240,9 +238,7 @@ def plot_histogram_2d(
         facet_row,
     )
 
-    masks = kego.plotting.histogram_2d_utils._set_masks(
-        column_masks, row_masks, n_columns, n_rows
-    )
+    masks = kego.plotting.histogram_2d_utils._set_masks(column_masks, row_masks, n_columns, n_rows)
 
     titles = kego.plotting.histogram_2d_utils._determine_axes_titles(
         facet_column,
@@ -260,9 +256,7 @@ def plot_histogram_2d(
         heights_along_y,
         colorbar_include_row_col,
         colorbar_off,
-    ) = kego.plotting.histogram_2d_utils._prepare_axes_grid_creation(
-        marginal_x, marginal_y
-    )
+    ) = kego.plotting.histogram_2d_utils._prepare_axes_grid_creation(marginal_x, marginal_y)
     if axes_style == "axes_grid":
         (
             fig,
@@ -355,9 +349,7 @@ def plot_histogram_2d(
     return results_dic
 
 
-def add_annotation_line(
-    style: Literal["unity"] | None, axes, alpha: float = 0.4, plot_style: str = "--k"
-):
+def add_annotation_line(style: Literal["unity"] | None, axes, alpha: float = 0.4, plot_style: str = "--k"):
     if style is None:
         return
     if style == "unity":
@@ -384,9 +376,7 @@ def _get_values_and_axis_label_from_dataframe(
                 label = None
             values = df[key_or_values].to_numpy()
         else:
-            raise ValueError(
-                f"{df=}, if {key_or_values=} given as string, dataset required"
-            )
+            raise ValueError(f"{df=}, if {key_or_values=} given as string, dataset required")
     else:
         values = key_or_values
     return values, label
@@ -449,12 +439,8 @@ def _plot_histogram_2d(
     Axes, histogram values
     """
 
-    x_values, label_x = _get_values_and_axis_label_from_dataframe(
-        df, x_key_or_values, label_x
-    )
-    y_values, label_y = _get_values_and_axis_label_from_dataframe(
-        df, y_key_or_values, label_y
-    )
+    x_values, label_x = _get_values_and_axis_label_from_dataframe(df, x_key_or_values, label_x)
+    y_values, label_y = _get_values_and_axis_label_from_dataframe(df, y_key_or_values, label_y)
 
     x_values, y_values = _get_xy_values(x_values, y_values, mask)
 
@@ -521,18 +507,12 @@ def _plot_histogram_2d(
             round_to_base=annotate_round_to_base,
             font_size=font_size,
         )
-    kego.plotting.axes.plot_colorbar(
-        plot, cax=axes_colorbar, label=label_colorbar, font_size=font_size
-    )
+    kego.plotting.axes.plot_colorbar(plot, cax=axes_colorbar, label=label_colorbar, font_size=font_size)
 
     xlim, ylim = _find_axis_limits(xlim, ylim, bin_edges_x, bin_edges_y)
 
-    kego.plotting.axes.set_x_log(
-        axes, log[0], axis_symlog_linear_threshold=linear_thresh[0]
-    )
-    kego.plotting.axes.set_y_log(
-        axes, log[1], axis_symlog_linear_threshold=linear_thresh[1]
-    )
+    kego.plotting.axes.set_x_log(axes, log[0], axis_symlog_linear_threshold=linear_thresh[0])
+    kego.plotting.axes.set_y_log(axes, log[1], axis_symlog_linear_threshold=linear_thresh[1])
     kego.plotting.axes.set_x_lim(axes, xlim)
     kego.plotting.axes.set_y_lim(axes, ylim)
 
@@ -617,17 +597,13 @@ def _prepare_parameters(
     return xlim, ylim, log, n_bins, n_bins_linear, linear_thresh
 
 
-def _get_xy_values(
-    x: np.ndarray, y: np.ndarray, mask: np.ndarray | None
-) -> tuple[np.ndarray, np.ndarray]:
+def _get_xy_values(x: np.ndarray, y: np.ndarray, mask: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
     x = np.ndarray.flatten(x)  # type: ignore
     kego.checks.validate_array(x)
     y = np.ndarray.flatten(y)  # type: ignore
     kego.checks.validate_array(y)
     if x.shape != y.shape:
-        raise ValueError(
-            f"x and y need to be of same shape: {np.shape(x)} != {np.shape(y)}"
-        )
+        raise ValueError(f"x and y need to be of same shape: {np.shape(x)} != {np.shape(y)}")
     if mask is not None:
         x = x[mask]
         y = y[mask]
@@ -733,9 +709,7 @@ def plot_histogram(
             label_x = key_or_values
         values = df[key_or_values].to_numpy()
     elif isinstance(key_or_values, str):
-        raise ValueError(
-            f"Need to specify {df=} when specifying key name {key_or_values=}."
-        )
+        raise ValueError(f"Need to specify {df=} when specifying key name {key_or_values=}.")
     else:
         values = np.array(key_or_values)
     values = flatten_array(values)
@@ -750,11 +724,7 @@ def plot_histogram(
             replace_x_labels_with, hist = labels, counts
             replace_x_labels_with = np.array(
                 [
-                    (
-                        label[:MAX_LABEL_LENGTH] + "..."
-                        if len(label) > MAX_LABEL_LENGTH
-                        else label
-                    )
+                    (label[:MAX_LABEL_LENGTH] + "..." if len(label) > MAX_LABEL_LENGTH else label)
                     for label in replace_x_labels_with
                 ]
             )
@@ -921,12 +891,8 @@ def plot_bar(
             **kwargs_bar,
         )
 
-    kego.plotting.axes.set_x_log(
-        axes, _log[0], axis_symlog_linear_threshold=symlog_linear_threshold
-    )
-    kego.plotting.axes.set_y_log(
-        axes, _log[1], axis_symlog_linear_threshold=symlog_linear_threshold
-    )
+    kego.plotting.axes.set_x_log(axes, _log[0], axis_symlog_linear_threshold=symlog_linear_threshold)
+    kego.plotting.axes.set_y_log(axes, _log[1], axis_symlog_linear_threshold=symlog_linear_threshold)
     kego.plotting.axes.set_axis_tick_labels(
         axes,
         replace_x_labels_at,
@@ -999,9 +965,7 @@ def get_bin_edges(
     if data is not None and vmax is None:
         vmax = data.max()
     if vmin is None or vmax is None:
-        raise ValueError(
-            f"Need to specify vmin {vmin} and {vmax} or provide data: {data}!"
-        )
+        raise ValueError(f"Need to specify vmin {vmin} and {vmax} or provide data: {data}!")
     if vmin > vmax:
         raise ValueError(f"{vmin=} > {vmax=}")
     if vmin <= 0 and log == "log":
@@ -1014,17 +978,12 @@ def get_bin_edges(
         if symlog_linear_threshold is None:
             abs_max = abs(vmax)
             abs_min = abs(vmin)
-            symlog_linear_threshold = (
-                abs_min if abs_min < abs_max else abs_max if abs_max != 0 else abs_min
-            )
+            symlog_linear_threshold = abs_min if abs_min < abs_max else abs_max if abs_max != 0 else abs_min
             if symlog_linear_threshold == 0:
                 raise ValueError(
                     f"{symlog_linear_threshold=}, which is not allowed. Please set manually to different value!"
                 )
-            logger.info(
-                f"Setting: linear_thresh: {symlog_linear_threshold} with vmin: {vmin}"
-                " and vmax: {vmax}!"
-            )
+            logger.info(f"Setting: linear_thresh: {symlog_linear_threshold} with vmin: {vmin} and vmax: {{vmax}}!")
 
         bins = _get_bin_edges_symlog(
             vmin,
@@ -1093,9 +1052,7 @@ def _get_bin_edges_symlog(
                         endpoint=False,
                     )
                 ),
-                np.linspace(
-                    -linear_thresh, linear_thresh, n_bins_linear, endpoint=False
-                ),
+                np.linspace(-linear_thresh, linear_thresh, n_bins_linear, endpoint=False),
                 10 ** np.linspace(np.log10(linear_thresh), np.log10(vmax), n_bins // 2),
             )
         )

@@ -32,11 +32,7 @@ sys.path.append(str(project_root))
 
 from kego.datasets.split import split_dataset  # noqa: E402
 
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 
 RAW_FEATURES = [
@@ -119,11 +115,7 @@ def _impute_cholesterol(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if (df["Cholesterol"] == 0).any():
         df["_age_bin"] = pd.cut(df["Age"], bins=[0, 40, 50, 60, 200])
-        median_map = (
-            df[df["Cholesterol"] > 0]
-            .groupby(["Sex", "_age_bin"])["Cholesterol"]
-            .median()
-        )
+        median_map = df[df["Cholesterol"] > 0].groupby(["Sex", "_age_bin"])["Cholesterol"].median()
         mask = df["Cholesterol"] == 0
         for idx in df[mask].index:
             key = (df.loc[idx, "Sex"], df.loc[idx, "_age_bin"])
@@ -158,12 +150,7 @@ def _engineer_existing_features(df: pd.DataFrame) -> pd.DataFrame:
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
 
     # --- Composite risk scores ---
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["abnormal_count"] = (
         (df["Thallium"] >= 6).astype(int)
         + (df["Number of vessels fluro"] >= 1).astype(int)
@@ -195,9 +182,9 @@ def _engineer_existing_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{col}_dev_sex"] = df[col] - grp_mean
 
     # --- Signal conflict: top predictors disagree on risk direction ---
-    df["signal_conflict"] = (
-        (df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)
-    ).astype(int) + ((df["Thallium"] == 3) & (df["Chest pain type"] == 4)).astype(int)
+    df["signal_conflict"] = ((df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)).astype(int) + (
+        (df["Thallium"] == 3) & (df["Chest pain type"] == 4)
+    ).astype(int)
 
     return df
 
@@ -224,17 +211,13 @@ def _engineer_research_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # heart_score_partial
     age_pts = np.where(df["Age"] < 45, 0, np.where(df["Age"] < 65, 1, 2))
-    ekg_pts = np.where(
-        df["EKG results"] == 0, 0, np.where(df["EKG results"] == 1, 1, 2)
-    )
+    ekg_pts = np.where(df["EKG results"] == 0, 0, np.where(df["EKG results"] == 1, 1, 2))
     risk_pts = np.minimum(df["FBS over 120"] + (df["BP"] > 140).astype(int), 2)
     df["heart_score_partial"] = age_pts + ekg_pts + risk_pts
 
     # duke_treadmill_approx
     est_exercise_min = ((df["Max HR"] - 80) / 8).clip(0, 21)
-    df["duke_treadmill_approx"] = (
-        est_exercise_min - 5 * df["ST depression"] - 4 * df["Exercise angina"] * 2
-    )
+    df["duke_treadmill_approx"] = est_exercise_min - 5 * df["ST depression"] - 4 * df["Exercise angina"] * 2
 
     # modified_duke
     angina_index = np.where(
@@ -267,49 +250,31 @@ def _engineer_research_features(df: pd.DataFrame) -> pd.DataFrame:
     df["st_hr_hysteresis"] = df["ST depression"] / hr_delta
     df["rate_pressure_product"] = df["Max HR"] * df["BP"]
     df["rpp_normalized"] = (df["rate_pressure_product"] - 10000) / 30000
-    df["supply_demand_mismatch"] = (
-        df["Max HR"]
-        * df["BP"]
-        / 10000
-        * df["ST depression"]
-        * (1 + df["Exercise angina"])
-    )
+    df["supply_demand_mismatch"] = df["Max HR"] * df["BP"] / 10000 * df["ST depression"] * (1 + df["Exercise angina"])
     df["estimated_mets"] = 0.05 * df["Max HR"] - 1.0
     df["poor_exercise_capacity"] = (df["estimated_mets"] < 5).astype(int)
 
     # === Clinical Categories (6) ===
-    df["age_risk_category"] = pd.cut(
-        df["Age"], bins=[0, 44, 54, 64, 200], labels=[0, 1, 2, 3]
-    ).astype(int)
-    df["age_sex_risk"] = np.where(
-        df["Sex"] == 1, (df["Age"] >= 45).astype(int), (df["Age"] >= 55).astype(int)
-    )
-    df["bp_category"] = pd.cut(
-        df["BP"], bins=[0, 119, 129, 139, 500], labels=[0, 1, 2, 3]
-    ).astype(int)
+    df["age_risk_category"] = pd.cut(df["Age"], bins=[0, 44, 54, 64, 200], labels=[0, 1, 2, 3]).astype(int)
+    df["age_sex_risk"] = np.where(df["Sex"] == 1, (df["Age"] >= 45).astype(int), (df["Age"] >= 55).astype(int))
+    df["bp_category"] = pd.cut(df["BP"], bins=[0, 119, 129, 139, 500], labels=[0, 1, 2, 3]).astype(int)
     df["cholesterol_category"] = pd.cut(
         df["Cholesterol"].clip(lower=1), bins=[0, 199, 239, 1000], labels=[0, 1, 2]
     ).astype(int)
     pct = df["Max HR"] / predicted_max
-    df["hr_achievement_category"] = pd.cut(
-        pct, bins=[0, 0.60, 0.80, 0.85, 5.0], labels=[0, 1, 2, 3]
-    ).astype(int)
-    df["st_depression_category"] = pd.cut(
-        df["ST depression"], bins=[-0.1, 0, 1, 2, 100], labels=[0, 1, 2, 3]
-    ).astype(int)
+    df["hr_achievement_category"] = pd.cut(pct, bins=[0, 0.60, 0.80, 0.85, 5.0], labels=[0, 1, 2, 3]).astype(int)
+    df["st_depression_category"] = pd.cut(df["ST depression"], bins=[-0.1, 0, 1, 2, 100], labels=[0, 1, 2, 3]).astype(
+        int
+    )
 
     # === Domain Interactions (10) ===
     df["diabetes_hypertension"] = df["FBS over 120"] * (df["BP"] > 140).astype(int)
     df["multivessel_ischemia"] = (df["Number of vessels fluro"] >= 2).astype(int) * (
         df["ST depression"] + df["Exercise angina"]
     )
-    df["anatomic_severity"] = df["Number of vessels fluro"] * (
-        df["Thallium"] >= 6
-    ).astype(int)
+    df["anatomic_severity"] = df["Number of vessels fluro"] * (df["Thallium"] >= 6).astype(int)
     df["exercise_test_positive"] = (
-        (df["ST depression"] >= 1).astype(int)
-        + (df["Slope of ST"] >= 2).astype(int)
-        + df["Exercise angina"]
+        (df["ST depression"] >= 1).astype(int) + (df["Slope of ST"] >= 2).astype(int) + df["Exercise angina"]
     )
     df["age_sex_interaction"] = df["Age"] * df["Sex"]
     df["triple_threat"] = (
@@ -322,18 +287,12 @@ def _engineer_research_features(df: pd.DataFrame) -> pd.DataFrame:
     df["rest_exercise_concordance"] = (df["EKG results"] >= 1).astype(int) * (
         (df["ST depression"] > 0).astype(int) + df["Exercise angina"]
     )
-    df["ekg_with_hypertension"] = (df["EKG results"] >= 1).astype(int) * (
-        df["BP"] > 140
-    ).astype(int)
+    df["ekg_with_hypertension"] = (df["EKG results"] >= 1).astype(int) * (df["BP"] > 140).astype(int)
 
     # === Composites (4) ===
-    slope_weight = np.where(
-        df["Slope of ST"] == 2, 2, np.where(df["Slope of ST"] == 1, 1, 0)
-    )
+    slope_weight = np.where(df["Slope of ST"] == 2, 2, np.where(df["Slope of ST"] == 1, 1, 0))
     df["ischemic_burden"] = (
-        df["ST depression"] * slope_weight
-        + 2 * df["Exercise angina"]
-        + 3 * (df["Thallium"] >= 6).astype(int)
+        df["ST depression"] * slope_weight + 2 * df["Exercise angina"] + 3 * (df["Thallium"] >= 6).astype(int)
     )
     df["risk_factor_count"] = (
         df["FBS over 120"]
@@ -351,9 +310,7 @@ def _engineer_research_features(df: pd.DataFrame) -> pd.DataFrame:
         + df["Exercise angina"]
         + (df["ST depression"] > 2).astype(int)
     )
-    supply_proxy = (
-        (df["Thallium"] == 3).astype(int) * (4 - df["Number of vessels fluro"]) / 4
-    )
+    supply_proxy = (df["Thallium"] == 3).astype(int) * (4 - df["Number of vessels fluro"]) / 4
     df["o2_supply_demand"] = (df["Max HR"] * df["BP"] / 10000) * (1 - supply_proxy)
 
     # === Competition Tricks (~8) ===
@@ -494,9 +451,7 @@ def _engineer_fold_features(
     X_val["maxhr_residual"] = X_val["Max HR"] - lr.predict(X_val[["Age"]])
 
     lr = LinearRegression().fit(X_train[["Age", "Sex"]], X_train["Cholesterol"])
-    X_train["chol_residual"] = X_train["Cholesterol"] - lr.predict(
-        X_train[["Age", "Sex"]]
-    )
+    X_train["chol_residual"] = X_train["Cholesterol"] - lr.predict(X_train[["Age", "Sex"]])
     X_val["chol_residual"] = X_val["Cholesterol"] - lr.predict(X_val[["Age", "Sex"]])
 
     lr = LinearRegression().fit(X_train[["Age", "Sex"]], X_train["BP"])
@@ -562,9 +517,7 @@ def _engineer_fold_features(
         dist_val, _ = class_tree.query(X_val_scaled, k=10)
         X_train[f"knn_dist_{suffix}"] = dist_tr.mean(axis=1)
         X_val[f"knn_dist_{suffix}"] = dist_val.mean(axis=1)
-    X_train["knn_dist_ratio"] = X_train["knn_dist_pos"] / (
-        X_train["knn_dist_neg"] + 1e-8
-    )
+    X_train["knn_dist_ratio"] = X_train["knn_dist_pos"] / (X_train["knn_dist_neg"] + 1e-8)
     X_val["knn_dist_ratio"] = X_val["knn_dist_pos"] / (X_val["knn_dist_neg"] + 1e-8)
     # Neighborhood target rate (20-NN)
     _, idx_tr = tree.query(X_tr_scaled, k=21)  # +1 for self
@@ -605,12 +558,8 @@ def _engineer_fold_features(
     leaf_tr = dt.apply(X_tr_scaled)
     leaf_val = dt.apply(X_val_scaled)
     leaf_means = y_train.groupby(pd.Series(leaf_tr)).mean()
-    X_train["dt_leaf_te"] = (
-        pd.Series(leaf_tr).map(leaf_means).fillna(y_train.mean()).values
-    )
-    X_val["dt_leaf_te"] = (
-        pd.Series(leaf_val).map(leaf_means).fillna(y_train.mean()).values
-    )
+    X_train["dt_leaf_te"] = pd.Series(leaf_tr).map(leaf_means).fillna(y_train.mean()).values
+    X_val["dt_leaf_te"] = pd.Series(leaf_val).map(leaf_means).fillna(y_train.mean()).values
 
     # === 14. Spline basis functions (~14 features) ===
     for col in ["Age", "Max HR"]:
@@ -678,9 +627,7 @@ def _eval_features_multiseed(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Domain-driven feature research for S6E2 Heart Disease"
-    )
+    parser = argparse.ArgumentParser(description="Domain-driven feature research for S6E2 Heart Disease")
     parser.add_argument(
         "--seeds",
         type=str,
@@ -716,9 +663,7 @@ def main() -> None:
 
     # Downsample before split to keep memory low
     if total_sample and len(train_full) > total_sample:
-        train_full = train_full.sample(n=total_sample, random_state=42).reset_index(
-            drop=True
-        )
+        train_full = train_full.sample(n=total_sample, random_state=42).reset_index(drop=True)
 
     train, holdout, _ = split_dataset(
         train_full,
@@ -773,22 +718,16 @@ def main() -> None:
 
     # 1a. Raw only (13 features) — use native cats
     raw_in_xtr = [f for f in RAW_FEATURES if f in X_tr.columns]
-    auc_raw = _eval_features_multiseed(
-        X_tr, y_train, X_ho, y_holdout, raw_in_xtr, seeds
-    )
+    auc_raw = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, raw_in_xtr, seeds)
     print(f"Raw only ({len(raw_in_xtr)}): {auc_raw:.5f}")
 
     # 1b. Current ablation-pruned (21 features) — reference
     abl_pruned_in_xtr = [f for f in FEATURES_ABLATION_PRUNED if f in X_tr.columns]
-    auc_abl_ref = _eval_features_multiseed(
-        X_tr, y_train, X_ho, y_holdout, abl_pruned_in_xtr, seeds
-    )
+    auc_abl_ref = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, abl_pruned_in_xtr, seeds)
     print(f"Ablation-pruned ref ({len(abl_pruned_in_xtr)}): {auc_abl_ref:.5f}")
 
     # 1c. All features with native categoricals
-    auc_all_native = _eval_features_multiseed(
-        X_tr, y_train, X_ho, y_holdout, all_features, seeds, use_native_cats=True
-    )
+    auc_all_native = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, all_features, seeds, use_native_cats=True)
     print(f"All features native cats ({len(all_features)}): {auc_all_native:.5f}")
 
     # 1d. All features without native categoricals
@@ -843,10 +782,7 @@ def main() -> None:
     candidates = [f for f in all_features if f not in baseline_set]
 
     print(f"\n{'=' * 70}")
-    print(
-        f"STEP 2: ADD-ONE SCREENING ({len(candidates)} candidates, "
-        f"baseline={len(abl_pruned_in_xtr)} features)"
-    )
+    print(f"STEP 2: ADD-ONE SCREENING ({len(candidates)} candidates, baseline={len(abl_pruned_in_xtr)} features)")
     print(f"{'=' * 70}")
     print(f"Baseline AUC: {auc_abl_ref:.5f}")
 
@@ -854,9 +790,7 @@ def main() -> None:
     t0 = time.perf_counter()
     for i, feat in enumerate(candidates):
         test_features = abl_pruned_in_xtr + [feat]
-        auc_with = _eval_features_multiseed(
-            X_tr, y_train, X_ho, y_holdout, test_features, seeds
-        )
+        auc_with = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, test_features, seeds)
         delta = auc_with - auc_abl_ref
         screening_results.append((feat, auc_with, delta))
         elapsed = time.perf_counter() - t0
@@ -900,9 +834,7 @@ def main() -> None:
         auc_forward = auc_abl_ref
     else:
         print(f"\n{'=' * 70}")
-        print(
-            f"STEP 3: GREEDY FORWARD SELECTION ({len(helpful_candidates)} candidates)"
-        )
+        print(f"STEP 3: GREEDY FORWARD SELECTION ({len(helpful_candidates)} candidates)")
         print(f"{'=' * 70}")
 
         current_features = list(abl_pruned_in_xtr)
@@ -912,9 +844,7 @@ def main() -> None:
 
         for i, (feat, _) in enumerate(helpful_candidates):
             test_features = current_features + [feat]
-            auc_with = _eval_features_multiseed(
-                X_tr, y_train, X_ho, y_holdout, test_features, seeds
-            )
+            auc_with = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, test_features, seeds)
             delta = auc_with - current_auc
             elapsed = time.perf_counter() - t0
             remaining = len(helpful_candidates) - i - 1
@@ -943,14 +873,8 @@ def main() -> None:
 
         print(f"\nAdded {len(added_features)} features to baseline:")
         for feat, auc_val, delta in added_features:
-            print(
-                f"  +{delta:+.5f}  {feat} [{_source_label(feat)}] "
-                f"(cumulative AUC={auc_val:.5f})"
-            )
-        print(
-            f"Final forward-selected: {len(forward_selected)} features, "
-            f"AUC={auc_forward:.5f}"
-        )
+            print(f"  +{delta:+.5f}  {feat} [{_source_label(feat)}] (cumulative AUC={auc_val:.5f})")
+        print(f"Final forward-selected: {len(forward_selected)} features, AUC={auc_forward:.5f}")
     gc.collect()
 
     # ===================================================================
@@ -969,9 +893,7 @@ def main() -> None:
         t0 = time.perf_counter()
         for i, feat in enumerate(added_only):
             reduced = [f for f in forward_selected if f != feat]
-            auc_without = _eval_features_multiseed(
-                X_tr, y_train, X_ho, y_holdout, reduced, seeds
-            )
+            auc_without = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, reduced, seeds)
             delta = auc_without - auc_forward
             drop_results.append((feat, auc_without, delta))
             elapsed = time.perf_counter() - t0
@@ -987,13 +909,8 @@ def main() -> None:
         if to_drop:
             print(f"\nDropping {len(to_drop)} redundant features: {sorted(to_drop)}")
             forward_selected = [f for f in forward_selected if f not in to_drop]
-            auc_forward = _eval_features_multiseed(
-                X_tr, y_train, X_ho, y_holdout, forward_selected, seeds
-            )
-            print(
-                f"After pruning: {len(forward_selected)} features, "
-                f"AUC={auc_forward:.5f}"
-            )
+            auc_forward = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, forward_selected, seeds)
+            print(f"After pruning: {len(forward_selected)} features, AUC={auc_forward:.5f}")
         else:
             print("\nAll added features validated — none dropped.")
     gc.collect()

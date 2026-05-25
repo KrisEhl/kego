@@ -170,9 +170,7 @@ print("TEST 3: combined pipeline — slot aggregation → smoothing → penalty"
 print("=" * 60)
 
 
-def smooth_class_conditional(
-    preds, is_event, is_texture, alpha_texture=0.35, alpha_event=0.15
-):
+def smooth_class_conditional(preds, is_event, is_texture, alpha_texture=0.35, alpha_event=0.15):
     """Current smoothing: texture avg-neighbour, event local-max."""
     if len(preds) < 2:
         return preds
@@ -184,20 +182,14 @@ def smooth_class_conditional(
         + alpha_texture * preds[:-2][:, is_texture]
         + alpha_texture * preds[2:][:, is_texture]
     )
-    smooth[0][is_texture] = (1 - alpha_texture) * preds[0][
-        is_texture
-    ] + alpha_texture * preds[1][is_texture]
-    smooth[-1][is_texture] = (1 - alpha_texture) * preds[-1][
-        is_texture
-    ] + alpha_texture * preds[-2][is_texture]
+    smooth[0][is_texture] = (1 - alpha_texture) * preds[0][is_texture] + alpha_texture * preds[1][is_texture]
+    smooth[-1][is_texture] = (1 - alpha_texture) * preds[-1][is_texture] + alpha_texture * preds[-2][is_texture]
     # Event: local-max propagation
     local_max = preds.copy()
     local_max[1:-1] = np.maximum(preds[1:-1], np.maximum(preds[:-2], preds[2:]))
     local_max[0] = np.maximum(preds[0], preds[1])
     local_max[-1] = np.maximum(preds[-1], preds[-2])
-    smooth[:, is_event] = (1 - alpha_event) * preds[
-        :, is_event
-    ] + alpha_event * local_max[:, is_event]
+    smooth[:, is_event] = (1 - alpha_event) * preds[:, is_event] + alpha_event * local_max[:, is_event]
     return smooth
 
 
@@ -218,9 +210,7 @@ final = smooth_class_conditional(penalized, is_event, is_texture)
 old = smooth_class_conditional(slots.copy(), is_event, is_texture)
 
 print("\nFrog noise burst (sp 4, t=5):")
-print(
-    f"  raw={slots[5, 4]:.2f}  old(smooth only)={old[5, 4]:.2f}  new(penalty→smooth)={final[5, 4]:.2f}"
-)
+print(f"  raw={slots[5, 4]:.2f}  old(smooth only)={old[5, 4]:.2f}  new(penalty→smooth)={final[5, 4]:.2f}")
 
 print("\nFrog chorus onset (sp 5, t=2, neighbour t=1=0.03 / t=3=0.78):")
 print(f"  raw={slots[2, 5]:.2f}  old={old[2, 5]:.2f}  new={final[2, 5]:.2f}")
@@ -231,9 +221,7 @@ print(f"  raw={slots[4, 5]:.2f}  old={old[4, 5]:.2f}  new={final[4, 5]:.2f}")
 print("\nBird call (sp 0, t=8, isolated):")
 print(f"  raw={slots[8, 0]:.2f}  old={old[8, 0]:.2f}  new={final[8, 0]:.2f}")
 
-assert final[5, 4] < old[5, 4], (
-    "Penalty→smooth should reduce noise burst more than smooth alone"
-)
+assert final[5, 4] < old[5, 4], "Penalty→smooth should reduce noise burst more than smooth alone"
 assert final[4, 5] > 0.60, "Real chorus core should survive"
 assert final[8, 0] == old[8, 0], "Bird call must not be affected"
 print("\nAll assertions passed. ✓")

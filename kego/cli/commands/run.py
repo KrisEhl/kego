@@ -46,9 +46,7 @@ def _pre_create_runs(
                 "kego_target": "cluster",
                 "kego_debug": "false",
                 "mlflow.runName": run_name,
-                "kego_primary_metric": config.competition.primary_metric
-                if config.competition
-                else "",
+                "kego_primary_metric": config.competition.primary_metric if config.competition else "",
             }
             # Create run via low-level client so it stays RUNNING (no context manager).
             # The cluster runner will resume it by run_id and call set_terminated().
@@ -64,8 +62,7 @@ def _pre_create_runs(
             run_ids[fold] = run.info.run_id
     except Exception as e:
         print(
-            f"  Warning: could not pre-create MLflow runs ({e})"
-            " — jobs won't appear in kego ls until they start",
+            f"  Warning: could not pre-create MLflow runs ({e}) — jobs won't appear in kego ls until they start",
             flush=True,
         )
 
@@ -118,9 +115,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         metavar="NAME",
         help="Experiment name logged to MLflow (auto-generated from script + params if omitted)",
     )
-    p.add_argument(
-        "--fold", type=int, metavar="N", help="Single fold index to run (e.g. 0)"
-    )
+    p.add_argument("--fold", type=int, metavar="N", help="Single fold index to run (e.g. 0)")
     p.add_argument(
         "--folds",
         metavar="N,N,...",
@@ -252,9 +247,7 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
             try:
                 import mlflow
 
-                tracking_uri = (
-                    os.environ.get("MLFLOW_TRACKING_URI") or config.cluster.mlflow_uri
-                )
+                tracking_uri = os.environ.get("MLFLOW_TRACKING_URI") or config.cluster.mlflow_uri
                 mlflow.set_tracking_uri(tracking_uri)
                 from mlflow.tracking import MlflowClient
 
@@ -269,9 +262,7 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
                     flush=True,
                 )
 
-        print(
-            f"\nSubmitted {len(job_ids)} job(s). Track with: uv run kego ls", flush=True
-        )
+        print(f"\nSubmitted {len(job_ids)} job(s). Track with: uv run kego ls", flush=True)
         return 0
 
     return 1

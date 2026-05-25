@@ -109,9 +109,7 @@ def _determine_axes_dimensions(
         + sum(spacings_colorbar[i_row, 0:i_col])
         + i_col * spacing_x
     )
-    axes_bottom = (
-        bottom + sum(axes_heights_cumulative) + (n_rows - i_row - 1) * spacing_y
-    )
+    axes_bottom = bottom + sum(axes_heights_cumulative) + (n_rows - i_row - 1) * spacing_y
     axes_width = axes_widths[i_row, i_col]
     axes_height = axes_heights[i_row, i_col]
     return axes_left, axes_bottom, axes_width, axes_height
@@ -177,14 +175,8 @@ def create_axes_grid(
     """
     if figure_size is None:
         figure_size = (10.0, 6.0)
-    if (
-        colorbar_off
-        and colorbar_include_row_columns is None
-        and colorbar_skip_row_col is None
-    ):
-        colorbar_skip_row_col = [
-            (j, i) for i in range(n_columns) for j in range(n_rows)
-        ]
+    if colorbar_off and colorbar_include_row_columns is None and colorbar_skip_row_col is None:
+        colorbar_skip_row_col = [(j, i) for i in range(n_columns) for j in range(n_rows)]
     fig = _create_figure(figure_size)
     if title is not None:
         fig.suptitle(title)
@@ -217,17 +209,11 @@ def create_axes_grid(
 
     height_total = 1 - (n_rows - 1) * spacing_y - top - bottom
     if heights_along_y is not None:
-        heights_along_y = [
-            x / sum(heights_along_y) * height_total for x in heights_along_y
-        ]
-        axes_heights = np.array(
-            [[x for i in range(n_columns)] for x in heights_along_y]
-        )
+        heights_along_y = [x / sum(heights_along_y) * height_total for x in heights_along_y]
+        axes_heights = np.array([[x for i in range(n_columns)] for x in heights_along_y])
     else:
         height = height_total / n_rows
-        axes_heights = np.array(
-            [[height for i in range(n_columns)] for j in range(n_rows)]
-        )
+        axes_heights = np.array([[height for i in range(n_columns)] for j in range(n_rows)])
 
     colorbar_heights = np.zeros((n_rows, n_columns))
     colorbar_widths = np.zeros((n_rows, n_columns))
@@ -235,9 +221,7 @@ def create_axes_grid(
     skip_col_colorbar = []
     if colorbar_include_row_columns is not None:
         include_col_colorbar = [x[1] for x in colorbar_include_row_columns]
-        skip_col_colorbar = [
-            x for x in range(n_columns) if x not in include_col_colorbar
-        ]
+        skip_col_colorbar = [x for x in range(n_columns) if x not in include_col_colorbar]
     if colorbar_skip_row_col is not None:
         skip_col = [x[1] for x in colorbar_skip_row_col]
         counts = collections.Counter(skip_col)
@@ -264,9 +248,7 @@ def create_axes_grid(
         axes_widths = np.array([widths_along_x for x in range(n_rows)])
     else:
         width = width_total / n_columns
-        axes_widths = np.array(
-            [[width for i in range(n_columns)] for j in range(n_rows)]
-        )
+        axes_widths = np.array([[width for i in range(n_columns)] for j in range(n_rows)])
 
     axes = [[None for i in range(n_columns)] for j in range(n_rows)]
     axes_colorbar = [[None for i in range(n_columns)] for j in range(n_rows)]
@@ -296,12 +278,8 @@ def create_axes_grid(
                 i_row,
                 axes_widths,
             )
-            axes[i_row][i_col] = plt.axes(
-                [axes_left, axes_bottom, axes_width, axes_height]
-            )
-            if colorbar_skip_row_col is not None and pair_in_list(
-                [i_row, i_col], colorbar_skip_row_col
-            ):
+            axes[i_row][i_col] = plt.axes([axes_left, axes_bottom, axes_width, axes_height])
+            if colorbar_skip_row_col is not None and pair_in_list([i_row, i_col], colorbar_skip_row_col):
                 continue
             if colorbar_include_row_columns is not None and not pair_in_list(
                 [i_row, i_col], colorbar_include_row_columns
@@ -322,9 +300,7 @@ def create_axes_grid(
                 axes_bottom,
                 axes_width,
             )
-            axes_colorbar[i_row][i_col] = plt.axes(
-                [colorbar_left, colorbar_bottom, colorbar_width, colorbar_height]
-            )
+            axes_colorbar[i_row][i_col] = plt.axes([colorbar_left, colorbar_bottom, colorbar_width, colorbar_height])
     axes, axes_colorbar = (
         np.array(axes, dtype=object),
         np.array(axes_colorbar, dtype=object),

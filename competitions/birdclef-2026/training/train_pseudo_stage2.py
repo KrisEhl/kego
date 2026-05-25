@@ -99,9 +99,7 @@ def load_pseudo_batches(
     sites_arr = meta["site"].values  # (N_total,)
     hours_arr = meta["hour_utc"].values.astype(np.int16)  # (N_total,)
 
-    print(
-        f"  Total windows: {len(scores)} ({len(scores) // N_WINDOWS} files)", flush=True
-    )
+    print(f"  Total windows: {len(scores)} ({len(scores) // N_WINDOWS} files)", flush=True)
 
     # Generate pseudo-labels
     if use_stage1_preds and stage1_model is not None:
@@ -125,9 +123,7 @@ def load_pseudo_batches(
         pseudo_probs = 1.0 / (1.0 + np.exp(-proto_logits))
         print(f"  Stage1-only pseudo-labels (threshold={pseudo_threshold})", flush=True)
     elif use_stage2_preds and stage1_model is not None and stage2_model is not None:
-        print(
-            "  Generating pseudo-labels from Stage1+Stage2 predictions ...", flush=True
-        )
+        print("  Generating pseudo-labels from Stage1+Stage2 predictions ...", flush=True)
         # Build temporary batches for Stage1 forward pass (all files)
         unique_files = list(dict.fromkeys(filenames_arr))
         tmp_batches = []
@@ -144,9 +140,7 @@ def load_pseudo_batches(
                     "filename": fn,
                 }
             )
-        proto_logits = predict_batches_logits(
-            stage1_model, tmp_batches
-        )  # (N_total, 234)
+        proto_logits = predict_batches_logits(stage1_model, tmp_batches)  # (N_total, 234)
         proto_probs = 1.0 / (1.0 + np.exp(-proto_logits))
 
         # Stage2 corrections
@@ -200,8 +194,7 @@ def load_pseudo_batches(
         n_pseudo += 1
 
     print(
-        f"  Pseudo-labeled batches: {n_pseudo} files "
-        f"(skipped {n_labeled_skipped} labeled files)",
+        f"  Pseudo-labeled batches: {n_pseudo} files (skipped {n_labeled_skipped} labeled files)",
         flush=True,
     )
 
@@ -369,8 +362,7 @@ def main() -> None:
     # -------------------------------------------------------------------------
     if not CACHE_DIR.exists():
         print(
-            f"\nERROR: Cache dir {CACHE_DIR} does not exist.\n"
-            "Run precompute_perch_soundscapes.py first.",
+            f"\nERROR: Cache dir {CACHE_DIR} does not exist.\nRun precompute_perch_soundscapes.py first.",
             flush=True,
         )
         sys.exit(1)
@@ -408,9 +400,7 @@ def main() -> None:
     pseudo_per_epoch = min(args.pseudo_per_epoch, len(pseudo_batches))
     rng_sample = np.random.default_rng(args.seed + 999)
     if pseudo_per_epoch < len(pseudo_batches):
-        sample_idx = rng_sample.choice(
-            len(pseudo_batches), size=pseudo_per_epoch, replace=False
-        )
+        sample_idx = rng_sample.choice(len(pseudo_batches), size=pseudo_per_epoch, replace=False)
         pseudo_batches_train = [pseudo_batches[i] for i in sorted(sample_idx)]
         print(
             f"  Subsampled {pseudo_per_epoch}/{len(pseudo_batches)} pseudo batches for training",
@@ -457,13 +447,10 @@ def main() -> None:
         ],
         axis=0,
     )
-    proto_probs_combined = np.concatenate(
-        [proto_probs_labeled, proto_probs_pseudo], axis=0
-    )
+    proto_probs_combined = np.concatenate([proto_probs_labeled, proto_probs_pseudo], axis=0)
 
     print(
-        f"  Combined: {len(emb_combined)} windows "
-        f"({n_labeled} labeled + {n_pseudo_windows} pseudo-labeled)",
+        f"  Combined: {len(emb_combined)} windows ({n_labeled} labeled + {n_pseudo_windows} pseudo-labeled)",
         flush=True,
     )
 
@@ -487,8 +474,7 @@ def main() -> None:
     # Train new Stage2 on combined data
     # -------------------------------------------------------------------------
     print(
-        f"\n[6] Training Stage2 on {len(all_batches_combined)} soundscapes "
-        f"({args.stage2_epochs} epochs) ...",
+        f"\n[6] Training Stage2 on {len(all_batches_combined)} soundscapes ({args.stage2_epochs} epochs) ...",
         flush=True,
     )
     torch.manual_seed(args.seed)

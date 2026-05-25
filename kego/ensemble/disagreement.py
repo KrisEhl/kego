@@ -102,9 +102,7 @@ def print_disagreement_report(
     sym = matrix + matrix.T
 
     print("\n=== Disagreement Matrix ===")
-    print(
-        "Cell (row, col) = # samples where ROW model is correct but COL model is wrong\n"
-    )
+    print("Cell (row, col) = # samples where ROW model is correct but COL model is wrong\n")
     header = f"{'':>14s}" + "".join(f"{s:>13s}" for s in short)
     print(header)
     print("-" * len(header))
@@ -129,9 +127,7 @@ def print_disagreement_report(
         print(f"  {name_i:35s} vs {name_j:35s}  {count:5d}")
 
     print(f"\n=== Top {top_n} Most Redundant Pairs ===")
-    for name_i, name_j, count in most_diverse_pairs(
-        model_names, matrix, top_n, most_diverse=False
-    ):
+    for name_i, name_j, count in most_diverse_pairs(model_names, matrix, top_n, most_diverse=False):
         print(f"  {name_i:35s} vs {name_j:35s}  {count:5d}")
 
     print("\n=== Unique Correct (right when ALL others are wrong) ===")

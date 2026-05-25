@@ -57,9 +57,7 @@ def _load_taxonomy() -> dict[str, str]:
     return mapping
 
 
-def _build_birdnet_mapping(
-    analyzer_labels: list[str], taxonomy: dict[str, str]
-) -> dict[str, str]:
+def _build_birdnet_mapping(analyzer_labels: list[str], taxonomy: dict[str, str]) -> dict[str, str]:
     """Map BirdNET label strings to competition primary_labels.
 
     BirdNET labels: "ScientificName_CommonName"
@@ -112,10 +110,7 @@ def process_file(args_tuple) -> list[dict]:
         window_start = (start_sec // 5) * 5
         if window_start not in windows:
             windows[window_start] = {}
-        if (
-            comp_label not in windows[window_start]
-            or conf > windows[window_start][comp_label]
-        ):
+        if comp_label not in windows[window_start] or conf > windows[window_start][comp_label]:
             windows[window_start][comp_label] = conf
 
     rows = []
@@ -144,9 +139,7 @@ def main() -> None:
         default=0.1,
         help="BirdNET confidence threshold (default 0.1)",
     )
-    parser.add_argument(
-        "--workers", type=int, default=4, help="Parallel worker processes (default 4)"
-    )
+    parser.add_argument("--workers", type=int, default=4, help="Parallel worker processes (default 4)")
     parser.add_argument("--start-idx", type=int, default=0)
     parser.add_argument("--end-idx", type=int, default=None)
     args = parser.parse_args()
@@ -161,9 +154,7 @@ def main() -> None:
     birdnet_to_comp = _build_birdnet_mapping(analyzer.labels, taxonomy)
     n_mapped = len(birdnet_to_comp)
     n_comp_covered = len(set(birdnet_to_comp.values()))
-    print(
-        f"BirdNET→competition mapping: {n_mapped} BirdNET labels → {n_comp_covered} competition species"
-    )
+    print(f"BirdNET→competition mapping: {n_mapped} BirdNET labels → {n_comp_covered} competition species")
     del analyzer  # free memory before forking
 
     # Soundscape files
@@ -210,10 +201,7 @@ def main() -> None:
                     )
 
     total_windows = len(sc_files) * 12
-    print(
-        f"\nPseudo-labeled rows: {n_rows} / {total_windows} windows "
-        f"({100 * n_rows / total_windows:.1f}%)"
-    )
+    print(f"\nPseudo-labeled rows: {n_rows} / {total_windows} windows ({100 * n_rows / total_windows:.1f}%)")
     print(f"Saved → {out_csv}")
     print(f"Total time: {(time.time() - t_start) / 60:.1f} min")
 

@@ -30,11 +30,7 @@ sys.path.append(str(project_root))
 
 from kego.datasets.split import split_dataset  # noqa: E402
 
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 
 RAW_FEATURES = [
@@ -76,11 +72,7 @@ def _impute_cholesterol(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if (df["Cholesterol"] == 0).any():
         df["_age_bin"] = pd.cut(df["Age"], bins=[0, 40, 50, 60, 100])
-        median_map = (
-            df[df["Cholesterol"] > 0]
-            .groupby(["Sex", "_age_bin"])["Cholesterol"]
-            .median()
-        )
+        median_map = df[df["Cholesterol"] > 0].groupby(["Sex", "_age_bin"])["Cholesterol"].median()
         mask = df["Cholesterol"] == 0
         for idx in df[mask].index:
             key = (df.loc[idx, "Sex"], df.loc[idx, "_age_bin"])
@@ -110,12 +102,7 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
 
     # --- Composite risk scores ---
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["abnormal_count"] = (
         (df["Thallium"] >= 6).astype(int)
         + (df["Number of vessels fluro"] >= 1).astype(int)
@@ -147,9 +134,9 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{col}_dev_sex"] = df[col] - grp_mean
 
     # --- Signal conflict: top predictors disagree on risk direction ---
-    df["signal_conflict"] = (
-        (df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)
-    ).astype(int) + ((df["Thallium"] == 3) & (df["Chest pain type"] == 4)).astype(int)
+    df["signal_conflict"] = ((df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)).astype(int) + (
+        (df["Thallium"] == 3) & (df["Chest pain type"] == 4)
+    ).astype(int)
 
     return df
 
@@ -211,9 +198,7 @@ def _eval_lgbm_multiseed(X_train, y_train, X_holdout, y_holdout, features, seeds
 
 def _train_logreg(X_train, y_train, X_holdout, y_holdout, features):
     """Train scaled LogisticRegression and return holdout AUC."""
-    pipe = make_pipeline(
-        StandardScaler(), LogisticRegression(max_iter=1000, C=1.0, random_state=42)
-    )
+    pipe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, C=1.0, random_state=42))
     pipe.fit(X_train[features].values, y_train)
     preds = pipe.predict_proba(X_holdout[features].values)[:, 1]
     auc = roc_auc_score(y_holdout, preds)
@@ -240,9 +225,7 @@ def _eval_logreg_multiseed(X_train, y_train, X_holdout, y_holdout, features, see
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Feature selection via permutation importance"
-    )
+    parser = argparse.ArgumentParser(description="Feature selection via permutation importance")
     parser.add_argument(
         "--repeats",
         type=int,
@@ -285,9 +268,7 @@ def main():
 
     # Downsample before split to keep memory low
     if total_sample and len(train_full) > total_sample:
-        train_full = train_full.sample(n=total_sample, random_state=42).reset_index(
-            drop=True
-        )
+        train_full = train_full.sample(n=total_sample, random_state=42).reset_index(drop=True)
 
     train, holdout, _ = split_dataset(
         train_full,
@@ -323,9 +304,7 @@ def main():
     print(f"STEP 1: PERMUTATION IMPORTANCE ({args.repeats} repeats)")
     print(f"{'=' * 70}")
 
-    model_baseline, auc_baseline = _train_lgbm(
-        train, y_train, holdout, y_holdout, all_features
-    )
+    model_baseline, auc_baseline = _train_lgbm(train, y_train, holdout, y_holdout, all_features)
     print(f"\nBaseline LightGBM holdout AUC: {auc_baseline:.5f}")
 
     result = permutation_importance(
@@ -361,9 +340,7 @@ def main():
         )
 
     negative_features = imp_df[imp_df["importance_mean"] < 0]["feature"].tolist()
-    zero_features = imp_df[(imp_df["importance_mean"] >= 0) & (~imp_df["significant"])][
-        "feature"
-    ].tolist()
+    zero_features = imp_df[(imp_df["importance_mean"] >= 0) & (~imp_df["significant"])]["feature"].tolist()
     print(f"\nNegative importance ({len(negative_features)}): {negative_features}")
     print(f"Non-significant ({len(zero_features)}): {zero_features}")
 
@@ -374,27 +351,19 @@ def main():
     # Step 2: Drop-one-at-a-time ablation (multi-seed)
     # ===================================================================
     print(f"\n{'=' * 70}")
-    print(
-        f"STEP 2: DROP-ONE-AT-A-TIME ABLATION ({len(all_features)} features x {len(seeds)} seeds)"
-    )
+    print(f"STEP 2: DROP-ONE-AT-A-TIME ABLATION ({len(all_features)} features x {len(seeds)} seeds)")
     print(f"{'=' * 70}")
 
-    baseline_ms = _eval_lgbm_multiseed(
-        train, y_train, holdout, y_holdout, all_features, seeds
-    )
+    baseline_ms = _eval_lgbm_multiseed(train, y_train, holdout, y_holdout, all_features, seeds)
     print(f"\nMulti-seed baseline AUC: {baseline_ms:.5f}")
 
     ablation_results = []
     for i, feat in enumerate(all_features):
         reduced = [f for f in all_features if f != feat]
-        auc_without = _eval_lgbm_multiseed(
-            train, y_train, holdout, y_holdout, reduced, seeds
-        )
+        auc_without = _eval_lgbm_multiseed(train, y_train, holdout, y_holdout, reduced, seeds)
         delta = auc_without - baseline_ms
         ablation_results.append((feat, auc_without, delta))
-        print(
-            f"  [{i + 1}/{len(all_features)}] -{feat:<30} AUC={auc_without:.5f} (delta={delta:+.5f})"
-        )
+        print(f"  [{i + 1}/{len(all_features)}] -{feat:<30} AUC={auc_without:.5f} (delta={delta:+.5f})")
 
     # Sort by delta descending (features whose removal helps most at top)
     ablation_results.sort(key=lambda x: x[2], reverse=True)
@@ -414,21 +383,15 @@ def main():
     # Step 3: Forward selection by importance order (multi-seed)
     # ===================================================================
     print(f"\n{'=' * 70}")
-    print(
-        f"STEP 3: FORWARD SELECTION ({len(all_features)} features x {len(seeds)} seeds)"
-    )
+    print(f"STEP 3: FORWARD SELECTION ({len(all_features)} features x {len(seeds)} seeds)")
     print(f"{'=' * 70}")
 
     forward_history = []
     for i, _ in enumerate(features_by_importance, start=1):
         subset = features_by_importance[:i]
-        auc_fwd = _eval_lgbm_multiseed(
-            train, y_train, holdout, y_holdout, subset, seeds
-        )
+        auc_fwd = _eval_lgbm_multiseed(train, y_train, holdout, y_holdout, subset, seeds)
         forward_history.append((i, subset[-1], auc_fwd))
-        print(
-            f"  [{i}/{len(features_by_importance)}] +{subset[-1]:<30} AUC={auc_fwd:.5f}"
-        )
+        print(f"  [{i}/{len(features_by_importance)}] +{subset[-1]:<30} AUC={auc_fwd:.5f}")
 
     print(f"\n{'N':>3} {'Added feature':<30} {'AUC':>10} {'Delta':>10}")
     print("-" * 57)
@@ -462,13 +425,9 @@ def main():
     print("-" * 67)
 
     for name, features in feature_sets.items():
-        auc_lgbm = _eval_lgbm_multiseed(
-            train, y_train, holdout, y_holdout, features, seeds
-        )
+        auc_lgbm = _eval_lgbm_multiseed(train, y_train, holdout, y_holdout, features, seeds)
         logreg_features = [f for f in features if f not in CAT_FEATURES]
-        auc_logreg = _eval_logreg_multiseed(
-            train, y_train, holdout, y_holdout, logreg_features, seeds
-        )
+        auc_logreg = _eval_logreg_multiseed(train, y_train, holdout, y_holdout, logreg_features, seeds)
         print(f"{name:<35} {auc_lgbm:>14.5f} {auc_logreg:>14.5f}")
 
     # ===================================================================
@@ -495,15 +454,11 @@ def main():
             print(f"  - {f}{marker}")
 
     print("\nFor TREES (LightGBM/XGBoost/CatBoost):")
-    print(
-        f"  Use forward-selected ({len(forward_selected)}) or ablation-pruned ({len(ablation_pruned)}),"
-    )
+    print(f"  Use forward-selected ({len(forward_selected)}) or ablation-pruned ({len(ablation_pruned)}),")
     print("  whichever scored higher in step 4.")
 
     print("\nFor NNs (ResNet/FTTransformer/RealMLP):")
-    print(
-        "  Compare forward-selected vs raw-only — NNs are more sensitive to noisy features."
-    )
+    print("  Compare forward-selected vs raw-only — NNs are more sensitive to noisy features.")
     print("  LogReg AUC above serves as a proxy for NN feature sensitivity.")
 
 

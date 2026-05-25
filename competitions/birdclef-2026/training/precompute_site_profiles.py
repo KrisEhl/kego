@@ -120,9 +120,7 @@ def main():
             if done % 20 == 0:
                 elapsed = time.time() - t0_all
                 eta = elapsed / done * (total_files - done)
-                print(
-                    f"  [{done}/{total_files}] {elapsed / 60:.1f}min elapsed, {eta / 60:.1f}min ETA"
-                )
+                print(f"  [{done}/{total_files}] {elapsed / 60:.1f}min elapsed, {eta / 60:.1f}min ETA")
         if site_embs:
             profiles[site] = np.stack(site_embs, axis=0).mean(axis=0)  # (1536,)
             print(f"  {site}: {len(site_embs)} files → mean emb computed")

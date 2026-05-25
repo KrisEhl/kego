@@ -18,13 +18,9 @@ def split_dataset(
     elif train_size is None and validate_size is not None and test_size is not None:
         train_size = 1.0 - test_size - validate_size
     if validate_size is None or test_size is None or train_size is None:
-        raise ValueError(
-            f"Only one of {validate_size=} or {test_size=} or {train_size=} can be None!"
-        )
+        raise ValueError(f"Only one of {validate_size=} or {test_size=} or {train_size=} can be None!")
     if validate_size + test_size + train_size != 1:
-        raise ValueError(
-            f"{validate_size=} + {test_size=} + {train_size=} != {validate_size + test_size + train_size}"
-        )
+        raise ValueError(f"{validate_size=} + {test_size=} + {train_size=} != {validate_size + test_size + train_size}")
 
     _train_size, _validate_size, _test_size = (
         round(train_size, 6),

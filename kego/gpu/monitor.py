@@ -118,9 +118,7 @@ class GPUMonitor:
     @property
     def avg_mem_util(self) -> float:
         """Average GPU memory bandwidth utilization (%) across all samples."""
-        return (
-            sum(self.mem_samples) / len(self.mem_samples) if self.mem_samples else 0.0
-        )
+        return sum(self.mem_samples) / len(self.mem_samples) if self.mem_samples else 0.0
 
     @property
     def max_mem_util(self) -> float:

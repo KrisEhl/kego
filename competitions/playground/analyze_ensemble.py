@@ -40,18 +40,12 @@ from kego.tracking import (  # noqa: E402
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Greedy ensemble member selection and leave-one-out analysis"
-    )
+    parser = argparse.ArgumentParser(description="Greedy ensemble member selection and leave-one-out analysis")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--from-experiment",
@@ -80,14 +74,10 @@ def main():
     # --- Load predictions ---
     if args.from_ensemble:
         logger.info(f"Loading predictions from ensemble: {args.from_ensemble}")
-        model_names, all_oof, all_holdout, _ = load_predictions_from_ensemble(
-            args.from_ensemble, tracking_uri
-        )
+        model_names, all_oof, all_holdout, _ = load_predictions_from_ensemble(args.from_ensemble, tracking_uri)
     else:
         logger.info(f"Loading predictions from experiments: {args.from_experiment}")
-        model_names, all_oof, all_holdout, _ = load_predictions_from_mlflow(
-            args.from_experiment, tracking_uri
-        )
+        model_names, all_oof, all_holdout, _ = load_predictions_from_mlflow(args.from_experiment, tracking_uri)
 
     if not model_names:
         logger.error("No predictions loaded, exiting")

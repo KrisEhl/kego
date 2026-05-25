@@ -29,9 +29,7 @@ import pandas as pd
 import soundfile as sf
 
 DATA = (
-    Path(
-        os.getenv("KEGO_PATH_DATA", Path(__file__).parent.parent.parent.parent / "data")
-    )
+    Path(os.getenv("KEGO_PATH_DATA", Path(__file__).parent.parent.parent.parent / "data"))
     / "birdclef"
     / "birdclef-2026"
 )
@@ -90,10 +88,7 @@ def main() -> None:
     # -----------------------------------------------------------------------
     vc = train["primary_label"].value_counts()
     print(f"Unique species with training data : {len(vc)}")
-    print(
-        f"Recordings/species — min: {vc.min()}, median: {int(vc.median())}, "
-        f"mean: {vc.mean():.0f}, max: {vc.max()}"
-    )
+    print(f"Recordings/species — min: {vc.min()}, median: {int(vc.median())}, mean: {vc.mean():.0f}, max: {vc.max()}")
     print(f"\nSpecies with only 1 recording  : {(vc == 1).sum()}")
     print(f"Species with < 5 recordings    : {(vc < 5).sum()}")
     print(f"Species with < 10 recordings   : {(vc < 10).sum()}")
@@ -123,12 +118,8 @@ def main() -> None:
     # -----------------------------------------------------------------------
     section("SECONDARY LABELS")
     # -----------------------------------------------------------------------
-    has_secondary = ~train["secondary_labels"].astype(str).str.strip().isin(
-        ["[]", "nan", ""]
-    )
-    print(
-        f"Recordings with secondary labels : {has_secondary.sum()} ({has_secondary.mean():.1%})"
-    )
+    has_secondary = ~train["secondary_labels"].astype(str).str.strip().isin(["[]", "nan", ""])
+    print(f"Recordings with secondary labels : {has_secondary.sum()} ({has_secondary.mean():.1%})")
 
     all_secondary: list[str] = []
     for raw in train.loc[has_secondary, "secondary_labels"]:
@@ -144,9 +135,7 @@ def main() -> None:
     print("\nTop 15 most common secondary labels:")
     top_sec = sec_vc.head(15).reset_index()
     top_sec.columns = ["primary_label", "count"]
-    top_sec = top_sec.merge(
-        taxonomy[["primary_label", "common_name"]], on="primary_label", how="left"
-    )
+    top_sec = top_sec.merge(taxonomy[["primary_label", "common_name"]], on="primary_label", how="left")
     print(top_sec.to_string(index=False))
 
     # -----------------------------------------------------------------------
@@ -154,22 +143,14 @@ def main() -> None:
     # -----------------------------------------------------------------------
     zs_df = taxonomy[taxonomy["primary_label"].isin(zero_shot)].copy()
     print(f"\n{len(zs_df)} species with no training data:")
-    print(
-        zs_df[
-            ["primary_label", "scientific_name", "common_name", "class_name"]
-        ].to_string(index=False)
-    )
+    print(zs_df[["primary_label", "scientific_name", "common_name", "class_name"]].to_string(index=False))
 
     # -----------------------------------------------------------------------
     section("GEOGRAPHIC DISTRIBUTION")
     # -----------------------------------------------------------------------
     print(f"Recordings with lat/lon : {train['latitude'].notna().sum():,}")
-    print(
-        f"Latitude  — min: {train['latitude'].min():.1f}, max: {train['latitude'].max():.1f}"
-    )
-    print(
-        f"Longitude — min: {train['longitude'].min():.1f}, max: {train['longitude'].max():.1f}"
-    )
+    print(f"Latitude  — min: {train['latitude'].min():.1f}, max: {train['latitude'].max():.1f}")
+    print(f"Longitude — min: {train['longitude'].min():.1f}, max: {train['longitude'].max():.1f}")
     print("\nData source breakdown (collection):")
     if "collection" in train.columns:
         print(train["collection"].value_counts().to_string())
@@ -217,9 +198,7 @@ def main() -> None:
             f"max: {durations.max():.1f}s"
         )
         print(f"Clips < 5s   : {(durations < 5).sum()} ({(durations < 5).mean():.1%})")
-        print(
-            f"Clips >= 60s : {(durations >= 60).sum()} ({(durations >= 60).mean():.1%})"
-        )
+        print(f"Clips >= 60s : {(durations >= 60).sum()} ({(durations >= 60).mean():.1%})")
     else:
         print("Skipped (--audio-sample 0)")
 
@@ -264,12 +243,8 @@ def main() -> None:
         print(
             f"Species per 5s chunk    : min={species_per_chunk.min()}, max={species_per_chunk.max()}, median={species_per_chunk.median():.1f}, mean={species_per_chunk.mean():.1f}"
         )
-        print(
-            "\nNote: soundscape labels have multiple co-occurring species per chunk (';'-separated)"
-        )
-        print(
-            "      This reflects real test conditions — very different from isolated training clips."
-        )
+        print("\nNote: soundscape labels have multiple co-occurring species per chunk (';'-separated)")
+        print("      This reflects real test conditions — very different from isolated training clips.")
     else:
         sc = None
         species_per_chunk = None
@@ -279,9 +254,7 @@ def main() -> None:
     section("TEST SOUNDSCAPES")
     # -----------------------------------------------------------------------
     test_dir = DATA / "test_soundscapes"
-    test_files = [
-        f for f in test_dir.iterdir() if f.suffix in (".ogg", ".wav", ".flac")
-    ]
+    test_files = [f for f in test_dir.iterdir() if f.suffix in (".ogg", ".wav", ".flac")]
     print(f"Public test soundscapes : {len(test_files)}")
     if test_files:
         info = sf.info(test_files[0])
@@ -301,9 +274,7 @@ def main() -> None:
         return
 
     fig, axes = plt.subplots(5, 3, figsize=(18, 22))
-    fig.suptitle(
-        "BirdCLEF+ 2026 — Training Data Overview", fontsize=14, fontweight="bold"
-    )
+    fig.suptitle("BirdCLEF+ 2026 — Training Data Overview", fontsize=14, fontweight="bold")
 
     # 1. Recordings per species (log-scale histogram)
     ax = axes[0, 0]
@@ -312,9 +283,7 @@ def main() -> None:
     ax.set_ylabel("Number of species")
     ax.set_title("Recording count distribution")
     ax.set_yscale("log")
-    ax.axvline(
-        vc.median(), color="orange", linestyle="--", label=f"median={int(vc.median())}"
-    )
+    ax.axvline(vc.median(), color="orange", linestyle="--", label=f"median={int(vc.median())}")
     ax.legend(fontsize=8)
 
     # 2. Top 25 species by recording count
@@ -336,10 +305,7 @@ def main() -> None:
     ax.set_yscale("log")
     ax.set_xticks(x)
     ax.set_xticklabels(
-        [
-            f"{c}\n{class_recs.get(c, 0):,} rec\n{class_spp.get(c, 0)} spp"
-            for c in classes
-        ],
+        [f"{c}\n{class_recs.get(c, 0):,} rec\n{class_spp.get(c, 0)} spp" for c in classes],
         fontsize=7,
     )
     ax.set_ylabel("Recordings (log scale)")
@@ -373,9 +339,7 @@ def main() -> None:
     spp_df = (
         vc.reset_index()
         .rename(columns={"primary_label": "primary_label", "count": "n_recordings"})
-        .merge(
-            taxonomy[["primary_label", "class_name"]], on="primary_label", how="left"
-        )
+        .merge(taxonomy[["primary_label", "class_name"]], on="primary_label", how="left")
     )
     log_bins = np.logspace(0, np.log10(vc.max() + 1), 20)
     class_order = class_spp.index.tolist()  # sorted by species count desc

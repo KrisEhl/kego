@@ -109,9 +109,7 @@ def test_run_captures_metrics(dummy_script):
     ):
         run([str(dummy_script)])
 
-    logged_metrics = {
-        call.args[0]: call.args[1] for call in mock_log_metric.call_args_list
-    }
+    logged_metrics = {call.args[0]: call.args[1] for call in mock_log_metric.call_args_list}
     assert logged_metrics["fold_auc"] == pytest.approx(0.8821)
     assert logged_metrics["val_loss"] == pytest.approx(0.3142)
 

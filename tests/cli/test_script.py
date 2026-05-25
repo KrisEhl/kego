@@ -12,9 +12,7 @@ if __name__ == "__main__":
     import argparse
     import time
 
-    parser = argparse.ArgumentParser(
-        description="Fake training script for kego run testing"
-    )
+    parser = argparse.ArgumentParser(description="Fake training script for kego run testing")
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--backbone", type=str, default="efficientnet_b0")

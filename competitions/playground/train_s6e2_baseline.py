@@ -60,11 +60,7 @@ _git_commit = subprocess.run(
 ).stdout.strip()
 logger.info(f"Git commit: {_git_commit}")
 
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 
 SEEDS_FULL = [42, 123, 777]
@@ -790,11 +786,7 @@ def _impute_cholesterol(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if (df["Cholesterol"] == 0).any():
         df["_age_bin"] = pd.cut(df["Age"], bins=[0, 40, 50, 60, 100])
-        median_map = (
-            df[df["Cholesterol"] > 0]
-            .groupby(["Sex", "_age_bin"])["Cholesterol"]
-            .median()
-        )
+        median_map = df[df["Cholesterol"] > 0].groupby(["Sex", "_age_bin"])["Cholesterol"].median()
         mask = df["Cholesterol"] == 0
         for idx in df[mask].index:
             key = (df.loc[idx, "Sex"], df.loc[idx, "_age_bin"])
@@ -824,12 +816,7 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
 
     # --- Composite risk scores ---
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["abnormal_count"] = (
         (df["Thallium"] >= 6).astype(int)
         + (df["Number of vessels fluro"] >= 1).astype(int)
@@ -861,9 +848,9 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{col}_dev_sex"] = df[col] - grp_mean
 
     # --- Signal conflict: top predictors disagree on risk direction ---
-    df["signal_conflict"] = (
-        (df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)
-    ).astype(int) + ((df["Thallium"] == 3) & (df["Chest pain type"] == 4)).astype(int)
+    df["signal_conflict"] = ((df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)).astype(int) + (
+        (df["Thallium"] == 3) & (df["Chest pain type"] == 4)
+    ).astype(int)
 
     # --- Clinical scores (from research_features.py) ---
     log_age = np.log(df["Age"].clip(lower=20))
@@ -876,16 +863,12 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     age_pts = np.where(df["Age"] < 45, 0, np.where(df["Age"] < 65, 1, 2))
-    ekg_pts = np.where(
-        df["EKG results"] == 0, 0, np.where(df["EKG results"] == 1, 1, 2)
-    )
+    ekg_pts = np.where(df["EKG results"] == 0, 0, np.where(df["EKG results"] == 1, 1, 2))
     risk_pts = np.minimum(df["FBS over 120"] + (df["BP"] > 140).astype(int), 2)
     df["heart_score_partial"] = age_pts + ekg_pts + risk_pts
 
     est_exercise_min = ((df["Max HR"] - 80) / 8).clip(0, 21)
-    df["duke_treadmill_approx"] = (
-        est_exercise_min - 5 * df["ST depression"] - 4 * df["Exercise angina"] * 2
-    )
+    df["duke_treadmill_approx"] = est_exercise_min - 5 * df["ST depression"] - 4 * df["Exercise angina"] * 2
 
     df["cholesterol_squared"] = df["Cholesterol"] ** 2
 
@@ -909,11 +892,7 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Composite scores
     df["metabolic_syndrome"] = df["hypertension"] + df["high_chol"] + df["FBS over 120"]
-    df["score_proxy"] = (
-        (df["Age"] / 10).astype(int)
-        + (df["Sex"] == 1).astype(int)
-        + df["very_high_chol"]
-    )
+    df["score_proxy"] = (df["Age"] / 10).astype(int) + (df["Sex"] == 1).astype(int) + df["very_high_chol"]
 
     # Interaction features
     df["age_x_vessels"] = df["Age"] * df["Number of vessels fluro"]
@@ -923,9 +902,7 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _add_orig_stats_features(
-    df: pd.DataFrame, original: pd.DataFrame, target: str = TARGET
-) -> pd.DataFrame:
+def _add_orig_stats_features(df: pd.DataFrame, original: pd.DataFrame, target: str = TARGET) -> pd.DataFrame:
     """Add per-feature target statistics computed from the 270-row UCI original dataset.
 
     For each raw feature column, computes mean/median/std/skew/count of the target
@@ -964,9 +941,7 @@ def _add_orig_stats_features(
 
 
 def _suggest_catboost(trial):
-    bootstrap_type = trial.suggest_categorical(
-        "bootstrap_type", ["Bayesian", "Bernoulli"]
-    )
+    bootstrap_type = trial.suggest_categorical("bootstrap_type", ["Bayesian", "Bernoulli"])
     params = {
         "iterations": 5000,
         "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
@@ -981,9 +956,7 @@ def _suggest_catboost(trial):
         "verbose": 0,
     }
     if bootstrap_type == "Bayesian":
-        params["bagging_temperature"] = trial.suggest_float(
-            "bagging_temperature", 0.0, 10.0
-        )
+        params["bagging_temperature"] = trial.suggest_float("bagging_temperature", 0.0, 10.0)
     else:
         params["subsample"] = trial.suggest_float("subsample", 0.5, 1.0)
     return params
@@ -1016,9 +989,7 @@ def _suggest_ft_transformer(trial):
         "attention_n_heads": 8,
         "attention_dropout": trial.suggest_float("attention_dropout", 0.0, 0.5),
         "ffn_dropout": trial.suggest_float("ffn_dropout", 0.0, 0.5),
-        "ffn_d_hidden_multiplier": trial.suggest_float(
-            "ffn_d_hidden_multiplier", 1.0, 2.667
-        ),
+        "ffn_d_hidden_multiplier": trial.suggest_float("ffn_d_hidden_multiplier", 1.0, 2.667),
         "lr": trial.suggest_float("lr", 1e-5, 1e-3, log=True),
         "batch_size": trial.suggest_categorical("batch_size", [64, 128, 256, 512]),
         "max_epochs": 50,
@@ -1052,9 +1023,7 @@ def _suggest_logistic_regression(trial):
         "solver": solver,
     }
     if solver == "saga":
-        params["penalty"] = trial.suggest_categorical(
-            "penalty", ["l1", "l2", "elasticnet"]
-        )
+        params["penalty"] = trial.suggest_categorical("penalty", ["l1", "l2", "elasticnet"])
         if params["penalty"] == "elasticnet":
             params["l1_ratio"] = trial.suggest_float("l1_ratio", 0.0, 1.0)
     else:
@@ -1141,11 +1110,7 @@ def _train_single_model(
         "seed": seed,
         "folds_n": folds_n,
         "feature_set": feature_set,
-        **{
-            k: v
-            for k, v in model_config["kwargs"].items()
-            if isinstance(v, (int, float, str, bool))
-        },
+        **{k: v for k, v in model_config["kwargs"].items() if isinstance(v, (int, float, str, bool))},
     }
     if config_fingerprint:
         params["config_fingerprint"] = config_fingerprint
@@ -1244,11 +1209,7 @@ def _run_optuna_study(
     # Setup MLflow experiment
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
     mlflow_ready = False
-    experiment_name = (
-        f"playground-s6e2-tune-{tag}-{model_name}"
-        if tag
-        else f"playground-s6e2-tune-{model_name}"
-    )
+    experiment_name = f"playground-s6e2-tune-{tag}-{model_name}" if tag else f"playground-s6e2-tune-{model_name}"
     if tracking_uri:
         try:
             mlflow.set_tracking_uri(tracking_uri)
@@ -1268,8 +1229,7 @@ def _run_optuna_study(
     )
 
     logger.info(
-        f"Starting Optuna study for '{model_name}': "
-        f"{n_trials} trials, {folds_n} folds, feature_set={feature_set}"
+        f"Starting Optuna study for '{model_name}': {n_trials} trials, {folds_n} folds, feature_set={feature_set}"
     )
 
     # Determine max parallelism based on resource type.
@@ -1282,9 +1242,7 @@ def _run_optuna_study(
 
     while completed < n_trials:
         # Launch new trials up to max_parallel
-        while (
-            len(running) < max_parallel and completed + failed + len(running) < n_trials
-        ):
+        while len(running) < max_parallel and completed + failed + len(running) < n_trials:
             trial = study.ask()
             t0 = time.time()
 
@@ -1364,11 +1322,7 @@ def _run_optuna_study(
                                 "folds_n": folds_n,
                                 "seed": seed,
                                 "trial_number": trial.number,
-                                **{
-                                    k: v
-                                    for k, v in trial.params.items()
-                                    if isinstance(v, (int, float, str, bool))
-                                },
+                                **{k: v for k, v in trial.params.items() if isinstance(v, (int, float, str, bool))},
                             }
                         )
                         mlflow_metrics = {
@@ -1379,17 +1333,13 @@ def _run_optuna_study(
                             mlflow_metrics["holdout_auc"] = holdout_auc
                         mlflow.log_metrics(mlflow_metrics)
                 except Exception as e:
-                    logger.warning(
-                        f"MLflow logging failed for trial {trial.number}: {e}"
-                    )
+                    logger.warning(f"MLflow logging failed for trial {trial.number}: {e}")
 
             try:
                 best_so_far = study.best_value
             except ValueError:
                 best_so_far = oof_auc
-            holdout_str = (
-                f" holdout_auc={holdout_auc:.4f}" if holdout_auc is not None else ""
-            )
+            holdout_str = f" holdout_auc={holdout_auc:.4f}" if holdout_auc is not None else ""
             print(
                 f"Trial {completed}/{n_trials}: "
                 f"oof_auc={oof_auc:.4f}{holdout_str} "
@@ -1415,11 +1365,7 @@ def _run_optuna_study(
                         "folds_n": folds_n,
                         "seed": seed,
                         "best_trial_number": study.best_trial.number,
-                        **{
-                            k: v
-                            for k, v in study.best_trial.params.items()
-                            if isinstance(v, (int, float, str, bool))
-                        },
+                        **{k: v for k, v in study.best_trial.params.items() if isinstance(v, (int, float, str, bool))},
                     }
                 )
                 mlflow.log_metric("oof_auc", study.best_value)
@@ -1481,9 +1427,7 @@ def _ensemble_predictions(
     if holdout_labels is None:
         logger.info(f"{tag}(retrain-full: method selection based on OOF AUC)")
 
-    logger.info(
-        f"{tag}Best method: {result.best_method} ({eval_label} AUC: {result.best_auc:.4f})"
-    )
+    logger.info(f"{tag}Best method: {result.best_method} ({eval_label} AUC: {result.best_auc:.4f})")
     if result.calibrated:
         logger.info(f"{tag}Calibration improved AUC, using calibrated predictions")
     elif holdout_labels is not None:
@@ -1552,21 +1496,15 @@ def _train_ensemble(
             for model_name, config in models.items():
                 filtered_config = filter_model_config(config, active_set)
                 learner_id = make_learner_id(model_name, fs_name, folds_n)
-                learner_seeds = get_seeds_for_learner(
-                    learner_index, seed_pool, seeds_per_learner
-                )
+                learner_seeds = get_seeds_for_learner(learner_index, seed_pool, seeds_per_learner)
                 seeds_per_lid[learner_id] = len(learner_seeds)
                 learner_index += 1
 
-                is_gpu = not model_name.endswith("_cpu") and any(
-                    model_name.startswith(p) for p in GPU_MODEL_PREFIXES
-                )
+                is_gpu = not model_name.endswith("_cpu") and any(model_name.startswith(p) for p in GPU_MODEL_PREFIXES)
                 is_neural = any(model_name.startswith(p) for p in NEURAL_MODEL_PREFIXES)
 
                 for seed in learner_seeds:
-                    fp = task_fingerprint(
-                        model_name, seed, folds_n, fs_name, fs_features, filtered_config
-                    )
+                    fp = task_fingerprint(model_name, seed, folds_n, fs_name, fs_features, filtered_config)
                     if skip_fingerprints and fp in skip_fingerprints:
                         skipped += 1
                         continue
@@ -1581,11 +1519,7 @@ def _train_ensemble(
                             "num_cpus": 1,
                             "resources": {"heavy_gpu": 1},
                         }
-                    elif (
-                        model_name.startswith("realmlp")
-                        or model_name.startswith("ft_transformer")
-                        or is_neural
-                    ):
+                    elif model_name.startswith("realmlp") or model_name.startswith("ft_transformer") or is_neural:
                         opts = {
                             "num_gpus": 1,
                             "num_cpus": 2,
@@ -1619,10 +1553,7 @@ def _train_ensemble(
                     task_info.append(f"{learner_id} seed={seed} ({device})")
 
     if skipped:
-        logger.info(
-            f"Resuming: skipped {skipped} completed tasks (config match), "
-            f"launching {len(futures)} new"
-        )
+        logger.info(f"Resuming: skipped {skipped} completed tasks (config match), launching {len(futures)} new")
     logger.info(f"Launched {len(futures)} Ray tasks ({learner_index} learners):")
     for info in task_info:
         logger.info(f"  - {info}")
@@ -1654,9 +1585,7 @@ def _train_ensemble(
         done, remaining = ray.wait(remaining, num_returns=1, timeout=600)
         if not done:
             logger.warning(
-                f"ray.wait timed out after 600s. "
-                f"{completed}/{len(futures)} completed, "
-                f"{len(remaining)} remaining."
+                f"ray.wait timed out after 600s. {completed}/{len(futures)} completed, {len(remaining)} remaining."
             )
             continue
         try:
@@ -1690,10 +1619,7 @@ def _train_ensemble(
 
         if holdout_labels is not None:
             auc = roc_auc_score(holdout_labels, holdout_pred)
-            logger.info(
-                f"[{completed}/{len(futures)}] {learner_id} seed={seed} "
-                f"— Holdout AUC: {auc:.4f}"
-            )
+            logger.info(f"[{completed}/{len(futures)}] {learner_id} seed={seed} — Holdout AUC: {auc:.4f}")
         else:
             logger.info(
                 f"[{completed}/{len(futures)}] {learner_id} seed={seed} "
@@ -1716,12 +1642,8 @@ def _train_ensemble(
 
         if holdout_labels is not None:
             auc = roc_auc_score(holdout_labels, all_holdout_preds[lid])
-            acc = accuracy_score(
-                holdout_labels, (all_holdout_preds[lid] >= 0.5).astype(int)
-            )
-            logger.info(
-                f"{lid} (avg {n} seeds) — Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}"
-            )
+            acc = accuracy_score(holdout_labels, (all_holdout_preds[lid] >= 0.5).astype(int))
+            logger.info(f"{lid} (avg {n} seeds) — Holdout AUC: {auc:.4f}, Accuracy: {acc:.4f}")
         else:
             oof_auc = roc_auc_score(train_labels, all_oof_preds[lid])
             logger.info(f"{lid} (avg {n} seeds) — OOF AUC: {oof_auc:.4f}")
@@ -1792,9 +1714,7 @@ def _train_ensemble(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--debug", action="store_true", help="Quick run with small sample"
-    )
+    parser.add_argument("--debug", action="store_true", help="Quick run with small sample")
     parser.add_argument(
         "--fast",
         action="store_true",
@@ -1905,9 +1825,7 @@ def main():
     args = parser.parse_args()
 
     if args.resume and (args.from_ensemble or args.from_experiment):
-        logger.error(
-            "--resume cannot be combined with --from-ensemble/--from-experiment"
-        )
+        logger.error("--resume cannot be combined with --from-ensemble/--from-experiment")
         sys.exit(1)
 
     if not args.from_experiment and not args.from_ensemble:
@@ -1984,9 +1902,7 @@ def main():
     orig_stat_cols = sorted([c for c in train.columns if c.startswith("orig_")])
     for fs_name in args.features:
         if fs_name == "all":
-            feature_sets_map["all"] = [
-                c for c in train.columns if c not in ["id", TARGET]
-            ]
+            feature_sets_map["all"] = [c for c in train.columns if c not in ["id", TARGET]]
         elif fs_name == "orig-stats":
             feature_sets_map["orig-stats"] = FEATURES_ABLATION_PRUNED + orig_stat_cols
         else:
@@ -1996,9 +1912,7 @@ def main():
         logger.info(f"Feature set '{fs_name}': {len(fs_features)} features")
 
     n_features = len(first_fs)
-    models = get_models(
-        n_features, fast=args.fast, fast_full=args.fast_full, neural=args.neural
-    )
+    models = get_models(n_features, fast=args.fast, fast_full=args.fast_full, neural=args.neural)
 
     # Filter to specific models if requested
     if args.models:
@@ -2027,15 +1941,7 @@ def main():
     mode_name = (
         "debug"
         if args.debug
-        else (
-            "fast"
-            if args.fast
-            else "fast-full"
-            if args.fast_full
-            else "neural"
-            if args.neural
-            else "full"
-        )
+        else ("fast" if args.fast else "fast-full" if args.fast_full else "neural" if args.neural else "full")
     )
     tag = args.tag or mode_name
 
@@ -2047,15 +1953,13 @@ def main():
         # Load predictions from MLflow and re-ensemble (no training)
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "")
         if not tracking_uri:
-            logger.error(
-                "MLFLOW_TRACKING_URI must be set for --from-experiment/--from-ensemble"
-            )
+            logger.error("MLFLOW_TRACKING_URI must be set for --from-experiment/--from-ensemble")
             sys.exit(1)
 
         if args.from_ensemble:
             logger.info(f"Loading predictions from ensemble: {args.from_ensemble}")
-            model_names, all_oof, all_holdout, all_test = (
-                load_predictions_from_ensemble(args.from_ensemble, tracking_uri)
+            model_names, all_oof, all_holdout, all_test = load_predictions_from_ensemble(
+                args.from_ensemble, tracking_uri
             )
         else:
             logger.info(f"Loading predictions from experiments: {args.from_experiment}")
@@ -2085,11 +1989,7 @@ def main():
 
             mlflow.set_tracking_uri(tracking_uri)
             mlflow.set_experiment("ensemble")
-            run_name = (
-                args.from_ensemble
-                if args.from_ensemble
-                else "_".join(args.from_experiment)
-            )
+            run_name = args.from_ensemble if args.from_ensemble else "_".join(args.from_experiment)
             with mlflow.start_run(run_name=run_name) as run:
                 ensemble_run_id = run.info.run_id
                 for method, method_auc in all_aucs.items():
@@ -2108,18 +2008,13 @@ def main():
         # Optuna hyperparameter tuning mode
         for m in args.tune:
             if m not in TUNE_SEARCH_SPACES:
-                logger.error(
-                    f"No search space for '{m}'. "
-                    f"Available: {list(TUNE_SEARCH_SPACES.keys())}"
-                )
+                logger.error(f"No search space for '{m}'. Available: {list(TUNE_SEARCH_SPACES.keys())}")
                 sys.exit(1)
 
         # Subsample training data if requested
         train_tune = train
         if args.tune_sample and args.tune_sample < len(train):
-            train_tune = train.sample(n=args.tune_sample, random_state=42).reset_index(
-                drop=True
-            )
+            train_tune = train.sample(n=args.tune_sample, random_state=42).reset_index(drop=True)
             logger.info(f"Tuning on {len(train_tune)}/{len(train)} subsampled rows")
 
         feature_set_name = args.features[0]
@@ -2156,10 +2051,7 @@ def main():
             f"× {len(folds_list)} folds = {n_learners} learners"
         )
         if args.seeds_per_learner:
-            logger.info(
-                f"  Rotating seeds: {args.seeds_per_learner} per learner "
-                f"from pool of {len(seed_pool)}"
-            )
+            logger.info(f"  Rotating seeds: {args.seeds_per_learner} per learner from pool of {len(seed_pool)}")
         else:
             logger.info(f"  All learners share {len(seed_pool)} seed(s)")
 
@@ -2171,16 +2063,10 @@ def main():
             if not tracking_uri:
                 logger.error("MLFLOW_TRACKING_URI must be set for --resume")
                 sys.exit(1)
-            skip_fingerprints, runs_df = get_completed_fingerprints(
-                args.resume, tracking_uri
-            )
-            logger.info(
-                f"Resuming '{args.resume}': {len(skip_fingerprints)} completed tasks"
-            )
+            skip_fingerprints, runs_df = get_completed_fingerprints(args.resume, tracking_uri)
+            logger.info(f"Resuming '{args.resume}': {len(skip_fingerprints)} completed tasks")
             if not runs_df.empty:
-                _, pre_oof, pre_holdout, pre_test = load_predictions_from_runs(
-                    runs_df, tracking_uri
-                )
+                _, pre_oof, pre_holdout, pre_test = load_predictions_from_runs(runs_df, tracking_uri)
                 preloaded = (pre_oof, pre_holdout, pre_test)
 
         # Train ensemble with multi-seed averaging via Ray
@@ -2271,9 +2157,7 @@ def main():
                 continue
 
             # Skip warning lines before CSV header
-            csv_lines = [
-                l for l in result.stdout.splitlines() if not l.startswith("Warning:")
-            ]
+            csv_lines = [l for l in result.stdout.splitlines() if not l.startswith("Warning:")]
             reader = csv.DictReader(csv_lines)
             for row in reader:
                 # Check the most recent submission (first row)
@@ -2303,14 +2187,9 @@ def main():
 
                 if ensemble_run_id:
                     client.log_metric(ensemble_run_id, "public_lb_score", public_score)
-                    logger.info(
-                        f"MLflow: logged public_lb_score={public_score} "
-                        f"to run {ensemble_run_id}"
-                    )
+                    logger.info(f"MLflow: logged public_lb_score={public_score} to run {ensemble_run_id}")
                 else:
-                    logger.warning(
-                        "No ensemble MLflow run ID available, skipping LB score logging"
-                    )
+                    logger.warning("No ensemble MLflow run ID available, skipping LB score logging")
             except Exception as e:
                 logger.warning(f"MLflow LB score logging failed: {e}")
 

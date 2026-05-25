@@ -68,11 +68,7 @@ from kego.features.selection import (
 # ── Constants ─────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", PROJECT_ROOT / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", PROJECT_ROOT / "data")) / "playground" / "playground-series-s6e2"
 RESULTS_DIR = Path(__file__).resolve().parent / "quantum_results"
 TARGET = "Heart Disease"
 
@@ -185,12 +181,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
 
     # Composite risk scores
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["abnormal_count"] = (
         (df["Thallium"] >= 6).astype(int)
         + (df["Number of vessels fluro"] >= 1).astype(int)
@@ -218,9 +209,9 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{col}_dev_sex"] = df[col] - grp_mean
 
     # Signal conflict
-    df["signal_conflict"] = (
-        (df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)
-    ).astype(int) + ((df["Thallium"] == 3) & (df["Chest pain type"] == 4)).astype(int)
+    df["signal_conflict"] = ((df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)).astype(int) + (
+        (df["Thallium"] == 3) & (df["Chest pain type"] == 4)
+    ).astype(int)
 
     return df
 
@@ -239,10 +230,7 @@ def load_data() -> pd.DataFrame:
         original[TARGET] = original[TARGET].map({"Presence": 1, "Absence": 0})
         original["id"] = -1
         combined = pd.concat([train_full, original], ignore_index=True)
-        print(
-            f"Data loaded: {len(combined)} rows "
-            f"({len(train_full)} synthetic + {len(original)} original)"
-        )
+        print(f"Data loaded: {len(combined)} rows ({len(train_full)} synthetic + {len(original)} original)")
     else:
         combined = train_full
         print(f"Data loaded: {len(combined)} rows (synthetic only)")
@@ -280,9 +268,7 @@ def create_splits(
         stratify_column=TARGET,
     )
 
-    print(
-        f"  quantum_train target dist: {quantum_train[TARGET].value_counts().to_dict()}"
-    )
+    print(f"  quantum_train target dist: {quantum_train[TARGET].value_counts().to_dict()}")
     print(f"  holdout target dist: {holdout[TARGET].value_counts().to_dict()}")
 
     return quantum_train, holdout, full_train
@@ -366,16 +352,10 @@ def _add_quantum_experiments(
         [f"qf_{i}" for i in range(quantum_run["Xq_train"].shape[1])],
     )
 
-    X_small_quantum = concat_quantum_features(
-        X_small, quantum_run["Xq_train"], quantum_feature_names
-    )
-    X_holdout_quantum = concat_quantum_features(
-        X_holdout, quantum_run["Xq_test"], quantum_feature_names
-    )
+    X_small_quantum = concat_quantum_features(X_small, quantum_run["Xq_train"], quantum_feature_names)
+    X_holdout_quantum = concat_quantum_features(X_holdout, quantum_run["Xq_test"], quantum_feature_names)
     X_small_qonly = pd.DataFrame(quantum_run["Xq_train"], columns=quantum_feature_names)
-    X_holdout_qonly = pd.DataFrame(
-        quantum_run["Xq_test"], columns=quantum_feature_names
-    )
+    X_holdout_qonly = pd.DataFrame(quantum_run["Xq_test"], columns=quantum_feature_names)
 
     experiments.append(
         (
@@ -406,12 +386,8 @@ def _add_quantum_experiments(
 
     if quantum_features_full is not None:
         quantum_full_run = quantum_features_full[0]
-        X_full_quantum = concat_quantum_features(
-            X_full, quantum_full_run["Xq_train"], quantum_feature_names
-        )
-        X_holdout_quantum_full = concat_quantum_features(
-            X_holdout, quantum_full_run["Xq_test"], quantum_feature_names
-        )
+        X_full_quantum = concat_quantum_features(X_full, quantum_full_run["Xq_train"], quantum_feature_names)
+        X_holdout_quantum_full = concat_quantum_features(X_holdout, quantum_full_run["Xq_test"], quantum_feature_names)
         experiments.append(
             (
                 f"{key_prefix}_quantum_full",
@@ -450,9 +426,7 @@ def run_evaluation(
     y_ho = holdout[TARGET].reset_index(drop=True)
     y_ft = full_train[TARGET].reset_index(drop=True)
 
-    cats_in_ablation = [
-        column for column in CAT_FEATURES if column in FEATURES_ABLATION_PRUNED
-    ]
+    cats_in_ablation = [column for column in CAT_FEATURES if column in FEATURES_ABLATION_PRUNED]
 
     # Classical feature DataFrames (engineered features already present)
     X_qt = quantum_train[FEATURES_ABLATION_PRUNED].reset_index(drop=True)
@@ -623,9 +597,7 @@ def run_ablation(
         ],
     }
     if cat_features:
-        available_cats = [
-            column for column in cat_features if column in X_train.columns
-        ]
+        available_cats = [column for column in cat_features if column in X_train.columns]
         if available_cats:
             fit_kwargs["categorical_feature"] = available_cats
 
@@ -634,10 +606,7 @@ def run_ablation(
 
     drop_result = drop_one_ablation(*shared, features=features, **shared_kwargs)
 
-    ordered_features = [
-        entry["feature"]
-        for entry in sorted(drop_result.feature_results, key=lambda x: x["delta"])
-    ]
+    ordered_features = [entry["feature"] for entry in sorted(drop_result.feature_results, key=lambda x: x["delta"])]
     forward_result = forward_selection(
         *shared,
         features_ordered=ordered_features,
@@ -645,10 +614,7 @@ def run_ablation(
     )
 
     if baseline_features is None or candidate_features is None:
-        helpful_ordered = [
-            entry["feature"]
-            for entry in sorted(drop_result.feature_results, key=lambda x: x["delta"])
-        ]
+        helpful_ordered = [entry["feature"] for entry in sorted(drop_result.feature_results, key=lambda x: x["delta"])]
         midpoint = len(helpful_ordered) // 2
         baseline_features = helpful_ordered[:midpoint]
         candidate_features = helpful_ordered[midpoint:]
@@ -694,9 +660,7 @@ def print_ablation_summary(ablation: dict, metric: str = "roc_auc") -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Quantum Feature Extraction Experiment"
-    )
+    parser = argparse.ArgumentParser(description="Quantum Feature Extraction Experiment")
     parser.add_argument(
         "--local",
         action=argparse.BooleanOptionalAction,
@@ -784,9 +748,7 @@ def main():
                 metadata["num_runs"],
             )
         else:
-            print(
-                f"  No Rimay results found at {metadata_path}, skipping Rimay experiments."
-            )
+            print(f"  No Rimay results found at {metadata_path}, skipping Rimay experiments.")
             print("  Run with --submit to submit a new job.")
 
     # ── Local quantum features ──

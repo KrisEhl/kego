@@ -13,11 +13,7 @@ import kego.plotting.utils_plotting
 try:
     import sklearn.metrics
 except ModuleNotFoundError as e:
-    raise ModuleNotFoundError(
-        f"{e}\n"
-        f"Optional dependencies missing, install via"
-        " `poetry install --extras=train`"
-    ) from e
+    raise ModuleNotFoundError(f"{e}\nOptional dependencies missing, install via `poetry install --extras=train`") from e
 
 
 def plot_prediction_certainty(
@@ -211,9 +207,7 @@ def plot_confusion_matrix(
         linewidth=0,
         rasterized=True,
     )
-    kego.plotting.axes.plot_colorbar(
-        mesh, cax=ax_colorbar, label=colorbar_label, font_size=font_size
-    )
+    kego.plotting.axes.plot_colorbar(mesh, cax=ax_colorbar, label=colorbar_label, font_size=font_size)
     kego.plotting.utils_plotting.annotate_values(
         np.array(cm),
         axes,
@@ -223,12 +217,8 @@ def plot_confusion_matrix(
         round_to_base=overplot_round_base,
         font_size=font_size,
     )
-    kego.plotting.axes.set_axis_tick_labels(
-        axes=axes, values=[0.25, 0.75], labels=tick_labels_x, axis="x"
-    )
-    kego.plotting.axes.set_axis_tick_labels(
-        axes=axes, values=[0.25, 0.75], labels=tick_labels_y, axis="y"
-    )
+    kego.plotting.axes.set_axis_tick_labels(axes=axes, values=[0.25, 0.75], labels=tick_labels_x, axis="x")
+    kego.plotting.axes.set_axis_tick_labels(axes=axes, values=[0.25, 0.75], labels=tick_labels_y, axis="y")
     kego.plotting.axes.set_axes(
         axes,
         xlim=[0, 1],

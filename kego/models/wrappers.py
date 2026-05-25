@@ -53,9 +53,7 @@ class SubsampledSVC:
                 stratify=y,
                 random_state=self.random_state,
             )
-        self.pipe = make_pipeline(
-            StandardScaler(), SVC(random_state=self.random_state, **self.kwargs)
-        )
+        self.pipe = make_pipeline(StandardScaler(), SVC(random_state=self.random_state, **self.kwargs))
         self.pipe.fit(X, y)
         return self
 
@@ -69,9 +67,7 @@ class SubsampledSVC:
 class SubsampledTabPFN:
     """TabPFN with stratified subsampling for large datasets."""
 
-    def __init__(
-        self, cat_features=None, max_train_rows=10000, random_state=42, **kwargs
-    ):
+    def __init__(self, cat_features=None, max_train_rows=10000, random_state=42, **kwargs):
         self.cat_features = cat_features or []
         self.max_train_rows = max_train_rows
         self.random_state = random_state
@@ -162,9 +158,7 @@ class ScaledRealMLP:
 
         X_prep = self._prepare(X)
         y_np = y.values if hasattr(y, "values") else y
-        self.model = RealMLP_TD_Classifier(
-            random_state=self.random_state, **self.kwargs
-        )
+        self.model = RealMLP_TD_Classifier(random_state=self.random_state, **self.kwargs)
         self.model.fit(X_prep, y_np)
         return self
 

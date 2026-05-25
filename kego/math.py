@@ -17,14 +17,10 @@ def round_offset(values: np.ndarray, decimal: int, offset: float) -> np.ndarray:
     return values
 
 
-def round_numpy_time_to_base_minutes(
-    time: np.datetime64, base: int = 5
-) -> np.datetime64:
+def round_numpy_time_to_base_minutes(time: np.datetime64, base: int = 5) -> np.datetime64:
     tm = datetime.datetime.utcfromtimestamp(time.tolist() / 1e9)
     tm += datetime.timedelta(minutes=base / 2)
-    tm -= datetime.timedelta(
-        minutes=tm.minute % base, seconds=tm.second, microseconds=tm.microsecond
-    )
+    tm -= datetime.timedelta(minutes=tm.minute % base, seconds=tm.second, microseconds=tm.microsecond)
     return np.datetime64(tm)
 
 

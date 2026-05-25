@@ -66,17 +66,13 @@ BATCH = 8
 def load_window_16k(path: Path, start_sec: float) -> np.ndarray:
     import librosa
 
-    y, _ = librosa.load(
-        str(path), sr=SAMPLE_RATE, offset=start_sec, duration=WINDOW_SEC
-    )
+    y, _ = librosa.load(str(path), sr=SAMPLE_RATE, offset=start_sec, duration=WINDOW_SEC)
     if len(y) < WINDOW_SAMPLES:
         y = np.pad(y, (0, WINDOW_SAMPLES - len(y)))
     return y[:WINDOW_SAMPLES].astype(np.float32)
 
 
-def get_aves_embeddings(
-    model, audio_batch: list[np.ndarray], device: str
-) -> np.ndarray:
+def get_aves_embeddings(model, audio_batch: list[np.ndarray], device: str) -> np.ndarray:
     """Extract mean-pooled last hidden state from AVES for a batch of waveforms."""
     # wav2vec2 expects (batch, time) float32
     max_len = max(len(a) for a in audio_batch)
@@ -200,10 +196,7 @@ def main():
 
     np.save(OUT_EMB, all_emb)
     print(f"\nSaved: {all_emb.shape} → {OUT_EMB}")
-    print(
-        f"Range: [{all_emb.min():.4f}, {all_emb.max():.4f}]  "
-        f"norm mean: {np.linalg.norm(all_emb, axis=1).mean():.2f}"
-    )
+    print(f"Range: [{all_emb.min():.4f}, {all_emb.max():.4f}]  norm mean: {np.linalg.norm(all_emb, axis=1).mean():.2f}")
 
     # ---- Probe benchmark ----
     taxonomy = pd.read_csv(TAXONOMY_CSV)
@@ -219,9 +212,7 @@ def main():
 
     # Concat probe
     concat_emb = np.concatenate([perch_emb, all_emb], axis=1)
-    concat_cm, concat_oof = oof_probe(
-        concat_emb, Y_true, meta, f"Concat(Perch+AVES-{AVES_MODEL})"
-    )
+    concat_cm, concat_oof = oof_probe(concat_emb, Y_true, meta, f"Concat(Perch+AVES-{AVES_MODEL})")
 
     # Also save concat OOF predictions for Stage2 training feasibility check
     np.save(OUT_EMB.parent / f"oof_concat_aves_{AVES_MODEL}.npy", concat_oof)
@@ -229,20 +220,14 @@ def main():
     print(f"\n=== FINAL RESULTS (AVES-{AVES_MODEL}) ===")
     print(f"  Perch in-sample  : {perch_is:.4f}")
     print(f"  Perch emb OOF    : {perch_cm:.4f}")
-    print(
-        f"  AVES emb OOF     : {aves_cm:.4f}  (delta vs Perch: {aves_cm - perch_cm:+.4f})"
-    )
-    print(
-        f"  Concat OOF       : {concat_cm:.4f}  (delta vs Perch: {concat_cm - perch_cm:+.4f})"
-    )
+    print(f"  AVES emb OOF     : {aves_cm:.4f}  (delta vs Perch: {aves_cm - perch_cm:+.4f})")
+    print(f"  Concat OOF       : {concat_cm:.4f}  (delta vs Perch: {concat_cm - perch_cm:+.4f})")
 
     if concat_cm > perch_cm + 0.01:
         print(f"\n✓ AVES-{AVES_MODEL} adds value (concat +{concat_cm - perch_cm:.4f})")
         print("  → Upload to Kaggle dataset, retrain ProtoSSM with concat input")
     else:
-        print(
-            f"\n✗ AVES-{AVES_MODEL} dead end (concat {concat_cm - perch_cm:+.4f} vs threshold +0.01)"
-        )
+        print(f"\n✗ AVES-{AVES_MODEL} dead end (concat {concat_cm - perch_cm:+.4f} vs threshold +0.01)")
 
 
 if __name__ == "__main__":

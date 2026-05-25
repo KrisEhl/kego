@@ -81,9 +81,7 @@ scaler = StandardScaler()
 X = scaler.fit_transform(embeddings)
 pca = PCA(n_components=PCA_DIMS, random_state=42)
 X = pca.fit_transform(X)
-print(
-    f"  Explained variance: {pca.explained_variance_ratio_.sum():.3f}  ({time.time() - t0:.1f}s)"
-)
+print(f"  Explained variance: {pca.explained_variance_ratio_.sum():.3f}  ({time.time() - t0:.1f}s)")
 
 # ── build feature matrix (PCA dims + raw Perch prob) ─────────────────────────
 # Including raw Perch prob ensures probe ≥ raw Perch; without it, PCA alone
@@ -94,9 +92,7 @@ else:
     print(f"Features: PCA({PCA_DIMS}) only")
 
 # ── train probes ──────────────────────────────────────────────────────────────
-print(
-    f"\nTraining probes (C={LOGREG_C}, {N_FOLDS}-fold stratified, min_pos={MIN_POSITIVES})..."
-)
+print(f"\nTraining probes (C={LOGREG_C}, {N_FOLDS}-fold stratified, min_pos={MIN_POSITIVES})...")
 skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=42)
 probes: dict[str, LogisticRegression | None] = {}
 oof_probs = perch_probs.copy()  # default: fall back to Perch probs
@@ -113,9 +109,7 @@ for sp_idx, sp in enumerate(species):
 
     # Build per-species feature matrix: PCA + (optionally) raw Perch prob
     if INCLUDE_PERCH_LOGIT:
-        X_sp = np.concatenate(
-            [X, perch_probs[:, sp_idx : sp_idx + 1].astype(np.float32)], axis=1
-        )
+        X_sp = np.concatenate([X, perch_probs[:, sp_idx : sp_idx + 1].astype(np.float32)], axis=1)
     else:
         X_sp = X
 
@@ -187,9 +181,7 @@ print(f"  Perch probs  mean AP: {np.mean(perch_aps):.4f}")
 print(f"  Probe OOF    mean AP: {np.mean(probe_aps):.4f}")
 print(f"  Delta:               {np.mean(probe_aps) - np.mean(perch_aps):+.4f}")
 
-deltas = sorted(
-    zip(eval_species, np.array(probe_aps) - np.array(perch_aps)), key=lambda x: -x[1]
-)
+deltas = sorted(zip(eval_species, np.array(probe_aps) - np.array(perch_aps)), key=lambda x: -x[1])
 print("\n  Top 10 improved:")
 for sp, d in deltas[:10]:
     print(f"    {sp}: {d:+.3f}")

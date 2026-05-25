@@ -97,25 +97,15 @@ def engineer(df: pd.DataFrame) -> pd.DataFrame:
         + (df["Exercise angina"] == 1).astype(int)
         + (df["Chest pain type"] == 4).astype(int)
     )
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["risk_score"] = (
-        df["Age"] / 10
-        + df["Chest pain type"] * 2
-        + df["Number of vessels fluro"] * 1.5
-        + df["Thallium"] / 2
+        df["Age"] / 10 + df["Chest pain type"] * 2 + df["Number of vessels fluro"] * 1.5 + df["Thallium"] / 2
     )
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
     df["chestpain_x_slope"] = df["Chest pain type"] * df["Slope of ST"]
     sex_mean = df.groupby("Sex")["ST depression"].transform("mean")
     df["ST depression_dev_sex"] = df["ST depression"] - sex_mean
-    df["signal_conflict"] = (
-        (df["Exercise angina"] == 1) & (df["ST depression"] == 0)
-    ).astype(int)
+    df["signal_conflict"] = ((df["Exercise angina"] == 1) & (df["ST depression"] == 0)).astype(int)
     df["chestpain_x_angina"] = df["Chest pain type"] * df["Exercise angina"]
     return df
 
@@ -211,9 +201,7 @@ def run_round(
     for seed in seeds:
         if soft_labels is not None:
             # Combine train + soft-labeled test
-            X_combined = pd.concat(
-                [X_train, X_test.reset_index(drop=True)], ignore_index=True
-            )
+            X_combined = pd.concat([X_train, X_test.reset_index(drop=True)], ignore_index=True)
             y_combined = pd.concat(
                 [y_train.reset_index(drop=True), pd.Series(soft_labels, name=TARGET)],
                 ignore_index=True,
@@ -226,9 +214,7 @@ def run_round(
             y_combined = y_train
             sw = None
 
-        auc, test_preds = train_cv(
-            X_combined, y_combined, X_holdout, y_holdout, X_test, seed, sw
-        )
+        auc, test_preds = train_cv(X_combined, y_combined, X_holdout, y_holdout, X_test, seed, sw)
         aucs.append(auc)
         all_test_preds.append(test_preds)
         print(f"  {label} | seed={seed} | Holdout AUC: {auc:.5f}", flush=True)
@@ -253,9 +239,7 @@ def main() -> None:
     # Fixed 80/20 split
     from sklearn.model_selection import train_test_split
 
-    train_df, holdout_df = train_test_split(
-        train_full, test_size=0.2, stratify=train_full[TARGET], random_state=42
-    )
+    train_df, holdout_df = train_test_split(train_full, test_size=0.2, stratify=train_full[TARGET], random_state=42)
     train_df = train_df.reset_index(drop=True)
     holdout_df = holdout_df.reset_index(drop=True)
 

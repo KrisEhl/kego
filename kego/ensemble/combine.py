@@ -74,9 +74,7 @@ def compute_ensemble(
     # If OOF predictions don't match train labels (e.g. retrain-full-direct experiments
     # where OOF covers train+holdout combined), use combined labels for OOF evaluation.
     if oof_matrix.shape[0] != len(train_labels):
-        if _orig_holdout_labels is not None and oof_matrix.shape[0] == len(
-            train_labels
-        ) + len(_orig_holdout_labels):
+        if _orig_holdout_labels is not None and oof_matrix.shape[0] == len(train_labels) + len(_orig_holdout_labels):
             warnings.warn(
                 f"OOF predictions ({oof_matrix.shape[0]} rows) span both train "
                 f"({len(train_labels)}) and holdout ({len(_orig_holdout_labels)}) rows. "
@@ -89,8 +87,7 @@ def compute_ensemble(
             l2_feature_configs = None  # feature arrays only cover train rows
         else:
             raise ValueError(
-                f"OOF predictions ({oof_matrix.shape[0]} rows) don't match "
-                f"train labels ({len(train_labels)} rows)."
+                f"OOF predictions ({oof_matrix.shape[0]} rows) don't match train labels ({len(train_labels)} rows)."
             )
 
     methods = []
@@ -148,9 +145,7 @@ def compute_ensemble(
     # --- Rank Blending ---
     def _rank_blend(matrix):
         n = matrix.shape[0]
-        ranked = np.column_stack(
-            [rankdata(matrix[:, i]) / n for i in range(matrix.shape[1])]
-        )
+        ranked = np.column_stack([rankdata(matrix[:, i]) / n for i in range(matrix.shape[1])])
         return np.mean(ranked, axis=1)
 
     rb_oof = _rank_blend(oof_matrix)

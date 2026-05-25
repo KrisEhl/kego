@@ -128,18 +128,14 @@ class SkorchFTTransformer:
                 self.cont_cols = []
                 self.cat_cols = []
                 self.cat_cardinalities = []
-                self.scaler = QuantileTransformer(
-                    output_distribution="normal", random_state=self.random_state
-                )
+                self.scaler = QuantileTransformer(output_distribution="normal", random_state=self.random_state)
                 return self.scaler.fit_transform(X).astype(np.float32)
             return self.scaler.transform(X).astype(np.float32)
 
         if fit:
             self.cont_cols = cont_cols
             self.cat_cols = cat_cols
-            self.scaler = QuantileTransformer(
-                output_distribution="normal", random_state=self.random_state
-            )
+            self.scaler = QuantileTransformer(output_distribution="normal", random_state=self.random_state)
             self.cat_encoders = {}
             for c in cat_cols:
                 vals = sorted(X[c].unique())
@@ -150,9 +146,7 @@ class SkorchFTTransformer:
             X_cont = self.scaler.transform(X[self.cont_cols].values).astype(np.float32)
 
         if self.cat_cols:
-            X_cat = np.column_stack(
-                [X[c].map(self.cat_encoders[c]).values for c in self.cat_cols]
-            ).astype(np.float32)
+            X_cat = np.column_stack([X[c].map(self.cat_encoders[c]).values for c in self.cat_cols]).astype(np.float32)
             return np.hstack([X_cont, X_cat])
         return X_cont
 

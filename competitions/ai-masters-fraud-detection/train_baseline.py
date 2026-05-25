@@ -21,9 +21,7 @@ from sklearn.model_selection import StratifiedKFold
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -53,14 +51,8 @@ cutoff = train_full["TransactionDT"].quantile(1 - HOLDOUT_FRAC)
 train = train_full[train_full["TransactionDT"] <= cutoff].reset_index(drop=True)
 holdout = train_full[train_full["TransactionDT"] > cutoff].reset_index(drop=True)
 
-log.info(
-    f"Train: {len(train):,} rows (DT <= {cutoff:.0f}), "
-    f"Holdout: {len(holdout):,} rows (DT > {cutoff:.0f})"
-)
-log.info(
-    f"Fraud rate — train: {train[TARGET].mean():.4f}, "
-    f"holdout: {holdout[TARGET].mean():.4f}"
-)
+log.info(f"Train: {len(train):,} rows (DT <= {cutoff:.0f}), Holdout: {len(holdout):,} rows (DT > {cutoff:.0f})")
+log.info(f"Fraud rate — train: {train[TARGET].mean():.4f}, holdout: {holdout[TARGET].mean():.4f}")
 
 # ---------------------------------------------------------------------------
 # Feature preparation
@@ -73,11 +65,7 @@ cat_cols = []
 for col in features:
     if train[col].dtype == "object":
         cat_cols.append(col)
-        combined = (
-            pd.concat([train[col], holdout[col], test[col]], axis=0)
-            .astype("category")
-            .cat.codes
-        )
+        combined = pd.concat([train[col], holdout[col], test[col]], axis=0).astype("category").cat.codes
         train[col] = combined.iloc[: len(train)].values
         holdout[col] = combined.iloc[len(train) : len(train) + len(holdout)].values
         test[col] = combined.iloc[len(train) + len(holdout) :].values

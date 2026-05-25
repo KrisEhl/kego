@@ -49,9 +49,7 @@ def test_build_runtime_env_contains_required_keys(config):
 
 
 def test_submit_fold_calls_http_api(config):
-    with patch(
-        "kego.cli.targets.cluster._submit_http", return_value="raysubmit_ABC"
-    ) as mock_http:
+    with patch("kego.cli.targets.cluster._submit_http", return_value="raysubmit_ABC") as mock_http:
         job_id = submit_fold(
             script="/home/user/projects/kego/train.py",
             script_args=["--fold", "0"],

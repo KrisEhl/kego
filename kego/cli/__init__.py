@@ -17,9 +17,7 @@ def main() -> None:
     from kego.cli.commands import run as run_cmd
     from kego.cli.commands import submit as submit_cmd
 
-    parser = argparse.ArgumentParser(
-        prog="kego", description="kego ML experiment engine"
-    )
+    parser = argparse.ArgumentParser(prog="kego", description="kego ML experiment engine")
     subparsers = parser.add_subparsers(dest="command")
     subparsers.required = True
 

@@ -42,9 +42,7 @@ OUT_NPZ = DATA / "perch_labeled_cache.npz"
 OUT_LABELS_TXT = DATA / "perch_label_list.txt"
 
 PERCH_URL = "https://tfhub.dev/google/bird-vocalization-classifier/4"
-PERCH_LABEL_PATH = (
-    "/tmp/tfhub_modules/5dcbb82658655292c50ca88ce1e6f1073b17d0d9/assets/label.csv"
-)
+PERCH_LABEL_PATH = "/tmp/tfhub_modules/5dcbb82658655292c50ca88ce1e6f1073b17d0d9/assets/label.csv"
 
 SR = 32_000
 CLIP_SAMPLES = SR * 5
@@ -88,9 +86,7 @@ if not Path(PERCH_LABEL_PATH).exists():
         PERCH_LABEL_PATH = matches[0]
         print(f"Found Perch labels at: {PERCH_LABEL_PATH}")
     else:
-        raise FileNotFoundError(
-            "Perch label file not found. Run pseudo_label_perch.py first to populate tfhub cache."
-        )
+        raise FileNotFoundError("Perch label file not found. Run pseudo_label_perch.py first to populate tfhub cache.")
 
 perch_labels = open(PERCH_LABEL_PATH).read().splitlines()
 n_perch = len(perch_labels)
@@ -103,13 +99,9 @@ print(f"Saved Perch label list → {OUT_LABELS_TXT}")
 
 # ── build competition → Perch mapping ─────────────────────────────────────────
 perch_to_idx = {lbl: i for i, lbl in enumerate(perch_labels)}
-comp_to_perch = np.array(
-    [perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32
-)
+comp_to_perch = np.array([perch_to_idx.get(sp, -1) for sp in competition_species], dtype=np.int32)
 perch_coverage = comp_to_perch >= 0
-print(
-    f"Competition species with direct Perch mapping: {perch_coverage.sum()} / {n_species}"
-)
+print(f"Competition species with direct Perch mapping: {perch_coverage.sum()} / {n_species}")
 
 # ── build genus → Perch indices mapping (for proxy species) ───────────────────
 # Used later for genus-level proxy predictions for unmapped Amphibia/Insecta species
@@ -119,9 +111,7 @@ for i, lbl in enumerate(perch_labels):
     genus_to_perch_indices.setdefault(genus, []).append(i)
 
 comp_genera = [t.get("genus", "") for t in taxonomy]  # may be empty if not in CSV
-print(
-    f"Genera with Perch coverage: {sum(1 for g in comp_genera if g in genus_to_perch_indices)}"
-)
+print(f"Genera with Perch coverage: {sum(1 for g in comp_genera if g in genus_to_perch_indices)}")
 
 # ── inference ─────────────────────────────────────────────────────────────────
 all_keys = []

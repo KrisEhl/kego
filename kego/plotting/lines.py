@@ -31,9 +31,7 @@ def plot_lines(
         n_rows = n_plots
     n_columns = np.ceil(n_plots / nx_max)
     figure, axes_grid, _ = create_axes_grid(n_columns=n_columns, n_rows=n_rows)
-    for i_plot, (i_row, i_column) in enumerate(
-        itertools.product(range(n_rows), range(n_columns))
-    ):
+    for i_plot, (i_row, i_column) in enumerate(itertools.product(range(n_rows), range(n_columns))):
         axes = axes_grid[i_row, i_column]
         plot_line(x=xs[i_plot], y=ys[i_plot], label=labels[i_plot], axes=axes, log=log)
         plot_legend(axes=axes)
@@ -74,12 +72,8 @@ def plot_line(
     _xlim = to_nlength_tuple(xlim)
     _ylim = to_nlength_tuple(ylim)
     axes.plot(x, y, label=label, color=color, linewidth=linewidth)
-    kego.plotting.axes.set_x_log(
-        axes, _log[0], axis_symlog_linear_threshold=symlog_linear_threshold
-    )
-    kego.plotting.axes.set_y_log(
-        axes, _log[1], axis_symlog_linear_threshold=symlog_linear_threshold
-    )
+    kego.plotting.axes.set_x_log(axes, _log[0], axis_symlog_linear_threshold=symlog_linear_threshold)
+    kego.plotting.axes.set_y_log(axes, _log[1], axis_symlog_linear_threshold=symlog_linear_threshold)
     kego.plotting.axes.set_axis_tick_labels(
         axes,
         replace_x_labels_at,

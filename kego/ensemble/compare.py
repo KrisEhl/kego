@@ -108,14 +108,10 @@ def compare_stacking_methods(
     lgb_full = None
     if has_features:
         train_feat_np = (
-            train_features.values
-            if isinstance(train_features, pd.DataFrame)
-            else np.asarray(train_features)
+            train_features.values if isinstance(train_features, pd.DataFrame) else np.asarray(train_features)
         )
         holdout_feat_np = (
-            holdout_features.values
-            if isinstance(holdout_features, pd.DataFrame)
-            else np.asarray(holdout_features)
+            holdout_features.values if isinstance(holdout_features, pd.DataFrame) else np.asarray(holdout_features)
         )
         oof_plus = np.hstack([oof_matrix, train_feat_np])
         holdout_plus = np.hstack([holdout_matrix, holdout_feat_np])
@@ -170,9 +166,7 @@ def compare_stacking_methods(
     print(f"\n{'=' * 70}")
     print(f"RIDGE WEIGHTS  (alpha={ridge.alpha_:.2f})")
     print(f"{'=' * 70}")
-    for name, w in sorted(
-        zip(model_names, ridge.coef_), key=lambda x: abs(x[1]), reverse=True
-    ):
+    for name, w in sorted(zip(model_names, ridge.coef_), key=lambda x: abs(x[1]), reverse=True):
         print(f"  {name:<30} {w:+.4f}")
 
     # LightGBM preds-only importances

@@ -92,9 +92,7 @@ def log_benchmark_to_mlflow(
             for i, t in enumerate(epoch_times, 1):
                 metrics[f"epoch_{i}_time"] = t
         else:
-            metrics["throughput_samples_per_sec"] = (
-                n_samples / total_time if total_time > 0 else 0.0
-            )
+            metrics["throughput_samples_per_sec"] = n_samples / total_time if total_time > 0 else 0.0
 
         if gpu_monitor is not None and gpu_monitor.samples:
             metrics["avg_gpu_util"] = gpu_monitor.avg_gpu_util

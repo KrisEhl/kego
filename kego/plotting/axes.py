@@ -104,9 +104,7 @@ def set_x_log(
     """
     if log == "symlog":
         if axis_symlog_linear_threshold is None:
-            raise ValueError(
-                f"If log=='symlog', setting {axis_symlog_linear_threshold=} required!"
-            )
+            raise ValueError(f"If log=='symlog', setting {axis_symlog_linear_threshold=} required!")
         axes.set_xscale("symlog", linthresh=axis_symlog_linear_threshold)
     elif log == "log":
         axes.set_xscale("log")
@@ -136,9 +134,7 @@ def set_y_log(
     """
     if log == "symlog":
         if axis_symlog_linear_threshold is None:
-            raise ValueError(
-                f"If log=='symlog', setting: {axis_symlog_linear_threshold=} required!"
-            )
+            raise ValueError(f"If log=='symlog', setting: {axis_symlog_linear_threshold=} required!")
         axes.set_yscale("symlog", linthresh=axis_symlog_linear_threshold)
     elif log == "log":
         axes.set_yscale("log")
@@ -202,9 +198,7 @@ def set_axis_tick_labels(
         if labels is not None:
             axes.set_xticklabels(labels)
         if date_formatter is not None:
-            axes.xaxis.set_major_formatter(
-                matplotlib.dates.DateFormatter(date_formatter)
-            )
+            axes.xaxis.set_major_formatter(matplotlib.dates.DateFormatter(date_formatter))
         if max_tick_labels is not None:
             axes.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(max_tick_labels))
         axes.tick_params(axis="x", labelrotation=rotation, labelsize=font_size)
@@ -214,9 +208,7 @@ def set_axis_tick_labels(
         if labels is not None:
             axes.set_yticklabels(labels)
         if date_formatter is not None:
-            axes.yaxis.set_major_formatter(
-                matplotlib.dates.DateFormatter(date_formatter)
-            )
+            axes.yaxis.set_major_formatter(matplotlib.dates.DateFormatter(date_formatter))
         if max_tick_labels is not None:
             axes.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(max_tick_labels))
         axes.tick_params(axis="y", labelrotation=rotation, labelsize=font_size)

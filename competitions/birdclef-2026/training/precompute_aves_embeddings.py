@@ -48,17 +48,13 @@ WAVLM_MODEL = "microsoft/wavlm-base-plus"
 def load_window_16k(path: Path, start_sec: float) -> np.ndarray:
     import librosa
 
-    y, _ = librosa.load(
-        str(path), sr=SAMPLE_RATE, offset=start_sec, duration=WINDOW_SEC
-    )
+    y, _ = librosa.load(str(path), sr=SAMPLE_RATE, offset=start_sec, duration=WINDOW_SEC)
     if len(y) < WINDOW_SAMPLES:
         y = np.pad(y, (0, WINDOW_SAMPLES - len(y)))
     return y[:WINDOW_SAMPLES].astype(np.float32)
 
 
-def get_aves_embeddings(
-    model, feature_extractor, audio_batch: list[np.ndarray], device: str
-) -> np.ndarray:
+def get_aves_embeddings(model, feature_extractor, audio_batch: list[np.ndarray], device: str) -> np.ndarray:
     """Run AVES on a list of 5-second waveforms, return mean-pooled (N, 768) embeddings."""
     inputs = feature_extractor(
         audio_batch,
@@ -126,9 +122,7 @@ def oof_probe_cmap(emb: np.ndarray, Y_true: np.ndarray, meta: pd.DataFrame) -> f
     oof_preds = np.zeros_like(Y_true, dtype=np.float32)
 
     active_cls = np.where(Y_true.sum(axis=0) >= 2)[0]
-    print(
-        f"  OOF probe: {len(unique_files)} files, {len(active_cls)} active classes (≥2 pos)"
-    )
+    print(f"  OOF probe: {len(unique_files)} files, {len(active_cls)} active classes (≥2 pos)")
 
     for fold_i, held_file in enumerate(unique_files):
         if fold_i % 10 == 0:

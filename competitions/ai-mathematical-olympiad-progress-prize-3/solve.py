@@ -182,9 +182,7 @@ def extract_answer(text: str) -> int | None:
 # ---------------------------------------------------------------------------
 
 
-def _chat(
-    client: OpenAI, messages: list, temperature: float, max_tokens: int = 4096
-) -> str:
+def _chat(client: OpenAI, messages: list, temperature: float, max_tokens: int = 4096) -> str:
     """Call chat completions, returning the reply text.
 
     Passes tool_choice=none to prevent models from entering tool-call mode.
@@ -198,9 +196,7 @@ def _chat(
     }
     try:
         # Ollama ≥0.3 and vLLM support tool_choice via extra_body
-        response = client.chat.completions.create(
-            **kwargs, extra_body={"tool_choice": "none"}
-        )
+        response = client.chat.completions.create(**kwargs, extra_body={"tool_choice": "none"})
     except (InternalServerError, Exception):
         # Fall back without extra_body — some servers reject unknown params
         try:
@@ -274,9 +270,7 @@ def solve_tir(problem: str, client: OpenAI, verbose: bool = False) -> int | None
 # ---------------------------------------------------------------------------
 
 
-def solve_with_voting(
-    problem: str, client: OpenAI, n: int = N_SAMPLES, verbose: bool = False
-) -> int:
+def solve_with_voting(problem: str, client: OpenAI, n: int = N_SAMPLES, verbose: bool = False) -> int:
     """Generate N solutions with TIR and return the majority-vote answer.
 
     Falls back to 0 if no valid answer is extracted from any sample.
@@ -309,9 +303,7 @@ def solve_with_voting(
                 if answer is not None:
                     break
                 # Prompt for final answer
-                messages.append(
-                    {"role": "user", "content": "Give your final answer as \\boxed{N}."}
-                )
+                messages.append({"role": "user", "content": "Give your final answer as \\boxed{N}."})
             elif answer is not None:
                 break
 
@@ -425,12 +417,8 @@ def main() -> None:
         default=N_SAMPLES,
         help=f"Number of voting samples (default: {N_SAMPLES})",
     )
-    parser.add_argument(
-        "--tir", action="store_true", help="Use single deterministic TIR"
-    )
-    parser.add_argument(
-        "--limit", type=int, default=None, help="Limit to first N problems"
-    )
+    parser.add_argument("--tir", action="store_true", help="Use single deterministic TIR")
+    parser.add_argument("--limit", type=int, default=None, help="Limit to first N problems")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print TIR steps")
     args = parser.parse_args()
 

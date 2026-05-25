@@ -331,9 +331,7 @@ def read_external_weights(path: str) -> dict:
             id_col = lower[cand]
             break
     if id_col is None:
-        raise ValueError(
-            "Weights file must include an ID column: one of {term, EntryID, go_id, id}."
-        )
+        raise ValueError("Weights file must include an ID column: one of {term, EntryID, go_id, id}.")
     # Weight column detection
     w_col = None
     for cand in ("weight", "w", "importance", "ia"):
@@ -341,17 +339,13 @@ def read_external_weights(path: str) -> dict:
             w_col = lower[cand]
             break
     if w_col is None:
-        raise ValueError(
-            "Weights file must include a weight column: one of {weight, w, importance, ia}."
-        )
+        raise ValueError("Weights file must include a weight column: one of {weight, w, importance, ia}.")
     ids = df[id_col].to_list()
     ws = [float(x) for x in df[w_col].to_list()]
     return {i: w for i, w in zip(ids, ws)}
 
 
-def align_class_weights(
-    labels: list[str], freqs_aligned: list[int], args
-) -> np.ndarray:
+def align_class_weights(labels: list[str], freqs_aligned: list[int], args) -> np.ndarray:
     """
     Build per-class weights according to args.weight_mode:
     - none: use effective-number weighting only (default if --weights not given)
@@ -443,18 +437,12 @@ def train(args):
         try:
             ext_map = read_external_weights(args.weights)
             matched = sum(1 for t in labels if t in ext_map)
-            print(
-                f"[INFO] External weights: matched {matched}/{len(labels)} labels (file={args.weights})"
-            )
+            print(f"[INFO] External weights: matched {matched}/{len(labels)} labels (file={args.weights})")
         except Exception as e:
             print(f"[WARN] Could not compute weight coverage: {e}")
 
-    criterion = FocalBCEWithLogits(gamma=args.focal_gamma, class_weights=class_w).to(
-        device
-    )
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
-    )
+    criterion = FocalBCEWithLogits(gamma=args.focal_gamma, class_weights=class_w).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp and device.type == "cuda")
 
     best_f1 = -1
@@ -485,23 +473,13 @@ def train(args):
         with torch.no_grad():
             for xb, yb in val_loader:
                 xb = xb.to(device, non_blocking=True)
-                with torch.cuda.amp.autocast(
-                    enabled=args.amp and device.type == "cuda"
-                ):
+                with torch.cuda.amp.autocast(enabled=args.amp and device.type == "cuda"):
                     logits = model(xb)
                     probs = torch.sigmoid(logits).float().cpu().numpy()
                 all_probs.append(probs)
                 all_true.append(yb.numpy())
-        P = (
-            np.concatenate(all_probs, axis=0)
-            if len(all_probs)
-            else np.zeros((0, C), dtype=np.float32)
-        )
-        Y = (
-            np.concatenate(all_true, axis=0)
-            if len(all_true)
-            else np.zeros((0, C), dtype=np.float32)
-        )
+        P = np.concatenate(all_probs, axis=0) if len(all_probs) else np.zeros((0, C), dtype=np.float32)
+        Y = np.concatenate(all_true, axis=0) if len(all_true) else np.zeros((0, C), dtype=np.float32)
         f1 = macro_f1(Y, P, 0.5) if len(Y) else 0.0
         print(
             f"[EP {ep:02d}] train_loss={total / len(train_loader):.6f} val_macroF1@0.5={f1:.4f} time={time.time() - t0:.1f}s"
@@ -592,9 +570,7 @@ def predict(args):
     eids = df["EntryID"].to_list()
 
     # --- prepare GPU tensors for thresholds & hierarchy ---
-    thr_per_class = torch.from_numpy(
-        apply_per_freq_thresholds(freqs_aligned, thr_meta)
-    ).to(device)
+    thr_per_class = torch.from_numpy(apply_per_freq_thresholds(freqs_aligned, thr_meta)).to(device)
 
     child_idx_t = parent_idx_t = None
     if edges:

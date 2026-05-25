@@ -14,7 +14,7 @@ DATA_DIR = (
     Path(
         os.environ.get(
             "KEGO_PATH_DATA",
-            "/Users/kristian.ehlert/projects/kaggle/kego/data",
+            f"{os.environ['HOME']}/projects/kego/data",
         )
     )
     / "rogii"
@@ -76,9 +76,7 @@ def summarize(well_ids: list[str], directory: Path, label: str) -> pd.DataFrame:
                 "md_min": horizontal["MD"].min(),
                 "md_max": horizontal["MD"].max(),
                 "tvt_input_nonnull": horizontal["TVT_input"].notna().sum(),
-                "target_nonnull": (
-                    horizontal[target_col].notna().sum() if target_col else 0
-                ),
+                "target_nonnull": (horizontal[target_col].notna().sum() if target_col else 0),
                 "tvt_input_pct": 100 * horizontal["TVT_input"].notna().mean(),
             }
         )
@@ -195,9 +193,7 @@ def plot_well(well_id: str, horizontal: pd.DataFrame, typewell: pd.DataFrame, ax
                 va="center",
                 color=LAYER_COLORS.get(layer, "gray"),
             )
-    ax_tvt.plot(
-        typewell["GR"], typewell["TVT"], color="black", lw=0.6, label="typewell GR"
-    )
+    ax_tvt.plot(typewell["GR"], typewell["TVT"], color="black", lw=0.6, label="typewell GR")
     target_col = "TVT" if "TVT" in horizontal.columns else None
     if target_col:
         ax_tvt.scatter(

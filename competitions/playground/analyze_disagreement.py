@@ -29,11 +29,7 @@ from kego.ensemble.disagreement import (  # noqa: E402
     unique_correct_counts,
 )
 
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://192.168.178.32:5000")
 EXPERIMENT = "playground-s6e2-full"
@@ -98,9 +94,7 @@ def load_labels():
     train_full = pd.concat([train_full, original], ignore_index=True)
 
     # Replicate split_dataset(train_size=0.8, validate_size=0.2)
-    train, _ = train_test_split(
-        train_full, train_size=0.8, random_state=42, stratify=train_full[TARGET]
-    )
+    train, _ = train_test_split(train_full, train_size=0.8, random_state=42, stratify=train_full[TARGET])
     train = train.reset_index(drop=True)
     return train[TARGET].values
 
@@ -131,9 +125,7 @@ def load_best_runs(folds, experiments=None, features=None):
         runs_df = mlflow.search_runs(search_all_experiments=True)
 
     # Filter out ensemble summary runs
-    runs_df = runs_df[
-        ~runs_df["tags.mlflow.runName"].str.startswith("ensemble_", na=True)
-    ]
+    runs_df = runs_df[~runs_df["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
 
     # Filter by folds
     if folds is not None:
@@ -201,12 +193,8 @@ def load_best_runs(folds, experiments=None, features=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Analyze model disagreement and best runs"
-    )
-    parser.add_argument(
-        "--folds", type=int, default=10, help="Filter runs by folds_n (default: 10)"
-    )
+    parser = argparse.ArgumentParser(description="Analyze model disagreement and best runs")
+    parser.add_argument("--folds", type=int, default=10, help="Filter runs by folds_n (default: 10)")
     parser.add_argument(
         "--experiment",
         nargs="+",
@@ -265,10 +253,7 @@ def main():
                 f"{uniq:6d}  {info['experiment']}"
             )
         else:
-            print(
-                f"  {name:35s}  {acc:8.4f}  {'—':>8s}  "
-                f"{'—':>8s}  {'—':>5s}  {uniq:6d}  (no matching runs)"
-            )
+            print(f"  {name:35s}  {acc:8.4f}  {'—':>8s}  {'—':>8s}  {'—':>5s}  {uniq:6d}  (no matching runs)")
 
     # Models in best_runs but not in OOF predictions (e.g. different experiment)
     extra = set(best_runs.keys()) - set(model_names)

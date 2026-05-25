@@ -24,11 +24,7 @@ from kego.plotting.figures import create_axes_grid, save_figure
 # ---------------------------------------------------------------------------
 # Paths & constants
 # ---------------------------------------------------------------------------
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "ai"
-    / "ai-masters-fraud-detection"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "ai" / "ai-masters-fraud-detection"
 OUTPUT_DIR = project_root / "competitions" / "ai-masters-fraud-detection" / "plots"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -154,10 +150,7 @@ print("\n  Features with >5% train/test missing rate difference:")
 missing_diff = (train_missing - test_missing).abs().sort_values(ascending=False)
 for col, diff in missing_diff.head(15).items():
     if diff > 5:
-        print(
-            f"    {col:<20s}  diff={diff:>5.1f}%  "
-            f"(train={train_missing[col]:.1f}%, test={test_missing[col]:.1f}%)"
-        )
+        print(f"    {col:<20s}  diff={diff:>5.1f}%  (train={train_missing[col]:.1f}%, test={test_missing[col]:.1f}%)")
 
 # Missing data correlations — do features go missing together?
 print("\n  V-feature missing pattern groups (NaN correlation clusters):")
@@ -168,22 +161,13 @@ v_patterns: dict[tuple, list[str]] = {}
 for col in v_present:
     pattern = tuple(v_null[col].values[:100])  # sample first 100 rows
     v_patterns.setdefault(pattern, []).append(col)
-print(
-    f"    {len(v_patterns)} distinct missing patterns across {len(v_present)} V-features"
-)
-for i, (_, cols) in enumerate(
-    sorted(v_patterns.items(), key=lambda x: -len(x[1]))[:10]
-):
+print(f"    {len(v_patterns)} distinct missing patterns across {len(v_present)} V-features")
+for i, (_, cols) in enumerate(sorted(v_patterns.items(), key=lambda x: -len(x[1]))[:10]):
     miss_rate = train[cols[0]].isnull().mean() * 100
     if len(cols) <= 6:
-        print(
-            f"    Group {i + 1}: {len(cols)} features ({miss_rate:.1f}% missing) — {cols}"
-        )
+        print(f"    Group {i + 1}: {len(cols)} features ({miss_rate:.1f}% missing) — {cols}")
     else:
-        print(
-            f"    Group {i + 1}: {len(cols)} features ({miss_rate:.1f}% missing) — "
-            f"{cols[:3]} ... {cols[-3:]}"
-        )
+        print(f"    Group {i + 1}: {len(cols)} features ({miss_rate:.1f}% missing) — {cols[:3]} ... {cols[-3:]}")
 
 # ===========================================================================
 # 3. IDENTITY TABLE COVERAGE
@@ -221,16 +205,12 @@ for col in cat_available:
         for val, cnt in vc.items():
             pct = cnt / len(train) * 100
             fraud = train.loc[train[col] == val, TARGET].mean() * 100
-            print(
-                f"    {str(val):>25s}  n={cnt:>7,}  ({pct:>5.2f}%)  fraud={fraud:.2f}%"
-            )
+            print(f"    {str(val):>25s}  n={cnt:>7,}  ({pct:>5.2f}%)  fraud={fraud:.2f}%")
         continue
 
     vals = train[col].dropna().unique()
     vals = sorted(vals, key=str)
-    print(
-        f"    {'Value':>20s}  {'Count':>8s}  {'%':>7s}  {'Fraud%':>7s}  {'Test%':>7s}  Notes"
-    )
+    print(f"    {'Value':>20s}  {'Count':>8s}  {'%':>7s}  {'Fraud%':>7s}  {'Test%':>7s}  Notes")
     print(f"    {'-' * 20}  {'-' * 8}  {'-' * 7}  {'-' * 7}  {'-' * 7}  {'-' * 20}")
 
     for v in vals:
@@ -247,10 +227,7 @@ for col in cat_available:
         if t_fraud > fraud_rate * 100 * 2:
             notes.append(f"HIGH FRAUD ({t_fraud / (fraud_rate * 100):.1f}x)")
 
-        print(
-            f"    {str(v):>20s}  {t_cnt:>8,}  {t_pct:>6.2f}%  {t_fraud:>6.2f}%  "
-            f"{te_pct:>6.2f}%  {'  '.join(notes)}"
-        )
+        print(f"    {str(v):>20s}  {t_cnt:>8,}  {t_pct:>6.2f}%  {t_fraud:>6.2f}%  {te_pct:>6.2f}%  {'  '.join(notes)}")
 
 
 # ===========================================================================
@@ -279,13 +256,9 @@ for col in NUMERIC_KEY_FEATURES:
         low_q = valid.quantile(0.1)
         high_q = valid.quantile(0.9)
         fraud_low = train.loc[train[col] <= low_q, TARGET].mean()
-        fraud_mid = train.loc[
-            (train[col] > low_q) & (train[col] < high_q), TARGET
-        ].mean()
+        fraud_mid = train.loc[(train[col] > low_q) & (train[col] < high_q), TARGET].mean()
         fraud_high = train.loc[train[col] >= high_q, TARGET].mean()
-        print(
-            f"    Fraud rate: bottom10%={fraud_low:.4f}  mid80%={fraud_mid:.4f}  top10%={fraud_high:.4f}"
-        )
+        print(f"    Fraud rate: bottom10%={fraud_low:.4f}  mid80%={fraud_mid:.4f}  top10%={fraud_high:.4f}")
 
 
 # ===========================================================================
@@ -298,9 +271,7 @@ print(
     f"\n  {'Feature':<8s}  {'Miss%':>6s}  {'Unique':>7s}  "
     f"{'Mean':>8s}  {'Median':>8s}  {'Max':>10s}  {'CorrTarget':>11s}"
 )
-print(
-    f"  {'-' * 8}  {'-' * 6}  {'-' * 7}  {'-' * 8}  {'-' * 8}  {'-' * 10}  {'-' * 11}"
-)
+print(f"  {'-' * 8}  {'-' * 6}  {'-' * 7}  {'-' * 8}  {'-' * 8}  {'-' * 10}  {'-' * 11}")
 for col in c_available:
     miss = train[col].isnull().mean() * 100
     nunique = train[col].nunique()
@@ -308,10 +279,7 @@ for col in c_available:
     median = train[col].median()
     max_val = train[col].max()
     corr = train[[col, TARGET]].corr().iloc[0, 1]
-    print(
-        f"  {col:<8s}  {miss:>5.1f}%  {nunique:>7d}  "
-        f"{mean:>8.1f}  {median:>8.1f}  {max_val:>10.0f}  {corr:>+10.4f}"
-    )
+    print(f"  {col:<8s}  {miss:>5.1f}%  {nunique:>7d}  {mean:>8.1f}  {median:>8.1f}  {max_val:>10.0f}  {corr:>+10.4f}")
 
 
 # ===========================================================================
@@ -324,9 +292,7 @@ print(
     f"\n  {'Feature':<8s}  {'Miss%':>6s}  {'Unique':>7s}  "
     f"{'Mean':>10s}  {'Median':>10s}  {'Max':>10s}  {'CorrTarget':>11s}"
 )
-print(
-    f"  {'-' * 8}  {'-' * 6}  {'-' * 7}  {'-' * 10}  {'-' * 10}  {'-' * 10}  {'-' * 11}"
-)
+print(f"  {'-' * 8}  {'-' * 6}  {'-' * 7}  {'-' * 10}  {'-' * 10}  {'-' * 10}  {'-' * 11}")
 for col in d_available:
     miss = train[col].isnull().mean() * 100
     nunique = train[col].nunique()
@@ -335,8 +301,7 @@ for col in d_available:
     max_val = train[col].max()
     corr = train[[col, TARGET]].corr().iloc[0, 1]
     print(
-        f"  {col:<8s}  {miss:>5.1f}%  {nunique:>7d}  "
-        f"{mean:>10.1f}  {median:>10.1f}  {max_val:>10.0f}  {corr:>+10.4f}"
+        f"  {col:<8s}  {miss:>5.1f}%  {nunique:>7d}  {mean:>10.1f}  {median:>10.1f}  {max_val:>10.0f}  {corr:>+10.4f}"
     )
 
 
@@ -360,9 +325,7 @@ top_v = v_corr.sort_values(ascending=False).head(20)
 for col, corr_val in top_v.items():
     miss = v_missing[col]
     actual_corr = train[[col, TARGET]].corr().iloc[0, 1]
-    print(
-        f"    {col:<8s}  |r|={corr_val:.4f}  (r={actual_corr:+.4f})  missing={miss:.1f}%"
-    )
+    print(f"    {col:<8s}  |r|={corr_val:.4f}  (r={actual_corr:+.4f})  missing={miss:.1f}%")
 
 
 # ===========================================================================
@@ -377,9 +340,7 @@ print(f"    Test:  [{test['TransactionDT'].min()}, {test['TransactionDT'].max()}
 overlap = max(0, min(train["TransactionDT"].max(), test["TransactionDT"].max())) - max(
     train["TransactionDT"].min(), test["TransactionDT"].min()
 )
-print(
-    f"    Overlap: {overlap} (temporal split = {'YES' if overlap <= 0 else 'partial'})"
-)
+print(f"    Overlap: {overlap} (temporal split = {'YES' if overlap <= 0 else 'partial'})")
 
 # Numeric feature shifts
 print("\n  Numeric feature KS-test (train vs test):")
@@ -394,10 +355,7 @@ for col in shift_cols:
     ks_stat, ks_p = stats.ks_2samp(tr_vals, te_vals)
     if ks_p < 0.01:
         mean_diff = tr_vals.mean() - te_vals.mean()
-        print(
-            f"    {col:<20s}  KS={ks_stat:.4f}  p={ks_p:.2g}  "
-            f"mean_diff={mean_diff:+.3f}  ** SIGNIFICANT"
-        )
+        print(f"    {col:<20s}  KS={ks_stat:.4f}  p={ks_p:.2g}  mean_diff={mean_diff:+.3f}  ** SIGNIFICANT")
 
 # Categorical shifts
 print("\n  Categorical feature shifts (train vs test):")
@@ -417,11 +375,7 @@ for col in cat_available:
 # ===========================================================================
 section("TOP 40 FEATURES BY |CORRELATION WITH TARGET|")
 
-numeric_cols = [
-    c
-    for c in train.select_dtypes(include=[np.number]).columns
-    if c not in ("TransactionID", TARGET)
-]
+numeric_cols = [c for c in train.select_dtypes(include=[np.number]).columns if c not in ("TransactionID", TARGET)]
 corr_all = train[numeric_cols + [TARGET]].corr()[TARGET].drop(TARGET)
 top_corr = corr_all.abs().sort_values(ascending=False).head(40)
 for col in top_corr.index:
@@ -443,17 +397,11 @@ available_dup_cols = [c for c in dup_cols if c in train.columns]
 if available_dup_cols:
     dup_mask = train.duplicated(subset=available_dup_cols, keep=False)
     n_dup = dup_mask.sum()
-    print(
-        f"  Same (card1, TransactionAmt, addr1): {n_dup:,} rows "
-        f"({n_dup / len(train) * 100:.1f}%)"
-    )
+    print(f"  Same (card1, TransactionAmt, addr1): {n_dup:,} rows ({n_dup / len(train) * 100:.1f}%)")
     if n_dup > 0:
         fraud_dup = train.loc[dup_mask, TARGET].mean()
         fraud_nodup = train.loc[~dup_mask, TARGET].mean()
-        print(
-            f"    Fraud rate: duplicates={fraud_dup:.4f}  "
-            f"non-duplicates={fraud_nodup:.4f}"
-        )
+        print(f"    Fraud rate: duplicates={fraud_dup:.4f}  non-duplicates={fraud_nodup:.4f}")
 
 
 # ===========================================================================
@@ -509,9 +457,7 @@ for group_name, cols in feature_groups.items():
         group_labels.append(f"{group_name}\n({len(available)})")
         group_miss_train.append(train[available].isnull().mean().mean() * 100)
         te_available = [c for c in available if c in test.columns]
-        group_miss_test.append(
-            test[te_available].isnull().mean().mean() * 100 if te_available else 0
-        )
+        group_miss_test.append(test[te_available].isnull().mean().mean() * 100 if te_available else 0)
 
 x = np.arange(len(group_labels))
 w = 0.35
@@ -560,9 +506,7 @@ for idx, col in enumerate(plot_cats):
     ax.tick_params(axis="y", labelsize=7)
 
     ax2 = ax.twinx()
-    ax2.plot(
-        x_pos, fraud_rates, "o-", color="#C44E52", markersize=5, linewidth=2, zorder=3
-    )
+    ax2.plot(x_pos, fraud_rates, "o-", color="#C44E52", markersize=5, linewidth=2, zorder=3)
     ax2.set_ylabel("Fraud Rate", fontsize=8, color="#C44E52")
     ax2.set_ylim(0, max(fraud_rates) * 1.5 if max(fraud_rates) > 0 else 0.1)
     ax2.axhline(fraud_rate, color="#C44E52", linestyle="--", alpha=0.3, linewidth=1)
@@ -590,9 +534,7 @@ axes4[0].set_xlabel("log1p(Amount)")
 # 4b: By fraud label
 for label_val, color, name in [(0, "#4C72B0", "Legit"), (1, "#C44E52", "Fraud")]:
     subset = train.loc[train[TARGET] == label_val, "TransactionAmt"]
-    axes4[1].hist(
-        np.log1p(subset), bins=100, alpha=0.5, color=color, label=name, density=True
-    )
+    axes4[1].hist(np.log1p(subset), bins=100, alpha=0.5, color=color, label=name, density=True)
 axes4[1].set_title("log1p(TransactionAmt) — By Target")
 axes4[1].legend()
 
@@ -763,9 +705,7 @@ for col in d_available:
 
 x = np.arange(len(d_available))
 w = 0.35
-axes8[1].bar(
-    x - w / 2, fraud_when_present, w, label="Present", color="#55A868", alpha=0.7
-)
+axes8[1].bar(x - w / 2, fraud_when_present, w, label="Present", color="#55A868", alpha=0.7)
 axes8[1].bar(x + w / 2, fraud_when_nan, w, label="NaN", color="#C44E52", alpha=0.7)
 axes8[1].axhline(fraud_rate, color="gray", linestyle="--", alpha=0.5)
 axes8[1].set_xticks(x)

@@ -50,12 +50,8 @@ def submit_to_rimay(
 
     total_samples = len(X_train) + len(X_test)
     n_features = X_train.shape[1]
-    assert total_samples <= MAX_SAMPLES, (
-        f"Total samples {total_samples} exceeds limit {MAX_SAMPLES}"
-    )
-    assert n_features <= MAX_FEATURES, (
-        f"Features {n_features} exceeds limit {MAX_FEATURES}"
-    )
+    assert total_samples <= MAX_SAMPLES, f"Total samples {total_samples} exceeds limit {MAX_SAMPLES}"
+    assert n_features <= MAX_FEATURES, f"Features {n_features} exceeds limit {MAX_FEATURES}"
 
     print(
         f"\nRimay submission: {len(X_train)} train + {len(X_test)} test = "
@@ -81,24 +77,16 @@ def submit_to_rimay(
         organization_id=org_id,
     )
 
-    input_dp = api_client.api.data_pools.create_data_pool(
-        name="Rimay Heart Disease Input"
-    )
+    input_dp = api_client.api.data_pools.create_data_pool(name="Rimay Heart Disease Input")
     print(f"  Input datapool: {input_dp.id}")
 
     with open(dataset_path, "rb") as file:
-        api_client.api.data_pools.add_data_pool_file(
-            id=input_dp.id, file=("data.json", file)
-        )
+        api_client.api.data_pools.add_data_pool_file(id=input_dp.id, file=("data.json", file))
 
-    output_dp = api_client.api.data_pools.create_data_pool(
-        name="Rimay Heart Disease Output"
-    )
+    output_dp = api_client.api.data_pools.create_data_pool(name="Rimay Heart Disease Output")
     print(f"  Output datapool: {output_dp.id}")
 
-    print(
-        "\n  Both datapools must be approved on the PlanQK website before submitting."
-    )
+    print("\n  Both datapools must be approved on the PlanQK website before submitting.")
     print(f"    Input:  {input_dp.id}")
     print(f"    Output: {output_dp.id}")
     input("  Press Enter once both datapools are approved...")
@@ -189,9 +177,7 @@ def download_quantum_features(
 
     for file_info in files:
         print(f"    - {file_info.name}")
-        file_stream = api_client.api.data_pools.get_data_pool_file(
-            id=output_datapool_id, file_id=file_info.id
-        )
+        file_stream = api_client.api.data_pools.get_data_pool_file(id=output_datapool_id, file_id=file_info.id)
         fpath = download_dir / file_info.name
         with open(fpath, "wb") as file:
             for chunk in file_stream:
@@ -302,9 +288,7 @@ def extract_quantum_features_local(
             quantum_features[index, j] = float(all_values[pub_index].data.evs)
 
     elapsed = time.time() - start
-    print(
-        f"    Completed in {elapsed:.1f}s ({elapsed / n_samples * 1000:.1f}ms/sample)"
-    )
+    print(f"    Completed in {elapsed:.1f}s ({elapsed / n_samples * 1000:.1f}ms/sample)")
 
     return quantum_features, names
 
@@ -319,9 +303,7 @@ def generate_local_quantum_features(
     from sklearn.preprocessing import MinMaxScaler
 
     scaler = MinMaxScaler()
-    X_train_scaled = scaler.fit_transform(
-        quantum_train[raw_features].values.astype(float)
-    )
+    X_train_scaled = scaler.fit_transform(quantum_train[raw_features].values.astype(float))
     X_test_scaled = scaler.transform(holdout[raw_features].values.astype(float))
 
     print("\nGenerating quantum features (train)...")
@@ -359,9 +341,7 @@ def _apply_ry(state: np.ndarray, qubit: int, theta: float, n_qubits: int) -> np.
     return state.reshape(dim)
 
 
-def _apply_zz_rotation(
-    state: np.ndarray, qubit_a: int, qubit_b: int, theta: float, n_qubits: int
-) -> np.ndarray:
+def _apply_zz_rotation(state: np.ndarray, qubit_a: int, qubit_b: int, theta: float, n_qubits: int) -> np.ndarray:
     """Apply exp(-i * theta/2 * Z_a Z_b) rotation."""
     dim = 2**n_qubits
     basis = np.arange(dim, dtype=np.int64)
@@ -401,9 +381,7 @@ def _process_sample(x: np.ndarray, n_qubits: int) -> np.ndarray:
         state = _apply_ry(state, i, float(x[i] * np.pi), n_qubits)
 
     for i in range(n_qubits - 1):
-        state = _apply_zz_rotation(
-            state, i, i + 1, float(x[i] * x[i + 1] * np.pi), n_qubits
-        )
+        state = _apply_zz_rotation(state, i, i + 1, float(x[i] * x[i + 1] * np.pi), n_qubits)
 
     for i in range(n_qubits):
         state = _apply_ry(state, i, float(x[i] ** 2 * np.pi), n_qubits)

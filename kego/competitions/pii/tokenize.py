@@ -13,9 +13,7 @@ def tokenize(example, tokenizer, label2id):
     text = []
     # these are at the character level
     labels = []
-    for t, l, ws in zip(
-        example["tokens"], example["provided_labels"], example["trailing_whitespace"]
-    ):
+    for t, l, ws in zip(example["tokens"], example["provided_labels"], example["trailing_whitespace"]):
         text.append(t)
         labels.extend([l] * len(t))
         # if there is trailing whitespace

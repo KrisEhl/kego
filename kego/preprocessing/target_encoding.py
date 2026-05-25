@@ -1,6 +1,4 @@
-def make_te_preprocess(
-    te_features, drop_original=False, loo_features=None, freq_features=None
-):
+def make_te_preprocess(te_features, drop_original=False, loo_features=None, freq_features=None):
     """Create a fold_preprocess callback that applies target encoding per CV fold.
 
     Args:
@@ -31,9 +29,7 @@ def make_te_preprocess(
             group_count = y_train.groupby(x_train[col]).transform("count")
             global_mean = y_train.mean()
             # Training: leave-one-out mean
-            x_train[f"{col}_loo"] = (group_sum - y_train) / (group_count - 1).clip(
-                lower=1
-            )
+            x_train[f"{col}_loo"] = (group_sum - y_train) / (group_count - 1).clip(lower=1)
             # Val/test/holdout: simple group mean
             means = y_train.groupby(x_train[col]).mean()
             for df in [x_valid, x_test, x_holdout]:

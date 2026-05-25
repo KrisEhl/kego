@@ -144,9 +144,7 @@ def run_loso(
     for i, fn in enumerate(filenames):
         file_to_rows.setdefault(fn, []).append(i)
 
-    all_batches = build_file_batches(
-        emb, logits, labels, sites, hours, filenames, site_to_idx
-    )
+    all_batches = build_file_batches(emb, logits, labels, sites, hours, filenames, site_to_idx)
     # Site of each batch
     batch_sites = [sites[file_to_rows[b["filename"]][0]] for b in all_batches]
     print(f"Total batches: {len(all_batches)}")
@@ -174,14 +172,10 @@ def run_loso(
     probe_scores_path = DATA_ROOT / "perch-meta" / probe_scores_file
     if probe_scores_file != "none" and probe_scores_path.exists():
         stage2_base = np.load(probe_scores_path).astype(np.float32)
-        print(
-            f"Stage2 base: probe scores from {probe_scores_file} (shape {stage2_base.shape})"
-        )
+        print(f"Stage2 base: probe scores from {probe_scores_file} (shape {stage2_base.shape})")
     else:
         stage2_base = logits  # (708, 234) — fallback: raw Perch logits
-        print(
-            "Stage2 base: raw Perch logits (probe scores not found or --probe-scores none)"
-        )
+        print("Stage2 base: raw Perch logits (probe scores not found or --probe-scores none)")
 
     # Diel activity priors (optional): log-odds correction per (species, hour)
     diel_bias = None  # (234, 24) — additive logit correction, or None
@@ -200,9 +194,7 @@ def run_loso(
             print(f"Diel priors loaded: {diel_priors.shape}  alpha={diel_alpha}")
             print(f"  diel_bias range [{diel_bias.min():.3f}, {diel_bias.max():.3f}]")
         else:
-            print(
-                f"WARNING: diel priors file not found: {dp_path}  (skipping diel correction)"
-            )
+            print(f"WARNING: diel priors file not found: {dp_path}  (skipping diel correction)")
 
     # -------------------------------------------------------------------------
     # LOSO loop
@@ -335,9 +327,7 @@ def run_loso(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="LOSO cross-validation for ProtoSSM Stage2"
-    )
+    parser = argparse.ArgumentParser(description="LOSO cross-validation for ProtoSSM Stage2")
     parser.add_argument(
         "--checkpoint",
         type=str,
@@ -420,13 +410,9 @@ def main() -> None:
         global DATA_ROOT
         DATA_ROOT = Path(args.data_dir)
 
-    print(
-        f"[eval_loso] checkpoint={args.checkpoint}, stage2_epochs={args.stage2_epochs}"
-    )
+    print(f"[eval_loso] checkpoint={args.checkpoint}, stage2_epochs={args.stage2_epochs}")
     print(f"            residual_weight={args.residual_weight}, seed={args.seed}")
-    print(
-        f"            d_model={args.stage2_d_model}, d_hour={args.stage2_d_hour}, l2={args.stage2_l2}"
-    )
+    print(f"            d_model={args.stage2_d_model}, d_hour={args.stage2_d_hour}, l2={args.stage2_l2}")
     print(f"            probe_scores={args.probe_scores}")
     print(f"            diel_priors={args.diel_priors}, diel_alpha={args.diel_alpha}")
 

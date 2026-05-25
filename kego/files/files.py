@@ -14,9 +14,7 @@ def list_files(
     for root, _dirs, files in os.walk(path):
         for name in files:
             result = os.path.join(root, name)
-            if root.count(os.sep) - c - 1 <= level_max and (
-                match_filename is None or name == match_filename
-            ):
+            if root.count(os.sep) - c - 1 <= level_max and (match_filename is None or name == match_filename):
                 if return_absolute_path:
                     result = os.path.abspath(result)
                 yield result

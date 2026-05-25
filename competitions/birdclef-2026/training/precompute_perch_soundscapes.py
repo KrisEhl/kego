@@ -195,9 +195,7 @@ for bi, batch in enumerate(batches):
     emb_out[write_row : write_row + bw] = emb
 
     if MAPPED_OUR is not None:
-        scores_out[write_row : write_row + bw][:, MAPPED_OUR] = logits[
-            :bw, MAPPED_PERCH
-        ]
+        scores_out[write_row : write_row + bw][:, MAPPED_OUR] = logits[:bw, MAPPED_PERCH]
     else:
         # No mapping — store first N_CLASSES logits as proxy
         scores_out[write_row : write_row + bw] = logits[:bw, :N_CLASSES]

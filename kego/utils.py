@@ -8,9 +8,7 @@ def make_learner_id(model_name: str, feature_set: str, folds_n: int) -> str:
     return f"{model_name}/{feature_set}/{folds_n}f"
 
 
-def get_seeds_for_learner(
-    learner_index: int, seed_pool: list[int], n_seeds: int | None
-) -> list[int]:
+def get_seeds_for_learner(learner_index: int, seed_pool: list[int], n_seeds: int | None) -> list[int]:
     """Rotate through the seed pool so each learner gets a different subset."""
     if n_seeds is None or n_seeds >= len(seed_pool):
         return seed_pool  # all seeds, no rotation (backward compat)
@@ -23,14 +21,10 @@ def filter_model_config(config: dict, active_features: set[str]) -> dict:
     """Deep-copy config and filter cat_features to match a feature set."""
     config = copy.deepcopy(config)
     if "cat_features" in config.get("kwargs", {}):
-        config["kwargs"]["cat_features"] = [
-            c for c in config["kwargs"]["cat_features"] if c in active_features
-        ]
+        config["kwargs"]["cat_features"] = [c for c in config["kwargs"]["cat_features"] if c in active_features]
     if "categorical_feature" in config.get("kwargs_fit", {}):
         config["kwargs_fit"]["categorical_feature"] = [
-            c
-            for c in config["kwargs_fit"]["categorical_feature"]
-            if c in active_features
+            c for c in config["kwargs_fit"]["categorical_feature"] if c in active_features
         ]
     return config
 

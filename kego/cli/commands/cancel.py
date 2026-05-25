@@ -28,9 +28,7 @@ def _ray_stop(base: str, submission_id: str) -> None:
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"Ray API error (HTTP {e.code}): {e.read().decode()}") from e
     except OSError as e:
-        raise RuntimeError(
-            f"Cannot reach Ray cluster at {base} — is the cluster online?"
-        ) from e
+        raise RuntimeError(f"Cannot reach Ray cluster at {base} — is the cluster online?") from e
 
 
 def _cancel(args: argparse.Namespace, extra_args: list[str]) -> int:

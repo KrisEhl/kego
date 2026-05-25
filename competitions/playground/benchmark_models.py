@@ -66,17 +66,13 @@ def _prepare_data(sample=None):
     original["id"] = -1
     train_full = pd.concat([train_full, original], ignore_index=True)
 
-    train, holdout, _ = split_dataset(
-        train_full, train_size=0.8, validate_size=0.2, stratify_column=TARGET
-    )
+    train, holdout, _ = split_dataset(train_full, train_size=0.8, validate_size=0.2, stratify_column=TARGET)
     train = train.reset_index(drop=True)
     holdout = holdout.reset_index(drop=True)
 
     if sample is not None and sample < len(train):
         train = train.sample(n=sample, random_state=42).reset_index(drop=True)
-        holdout = holdout.sample(
-            n=min(sample // 4, len(holdout)), random_state=42
-        ).reset_index(drop=True)
+        holdout = holdout.sample(n=min(sample // 4, len(holdout)), random_state=42).reset_index(drop=True)
         logger.info(f"Subsampled to {len(train)} train / {len(holdout)} holdout rows")
 
     train = _impute_cholesterol(train)
@@ -88,9 +84,7 @@ def _prepare_data(sample=None):
 
     # Apply target encoding
     te_preprocess = make_te_preprocess(TE_FEATURES)
-    train, holdout, _, _ = te_preprocess(
-        train, train[TARGET], holdout, holdout.copy(), holdout.copy()
-    )
+    train, holdout, _, _ = te_preprocess(train, train[TARGET], holdout, holdout.copy(), holdout.copy())
     features = [c for c in train.columns if c not in ["id", TARGET]]
 
     return train, holdout, features
@@ -168,9 +162,7 @@ def _benchmark_skorch(model, model_name, train, holdout, features, profile):
     torch.manual_seed(model.random_state)
 
     if model_name == "resnet":
-        scaler = QuantileTransformer(
-            output_distribution="normal", random_state=model.random_state
-        )
+        scaler = QuantileTransformer(output_distribution="normal", random_state=model.random_state)
         X_np = scaler.fit_transform(X_train).astype(np.float32)
         d_in = X_np.shape[1]
 
@@ -319,15 +311,9 @@ def main():
         choices=MODEL_CHOICES,
         help="Model to benchmark",
     )
-    parser.add_argument(
-        "--batch-size", type=int, default=None, help="Override default batch size"
-    )
-    parser.add_argument(
-        "--num-workers", type=int, default=None, help="DataLoader num_workers"
-    )
-    parser.add_argument(
-        "--epochs", type=int, default=5, help="Number of training epochs (default: 5)"
-    )
+    parser.add_argument("--batch-size", type=int, default=None, help="Override default batch size")
+    parser.add_argument("--num-workers", type=int, default=None, help="DataLoader num_workers")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs (default: 5)")
     parser.add_argument(
         "--no-compile",
         action="store_true",
@@ -392,9 +378,7 @@ def main():
 
     # Run benchmark
     if model_name == "realmlp":
-        epoch_times, total_time, n_samples, gpu_monitor = _benchmark_realmlp(
-            model, train, features, args.profile
-        )
+        epoch_times, total_time, n_samples, gpu_monitor = _benchmark_realmlp(model, train, features, args.profile)
     else:
         epoch_times, total_time, n_samples, gpu_monitor = _benchmark_skorch(
             model, model_name, train, holdout, features, args.profile
@@ -421,10 +405,7 @@ def main():
             f"max={gpu_monitor.max_gpu_util:.1f}% "
             f"({len(gpu_monitor.samples)} samples)"
         )
-        logger.info(
-            f"GPU memory util: avg={gpu_monitor.avg_mem_util:.1f}%, "
-            f"max={gpu_monitor.max_mem_util:.1f}%"
-        )
+        logger.info(f"GPU memory util: avg={gpu_monitor.avg_mem_util:.1f}%, max={gpu_monitor.max_mem_util:.1f}%")
     logger.info(f"{'=' * 50}")
 
     # Log to MLflow

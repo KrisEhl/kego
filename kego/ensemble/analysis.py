@@ -18,9 +18,7 @@ from .weights import hill_climbing
 def rank_blend(matrix: np.ndarray) -> np.ndarray:
     """Convert predictions to percentile ranks per model, then average."""
     n = matrix.shape[0]
-    ranked = np.column_stack(
-        [rankdata(matrix[:, i]) / n for i in range(matrix.shape[1])]
-    )
+    ranked = np.column_stack([rankdata(matrix[:, i]) / n for i in range(matrix.shape[1])])
     return np.mean(ranked, axis=1)
 
 
@@ -64,9 +62,7 @@ def evaluate_blending_strategies(
 
             # Hill climbing is O(n^2) per iteration — skip for large ensembles
             if n_models <= 15:
-                weights = hill_climbing(
-                    oof_matrix, oof_labels, [str(i) for i in range(n_models)], step=0.05
-                )
+                weights = hill_climbing(oof_matrix, oof_labels, [str(i) for i in range(n_models)], step=0.05)
                 holdout_preds = holdout_matrix @ weights
                 if np.all(np.isfinite(holdout_preds)):
                     strategies["hill"] = roc_auc_score(holdout_labels, holdout_preds)
@@ -118,9 +114,7 @@ def greedy_forward_selection(
             oof_matrix = np.column_stack([all_oof[m] for m in members])
             holdout_matrix = np.column_stack([all_holdout[m] for m in members])
 
-            strategies = evaluate_blending_strategies(
-                oof_matrix, holdout_matrix, holdout_labels, oof_labels
-            )
+            strategies = evaluate_blending_strategies(oof_matrix, holdout_matrix, holdout_labels, oof_labels)
             cand_strategy = max(strategies, key=lambda k: strategies[k])
             auc = strategies[cand_strategy]
             delta = auc - current_auc
@@ -129,9 +123,7 @@ def greedy_forward_selection(
                 corr = None
             else:
                 ens_oof = np.column_stack([all_oof[m] for m in ensemble])
-                r, _ = spearmanr(
-                    rankdata(all_oof[candidate]), rankdata(ens_oof.mean(axis=1))
-                )
+                r, _ = spearmanr(rankdata(all_oof[candidate]), rankdata(ens_oof.mean(axis=1)))
                 corr = r
 
             candidate_results.append((candidate, auc, delta, corr, cand_strategy))
@@ -195,9 +187,7 @@ def leave_one_out_analysis(
     """
     full_oof_matrix = np.column_stack([all_oof[n] for n in model_names])
     full_holdout_matrix = np.column_stack([all_holdout[n] for n in model_names])
-    full_strategies = evaluate_blending_strategies(
-        full_oof_matrix, full_holdout_matrix, holdout_labels, oof_labels
-    )
+    full_strategies = evaluate_blending_strategies(full_oof_matrix, full_holdout_matrix, holdout_labels, oof_labels)
     best_strategy = max(full_strategies, key=lambda k: full_strategies[k])
     full_auc = full_strategies[best_strategy]
 
@@ -207,9 +197,7 @@ def leave_one_out_analysis(
         reduced_oof = np.column_stack([all_oof[m] for m in others])
         reduced_holdout = np.column_stack([all_holdout[m] for m in others])
 
-        reduced_strategies = evaluate_blending_strategies(
-            reduced_oof, reduced_holdout, holdout_labels, oof_labels
-        )
+        reduced_strategies = evaluate_blending_strategies(reduced_oof, reduced_holdout, holdout_labels, oof_labels)
         reduced_auc = reduced_strategies[best_strategy]
         delta = full_auc - reduced_auc  # positive = model helps
 
@@ -229,9 +217,7 @@ def leave_one_out_analysis(
     return full_auc, best_strategy, len(model_names), rows
 
 
-def print_forward_selection(
-    selected_rows: list[tuple], rejected_rows: list[tuple]
-) -> None:
+def print_forward_selection(selected_rows: list[tuple], rejected_rows: list[tuple]) -> None:
     """Print greedy forward selection results in a formatted table."""
     w = 100
     print(f"\n{'=' * w}")
@@ -245,62 +231,42 @@ def print_forward_selection(
 
     for step_n, name, strategy, auc, delta, corr, n_models in selected_rows:
         corr_str = f"{corr:.3f}" if corr is not None else "\u2014"
-        print(
-            f"{step_n:<6}{name:<30}{strategy:>10}{auc:>14.5f}"
-            f"{delta:>+11.5f}{corr_str:>12}{n_models:>8}"
-        )
+        print(f"{step_n:<6}{name:<30}{strategy:>10}{auc:>14.5f}{delta:>+11.5f}{corr_str:>12}{n_models:>8}")
 
     if rejected_rows:
         print("-" * w)
         dash = "\u2014"
         for name, delta, corr, strat in rejected_rows:
             corr_str = f"{corr:.3f}" if corr is not None else "\u2014"
-            print(
-                f"{'x':<6}{name:<30}{strat:>10}{dash:>14}"
-                f"{delta:>+11.5f}{corr_str:>12}{'(rejected)':>12}"
-            )
+            print(f"{'x':<6}{name:<30}{strat:>10}{dash:>14}{delta:>+11.5f}{corr_str:>12}{'(rejected)':>12}")
 
     print(f"{'=' * w}")
 
     if selected_rows:
         final = selected_rows[-1]
-        print(
-            f"\nFinal ensemble: {final[6]} models, AUC: {final[3]:.5f}"
-            f" (strategy: {final[2]})"
-        )
+        print(f"\nFinal ensemble: {final[6]} models, AUC: {final[3]:.5f} (strategy: {final[2]})")
         if rejected_rows:
             print(f"Rejected: {len(rejected_rows)} models (would decrease AUC)")
 
 
-def print_leave_one_out(
-    full_auc: float, strategy: str, n_models: int, rows: list[tuple]
-) -> None:
+def print_leave_one_out(full_auc: float, strategy: str, n_models: int, rows: list[tuple]) -> None:
     """Print leave-one-out analysis results in a formatted table."""
     print(f"\n{'=' * 90}")
     print("LEAVE-ONE-OUT ANALYSIS")
     print(f"{'=' * 90}")
-    print(
-        f"Full ensemble AUC: {full_auc:.5f} ({n_models} models, strategy: {strategy})\n"
-    )
-    print(
-        f"{'Learner':<35}{'AUC without':>13}{'Delta':>11}"
-        f"{'Spearman r':>12}{'Verdict':>10}"
-    )
+    print(f"Full ensemble AUC: {full_auc:.5f} ({n_models} models, strategy: {strategy})\n")
+    print(f"{'Learner':<35}{'AUC without':>13}{'Delta':>11}{'Spearman r':>12}{'Verdict':>10}")
     print("-" * 90)
 
     for name, reduced_auc, delta, corr, verdict in rows:
-        print(
-            f"{name:<35}{reduced_auc:>13.5f}{delta:>+11.5f}{corr:>12.3f}{verdict:>10}"
-        )
+        print(f"{name:<35}{reduced_auc:>13.5f}{delta:>+11.5f}{corr:>12.3f}{verdict:>10}")
 
     print(f"{'=' * 90}")
 
     harmful = [r for r in rows if r[4] == "HARMFUL"]
     helpful = [r for r in rows if r[4] == "helpful"]
     print(
-        f"\nSummary: {len(helpful)} helpful, "
-        f"{n_models - len(helpful) - len(harmful)} neutral, "
-        f"{len(harmful)} harmful"
+        f"\nSummary: {len(helpful)} helpful, {n_models - len(helpful) - len(harmful)} neutral, {len(harmful)} harmful"
     )
     if harmful:
         print(f"Consider removing: {', '.join(r[0] for r in harmful)}")

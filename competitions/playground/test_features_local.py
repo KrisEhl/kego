@@ -19,11 +19,7 @@ from sklearn.preprocessing import StandardScaler
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", project_root / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
 
 CAT_FEATURES = [
@@ -92,12 +88,7 @@ def engineer_new(df: pd.DataFrame) -> pd.DataFrame:
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
 
     # Composite risk scores
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["abnormal_count"] = (
         (df["Thallium"] >= 6).astype(int)
         + (df["Number of vessels fluro"] >= 1).astype(int)
@@ -129,9 +120,9 @@ def engineer_new(df: pd.DataFrame) -> pd.DataFrame:
         df[f"{col}_dev_sex"] = df[col] - grp_mean
 
     # Signal conflict: top predictors disagree on risk direction
-    df["signal_conflict"] = (
-        (df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)
-    ).astype(int) + ((df["Thallium"] == 3) & (df["Chest pain type"] == 4)).astype(int)
+    df["signal_conflict"] = ((df["Thallium"] >= 6) & (df["Chest pain type"] <= 3)).astype(int) + (
+        (df["Thallium"] == 3) & (df["Chest pain type"] == 4)
+    ).astype(int)
 
     return df
 
@@ -230,13 +221,9 @@ def evaluate_logreg(train_df, name, te_features=None, drop_original=False):
         y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
         if te_features:
-            X_tr, X_val = apply_target_encoding(
-                X_tr, y_tr, X_val, te_features, drop_original=drop_original
-            )
+            X_tr, X_val = apply_target_encoding(X_tr, y_tr, X_val, te_features, drop_original=drop_original)
 
-        model = make_pipeline(
-            StandardScaler(), LogisticRegression(max_iter=1000, C=1.0)
-        )
+        model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000, C=1.0))
         model.fit(X_tr, y_tr)
         preds = model.predict_proba(X_val)[:, 1]
         aucs.append(roc_auc_score(y_val, preds))
@@ -257,9 +244,7 @@ def main():
     original["id"] = -1
     combined = pd.concat([train_full, original], ignore_index=True)
 
-    print(
-        f"Data: {len(combined)} rows ({len(train_full)} synthetic + {len(original)} original)"
-    )
+    print(f"Data: {len(combined)} rows ({len(train_full)} synthetic + {len(original)} original)")
 
     # ── LightGBM ──
     print(f"\n{'=' * 60}")
@@ -268,12 +253,8 @@ def main():
 
     lgb_raw = evaluate_lgb(combined, "LGB: Raw features")
     lgb_old = evaluate_lgb(engineer_old(combined), "LGB: Old FE")
-    lgb_new = evaluate_lgb(
-        engineer_new(combined), "LGB: New FE (thallium + risk + deviation)"
-    )
-    lgb_new_te = evaluate_lgb(
-        engineer_new(combined), "LGB: New FE + Target Encoding", te_features=TE_FEATURES
-    )
+    lgb_new = evaluate_lgb(engineer_new(combined), "LGB: New FE (thallium + risk + deviation)")
+    lgb_new_te = evaluate_lgb(engineer_new(combined), "LGB: New FE + Target Encoding", te_features=TE_FEATURES)
 
     print("\n  LightGBM Summary:")
     for label, auc in sorted(
@@ -295,9 +276,7 @@ def main():
     lr_raw = evaluate_logreg(combined, "LR: Raw features")
     lr_old = evaluate_logreg(engineer_old(combined), "LR: Old FE")
     lr_new = evaluate_logreg(engineer_new(combined), "LR: New FE")
-    lr_new_te = evaluate_logreg(
-        engineer_new(combined), "LR: New FE + TE (keep cat)", te_features=TE_FEATURES
-    )
+    lr_new_te = evaluate_logreg(engineer_new(combined), "LR: New FE + TE (keep cat)", te_features=TE_FEATURES)
     lr_new_te_drop = evaluate_logreg(
         engineer_new(combined),
         "LR: New FE + TE (drop cat)",
@@ -322,20 +301,14 @@ def main():
     print(f"\n{'=' * 60}")
     print("  OVERALL SUMMARY")
     print(f"{'=' * 60}")
-    print(
-        f"  {'Model':<12s} {'Raw':>10s} {'Old FE':>10s} {'New FE':>10s} {'TE+keep':>10s} {'TE+drop':>10s}"
-    )
-    print(
-        f"  {'LightGBM':<12s} {lgb_raw:>10.5f} {lgb_old:>10.5f} {lgb_new:>10.5f} {lgb_new_te:>10.5f} {'N/A':>10s}"
-    )
+    print(f"  {'Model':<12s} {'Raw':>10s} {'Old FE':>10s} {'New FE':>10s} {'TE+keep':>10s} {'TE+drop':>10s}")
+    print(f"  {'LightGBM':<12s} {lgb_raw:>10.5f} {lgb_old:>10.5f} {lgb_new:>10.5f} {lgb_new_te:>10.5f} {'N/A':>10s}")
     print(
         f"  {'LogReg':<12s} {lr_raw:>10.5f} {lr_old:>10.5f} {lr_new:>10.5f} {lr_new_te:>10.5f} {lr_new_te_drop:>10.5f}"
     )
     print()
     print(f"  Best LGB improvement:   {max(lgb_new, lgb_new_te) - lgb_raw:+.5f}")
-    print(
-        f"  Best LogReg improvement: {max(lr_new, lr_new_te, lr_new_te_drop) - lr_raw:+.5f}"
-    )
+    print(f"  Best LogReg improvement: {max(lr_new, lr_new_te, lr_new_te_drop) - lr_raw:+.5f}")
 
 
 if __name__ == "__main__":

@@ -34,18 +34,10 @@ class RNADataset(Dataset):
             coords = self.labels_df.filter(pl.col("ID").str.contains(seq_id))
             if len(coords) == len(sequence):  # Ensure matching lengths
                 # Convert sequence to numerical representation
-                seq_tensor = torch.tensor(
-                    [
-                        self.NUCLEOTIDE_MAP[nt]
-                        for nt in sequence
-                        if nt in self.NUCLEOTIDE_MAP
-                    ]
-                )
+                seq_tensor = torch.tensor([self.NUCLEOTIDE_MAP[nt] for nt in sequence if nt in self.NUCLEOTIDE_MAP])
 
                 # Get coordinates as tensor
-                coord_tensor = torch.tensor(
-                    coords.select(["x_1", "y_1", "z_1"]).to_numpy()
-                )
+                coord_tensor = torch.tensor(coords.select(["x_1", "y_1", "z_1"]).to_numpy())
 
                 self.sequences.append(seq_tensor)
                 self.coordinates.append(coord_tensor)

@@ -121,10 +121,7 @@ def _start_mlflow(config: cfg_module.KegoConfig) -> int:
     uv_dir = config.cluster.uv_project_dir
 
     # Skip if already running (port is bound), clean up stale PID file if not
-    check = (
-        f"fuser 5000/tcp > /dev/null 2>&1 || "
-        f"{{ rm -f {mlflow_dir}/server.pid; false; }}"
-    )
+    check = f"fuser 5000/tcp > /dev/null 2>&1 || {{ rm -f {mlflow_dir}/server.pid; false; }}"
     result = subprocess.run(  # noqa: S603
         ["ssh", config.cluster.ssh_host, check],  # noqa: S607
         capture_output=True,
@@ -181,9 +178,6 @@ def _status(config: cfg_module.KegoConfig) -> int:
         gpus = resources.get("GPU", 0)
         cpus = resources.get("CPU", 0)
         heavy = resources.get("heavy_gpu", 0)
-        print(
-            f"  {hostname:<20} CPU={cpus:.0f}  GPU={gpus:.0f}"
-            + (f"  heavy_gpu={heavy:.0f}" if heavy else "")
-        )
+        print(f"  {hostname:<20} CPU={cpus:.0f}  GPU={gpus:.0f}" + (f"  heavy_gpu={heavy:.0f}" if heavy else ""))
 
     return 0

@@ -100,9 +100,7 @@ def get_cnn_preds(
         fmin=meta["fmin"],
         htk=meta["htk"],
     )
-    loader = DataLoader(
-        ds, batch_size=128, shuffle=False, num_workers=4, pin_memory=True
-    )
+    loader = DataLoader(ds, batch_size=128, shuffle=False, num_workers=4, pin_memory=True)
 
     fold_preds = []
     for p in ckpt_paths:
@@ -142,9 +140,7 @@ def main():
     npz_path = perch_meta_dir / "full_perch_arrays.npz"
     parquet_path = perch_meta_dir / "full_perch_meta.parquet"
     if not npz_path.exists():
-        print(
-            f"ERROR: {npz_path} not found. Download jaejohn/perch-meta dataset first."
-        )
+        print(f"ERROR: {npz_path} not found. Download jaejohn/perch-meta dataset first.")
         sys.exit(1)
 
     npz = np.load(npz_path)
@@ -152,14 +148,10 @@ def main():
     print(f"Perch cache: {scores_raw.shape} windows × species")
 
     perch_df = pd.read_parquet(parquet_path)  # row_id, filename, site, hour_utc
-    print(
-        f"Perch meta: {len(perch_df)} rows, {perch_df['filename'].nunique()} soundscapes"
-    )
+    print(f"Perch meta: {len(perch_df)} rows, {perch_df['filename'].nunique()} soundscapes")
 
     # Perch raw logits → probabilities via sigmoid
-    perch_probs = 1.0 / (1.0 + np.exp(-scores_raw.astype(np.float64))).astype(
-        np.float32
-    )
+    perch_probs = 1.0 / (1.0 + np.exp(-scores_raw.astype(np.float64))).astype(np.float32)
 
     # Load CNN checkpoints
     ckpt_paths = sorted(CKPT_DIR.glob(args.ckpt_pattern))
@@ -219,12 +211,8 @@ def main():
     # Get CNN predictions for the same soundscape files
     # Build a DataFrame of (filename, start, end, primary_label) for the perch soundscapes
     perch_files = set(perch_df["filename"].tolist())
-    sc_for_cnn = sc_labels[sc_labels["filename"].isin(perch_files)].reset_index(
-        drop=True
-    )
-    print(
-        f"CNN inference: {len(sc_for_cnn)} labeled segments from {sc_for_cnn['filename'].nunique()} soundscapes"
-    )
+    sc_for_cnn = sc_labels[sc_labels["filename"].isin(perch_files)].reset_index(drop=True)
+    print(f"CNN inference: {len(sc_for_cnn)} labeled segments from {sc_for_cnn['filename'].nunique()} soundscapes")
 
     cnn_preds_labeled, cnn_labels_labeled = get_cnn_preds(
         sc_for_cnn, ckpt_paths, meta, species_to_idx, n_species, device
@@ -236,10 +224,7 @@ def main():
     # For each perch window, find the matching sc_for_cnn row
     cnn_for_perch = np.zeros((len(perch_df), n_species), dtype=np.float32)
     cnn_matched = np.zeros(len(perch_df), dtype=bool)
-    sc_for_cnn_key = {
-        (row["filename"], int(row["end_sec"])): idx
-        for idx, (_, row) in enumerate(sc_for_cnn.iterrows())
-    }
+    sc_for_cnn_key = {(row["filename"], int(row["end_sec"])): idx for idx, (_, row) in enumerate(sc_for_cnn.iterrows())}
     for i, row in perch_df.iterrows():
         fname = row["filename"]
         end_sec = int(row["row_id"].split("_")[-1])

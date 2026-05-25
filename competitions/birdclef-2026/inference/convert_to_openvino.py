@@ -27,9 +27,7 @@ class GEMFreqPool(nn.Module):
 class AttentionSEDHead(nn.Module):
     def __init__(self, feat_dim: int, num_classes: int, dropout: float = 0.1):
         super().__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(feat_dim, feat_dim), nn.ReLU(inplace=True), nn.Dropout(dropout)
-        )
+        self.fc = nn.Sequential(nn.Linear(feat_dim, feat_dim), nn.ReLU(inplace=True), nn.Dropout(dropout))
         self.att_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
         self.cls_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
 
@@ -49,9 +47,7 @@ class BirdModelBaseline(nn.Module):
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.encoder = timm.create_model(
-            backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
-        )
+        self.encoder = timm.create_model(backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3)
         with torch.no_grad():
             _dummy = torch.zeros(1, 3, 64, 128)
             feat_dim = self.encoder(_dummy).shape[1]
@@ -129,9 +125,7 @@ for ckpt_path in ckpt_paths:
     infer.infer({0: example.numpy()})
     ov_out = infer.get_output_tensor(0).data
     max_diff = np.abs(out.numpy() - ov_out).max()
-    print(
-        f"  Max diff PyTorch vs OV: {max_diff:.2e} {'✓' if max_diff < 1e-4 else 'WARNING'}"
-    )
+    print(f"  Max diff PyTorch vs OV: {max_diff:.2e} {'✓' if max_diff < 1e-4 else 'WARNING'}")
 
 # Copy dataset-metadata
 import json

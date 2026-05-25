@@ -31,9 +31,7 @@ class GEMFreqPool(nn.Module):
 class AttentionSEDHead(nn.Module):
     def __init__(self, feat_dim: int, num_classes: int, dropout: float = 0.1):
         super().__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(feat_dim, feat_dim), nn.ReLU(inplace=True), nn.Dropout(dropout)
-        )
+        self.fc = nn.Sequential(nn.Linear(feat_dim, feat_dim), nn.ReLU(inplace=True), nn.Dropout(dropout))
         self.att_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
         self.cls_conv = nn.Conv1d(feat_dim, num_classes, kernel_size=1)
 
@@ -53,9 +51,7 @@ class BirdModelBaseline(nn.Module):
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.encoder = timm.create_model(
-            backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
-        )
+        self.encoder = timm.create_model(backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3)
         with torch.no_grad():
             _dummy = torch.zeros(1, 3, 64, 128)
             feat_dim = self.encoder(_dummy).shape[1]
@@ -107,9 +103,7 @@ for ckpt_path in ckpt_paths:
     # Verify PyTorch output shape
     with torch.no_grad():
         out_pt = model(example)
-    print(
-        f"  PyTorch output: {out_pt.shape}, range [{out_pt.min():.3f}, {out_pt.max():.3f}]"
-    )
+    print(f"  PyTorch output: {out_pt.shape}, range [{out_pt.min():.3f}, {out_pt.max():.3f}]")
 
     stem = ckpt_path.stem  # e.g. soundscape-v7_fold0
     out_onnx = OUT_DIR / f"{stem}.onnx"
@@ -145,14 +139,10 @@ for ckpt_path in ckpt_paths:
     # Verify ONNX output matches PyTorch
     sess_opts = ort.SessionOptions()
     sess_opts.intra_op_num_threads = 4
-    session = ort.InferenceSession(
-        str(out_onnx), sess_opts, providers=["CPUExecutionProvider"]
-    )
+    session = ort.InferenceSession(str(out_onnx), sess_opts, providers=["CPUExecutionProvider"])
     out_onnx_val = session.run(None, {"input": example.numpy()})[0]
     max_diff = np.abs(out_pt.numpy() - out_onnx_val).max()
-    print(
-        f"  Max diff PyTorch vs ONNX: {max_diff:.2e} {'✓' if max_diff < 1e-4 else 'WARNING'}"
-    )
+    print(f"  Max diff PyTorch vs ONNX: {max_diff:.2e} {'✓' if max_diff < 1e-4 else 'WARNING'}")
 
 # Write dataset-metadata.json
 meta_ds = {

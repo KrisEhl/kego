@@ -102,9 +102,7 @@ from collections import defaultdict
 
 stem_to_gt: dict[str, list[tuple[int, int, list[str]]]] = defaultdict(list)
 for _, row in df.iterrows():
-    stem_to_gt[row["stem"]].append(
-        (row["start_sec"], row["end_sec_gt"], row["labels_list"])
-    )
+    stem_to_gt[row["stem"]].append((row["start_sec"], row["end_sec_gt"], row["labels_list"]))
 
 # for each window in cache, collect ground truth labels
 gt_labels = np.zeros((n_windows, n_species), dtype=np.float32)
@@ -136,9 +134,7 @@ X = pca.fit_transform(emb_scaled)
 print(f"  Explained variance: {pca.explained_variance_ratio_.sum():.3f}")
 
 # ── train per-class LogReg probes ─────────────────────────────────────────────
-print(
-    f"\nTraining LogReg probes (C={LOGREG_C}, {N_FOLDS}-fold by site, min_pos={MIN_POSITIVES})..."
-)
+print(f"\nTraining LogReg probes (C={LOGREG_C}, {N_FOLDS}-fold by site, min_pos={MIN_POSITIVES})...")
 
 # encode sites as group labels
 site_to_int = {s: i for i, s in enumerate(unique_sites)}
@@ -230,9 +226,7 @@ print(f"  Probe OOF    mean AP: {np.mean(probe_aps):.4f}")
 print(f"  Delta: {np.mean(probe_aps) - np.mean(perch_aps):+.4f}")
 
 # top improved species
-deltas = [
-    (species_with_probes[i], probe_aps[i] - perch_aps[i]) for i in range(len(probe_aps))
-]
+deltas = [(species_with_probes[i], probe_aps[i] - perch_aps[i]) for i in range(len(probe_aps))]
 deltas.sort(key=lambda x: -x[1])
 print("\n  Top 10 species improved by probe:")
 for sp, d in deltas[:10]:
@@ -261,6 +255,4 @@ with open(OUT_PKL, "wb") as f:
 
 probe_count = sum(1 for v in probes.values() if v is not None)
 print(f"\nSaved {probe_count} probes → {OUT_PKL}")
-print(
-    f"  {n_species - probe_count} species fall back to Perch probs (< {MIN_POSITIVES} positives)"
-)
+print(f"  {n_species - probe_count} species fall back to Perch probs (< {MIN_POSITIVES} positives)")

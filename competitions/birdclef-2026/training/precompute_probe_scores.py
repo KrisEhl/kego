@@ -79,11 +79,7 @@ def fit_prior_tables(prior_df: pd.DataFrame, Y_prior: np.ndarray) -> dict:
         site_n.append(mask.sum())
         site_p.append(Y_prior[mask].mean(axis=0))
     site_n = np.array(site_n, dtype=np.float32)
-    site_p = (
-        np.stack(site_p).astype(np.float32)
-        if site_p
-        else np.zeros((0, Y_prior.shape[1]), np.float32)
-    )
+    site_p = np.stack(site_p).astype(np.float32) if site_p else np.zeros((0, Y_prior.shape[1]), np.float32)
 
     hour_to_i, hour_n, hour_p = {}, [], []
     for h in hour_keys:
@@ -92,11 +88,7 @@ def fit_prior_tables(prior_df: pd.DataFrame, Y_prior: np.ndarray) -> dict:
         hour_n.append(mask.sum())
         hour_p.append(Y_prior[mask].mean(axis=0))
     hour_n = np.array(hour_n, dtype=np.float32)
-    hour_p = (
-        np.stack(hour_p).astype(np.float32)
-        if hour_p
-        else np.zeros((0, Y_prior.shape[1]), np.float32)
-    )
+    hour_p = np.stack(hour_p).astype(np.float32) if hour_p else np.zeros((0, Y_prior.shape[1]), np.float32)
 
     sh_to_i, sh_n_list, sh_p_list = {}, [], []
     for (s, h), idx in prior_df.groupby(["site", "hour_utc"]).groups.items():
@@ -105,11 +97,7 @@ def fit_prior_tables(prior_df: pd.DataFrame, Y_prior: np.ndarray) -> dict:
         sh_n_list.append(len(idx_arr))
         sh_p_list.append(Y_prior[idx_arr].mean(axis=0))
     sh_n = np.array(sh_n_list, dtype=np.float32)
-    sh_p = (
-        np.stack(sh_p_list).astype(np.float32)
-        if sh_p_list
-        else np.zeros((0, Y_prior.shape[1]), np.float32)
-    )
+    sh_p = np.stack(sh_p_list).astype(np.float32) if sh_p_list else np.zeros((0, Y_prior.shape[1]), np.float32)
 
     return dict(
         global_p=global_p,
@@ -125,9 +113,7 @@ def fit_prior_tables(prior_df: pd.DataFrame, Y_prior: np.ndarray) -> dict:
     )
 
 
-def prior_logits_fn(
-    sites: np.ndarray, hours: np.ndarray, tables: dict, eps: float = 1e-4
-) -> np.ndarray:
+def prior_logits_fn(sites: np.ndarray, hours: np.ndarray, tables: dict, eps: float = 1e-4) -> np.ndarray:
     n = len(sites)
     p = np.repeat(tables["global_p"][None, :], n, axis=0).astype(np.float32, copy=True)
 
@@ -138,10 +124,7 @@ def prior_logits_fn(
         n,
     )
     shi = np.fromiter(
-        (
-            tables["sh_to_i"].get((str(s), int(h)), -1) if int(h) >= 0 else -1
-            for s, h in zip(sites, hours)
-        ),
+        (tables["sh_to_i"].get((str(s), int(h)), -1) if int(h) >= 0 else -1 for s, h in zip(sites, hours)),
         np.int32,
         n,
     )
@@ -149,24 +132,15 @@ def prior_logits_fn(
     valid = hi >= 0
     if valid.any():
         nh = tables["hour_n"][hi[valid]][:, None]
-        p[valid] = (
-            nh / (nh + 8.0) * tables["hour_p"][hi[valid]]
-            + (1.0 - nh / (nh + 8.0)) * p[valid]
-        )
+        p[valid] = nh / (nh + 8.0) * tables["hour_p"][hi[valid]] + (1.0 - nh / (nh + 8.0)) * p[valid]
     valid = si >= 0
     if valid.any():
         ns = tables["site_n"][si[valid]][:, None]
-        p[valid] = (
-            ns / (ns + 8.0) * tables["site_p"][si[valid]]
-            + (1.0 - ns / (ns + 8.0)) * p[valid]
-        )
+        p[valid] = ns / (ns + 8.0) * tables["site_p"][si[valid]] + (1.0 - ns / (ns + 8.0)) * p[valid]
     valid = shi >= 0
     if valid.any():
         nsh = tables["sh_n"][shi[valid]][:, None]
-        p[valid] = (
-            nsh / (nsh + 4.0) * tables["sh_p"][shi[valid]]
-            + (1.0 - nsh / (nsh + 4.0)) * p[valid]
-        )
+        p[valid] = nsh / (nsh + 4.0) * tables["sh_p"][shi[valid]] + (1.0 - nsh / (nsh + 4.0)) * p[valid]
 
     np.clip(p, eps, 1.0 - eps, out=p)
     return (np.log(p) - np.log1p(-p)).astype(np.float32)
@@ -205,21 +179,15 @@ def fuse_scores_full(
     prior = prior_logits_fn(sites, hours, tables)
 
     if len(idx_mapped_active_event):
-        scores[:, idx_mapped_active_event] += (
-            LAMBDA_EVENT * prior[:, idx_mapped_active_event]
-        )
+        scores[:, idx_mapped_active_event] += LAMBDA_EVENT * prior[:, idx_mapped_active_event]
     if len(idx_mapped_active_texture):
-        scores[:, idx_mapped_active_texture] += (
-            LAMBDA_TEXTURE * prior[:, idx_mapped_active_texture]
-        )
+        scores[:, idx_mapped_active_texture] += LAMBDA_TEXTURE * prior[:, idx_mapped_active_texture]
     if len(idx_selected_proxy_active_texture):
         scores[:, idx_selected_proxy_active_texture] += (
             LAMBDA_PROXY_TEXTURE * prior[:, idx_selected_proxy_active_texture]
         )
     if len(idx_selected_prioronly_active_event):
-        scores[:, idx_selected_prioronly_active_event] = (
-            LAMBDA_EVENT * prior[:, idx_selected_prioronly_active_event]
-        )
+        scores[:, idx_selected_prioronly_active_event] = LAMBDA_EVENT * prior[:, idx_selected_prioronly_active_event]
     if len(idx_selected_prioronly_active_texture):
         scores[:, idx_selected_prioronly_active_texture] = (
             LAMBDA_TEXTURE * prior[:, idx_selected_prioronly_active_texture]
@@ -310,9 +278,7 @@ def build_class_features(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Precompute OOF and full probe scores from Perch embeddings"
-    )
+    parser = argparse.ArgumentParser(description="Precompute OOF and full probe scores from Perch embeddings")
     parser.add_argument(
         "--emb-file",
         type=str,
@@ -372,9 +338,7 @@ def main() -> None:
                 validation_fraction=0.1,
                 random_state=42,
             )
-        return LogisticRegression(
-            C=PROBE_C, max_iter=400, solver="liblinear", class_weight="balanced"
-        )
+        return LogisticRegression(C=PROBE_C, max_iter=400, solver="liblinear", class_weight="balanced")
 
     def _probe_score(clf, X):
         if args.probe_model == "mlp":
@@ -405,9 +369,7 @@ def main() -> None:
         print(f"Loaded adapted embeddings from {emb_path}: {emb_full.shape}")
     else:
         emb_full = npz["emb_full"].astype(np.float32)
-    meta_file = args.npz_file.replace("full_perch_arrays", "full_perch_meta").replace(
-        ".npz", ".parquet"
-    )
+    meta_file = args.npz_file.replace("full_perch_arrays", "full_perch_meta").replace(".npz", ".parquet")
     meta_full = pd.read_parquet(PERCH_META_DIR / meta_file)
     print(f"Loaded perch cache: {emb_full.shape}, {scores_full_raw.shape}")
 
@@ -438,14 +400,10 @@ def main() -> None:
     )
     no_label_index = len(bc_labels)
     taxonomy["scientific_name"] = taxonomy["scientific_name"].astype(str)
-    mapping = taxonomy.merge(
-        bc_labels[["scientific_name", "bc_index"]], on="scientific_name", how="left"
-    )
+    mapping = taxonomy.merge(bc_labels[["scientific_name", "bc_index"]], on="scientific_name", how="left")
     mapping["bc_index"] = mapping["bc_index"].fillna(no_label_index).astype(int)
     label_to_bc = mapping.set_index("primary_label")["bc_index"]
-    bc_indices = np.array(
-        [int(label_to_bc.loc[c]) for c in primary_labels], dtype=np.int32
-    )
+    bc_indices = np.array([int(label_to_bc.loc[c]) for c in primary_labels], dtype=np.int32)
     mapped_mask = bc_indices != no_label_index
     print(f"Mapped   : {mapped_mask.sum()} / {n_classes}")
     unmapped_pos = np.where(~mapped_mask)[0].astype(np.int32)
@@ -476,9 +434,7 @@ def main() -> None:
         .apply(union_labels)
         .reset_index(name="label_list")
     )
-    sc_clean["end_sec"] = (
-        pd.to_timedelta(sc_clean["end"]).dt.total_seconds().astype(int)
-    )
+    sc_clean["end_sec"] = pd.to_timedelta(sc_clean["end"]).dt.total_seconds().astype(int)
     meta_cols = sc_clean["filename"].apply(parse_soundscape_filename).apply(pd.Series)
     sc_clean = pd.concat([sc_clean, meta_cols], axis=1)
 
@@ -514,9 +470,7 @@ def main() -> None:
             lbl = lbl.strip()
             if lbl in label_to_idx:
                 Y_FULL[pos, label_to_idx[lbl]] = 1.0
-    print(
-        f"Y_FULL positives: {Y_FULL.sum():.0f}, active classes: {(Y_FULL.sum(0) > 0).sum()}"
-    )
+    print(f"Y_FULL positives: {Y_FULL.sum():.0f}, active classes: {(Y_FULL.sum(0) > 0).sum()}")
 
     # -----------------------------------------------------------------------
     # Compute class type indices for fuse_scores
@@ -527,19 +481,11 @@ def main() -> None:
     active_classes = [primary_labels[i] for i in np.where(Y_SC.sum(axis=0) > 0)[0]]
 
     idx_active_texture = np.array(
-        [
-            label_to_idx[c]
-            for c in active_classes
-            if class_name_map.get(c) in texture_taxa
-        ],
+        [label_to_idx[c] for c in active_classes if class_name_map.get(c) in texture_taxa],
         dtype=np.int32,
     )
     idx_active_event = np.array(
-        [
-            label_to_idx[c]
-            for c in active_classes
-            if class_name_map.get(c) not in texture_taxa
-        ],
+        [label_to_idx[c] for c in active_classes if class_name_map.get(c) not in texture_taxa],
         dtype=np.int32,
     )
     idx_mapped_active_texture = idx_active_texture[mapped_mask[idx_active_texture]]
@@ -553,37 +499,21 @@ def main() -> None:
 
     # Proxy: unmapped non-sonotype species with a genus match in Perch
     unmapped_df = mapping[mapping["bc_index"] == no_label_index].copy()
-    unmapped_non_sonotype = unmapped_df[
-        ~unmapped_df["primary_label"].astype(str).str.contains("son", na=False)
-    ].copy()
+    unmapped_non_sonotype = unmapped_df[~unmapped_df["primary_label"].astype(str).str.contains("son", na=False)].copy()
     proxy_map: dict[str, list[int]] = {}
     for _, row in unmapped_non_sonotype.iterrows():
         genus = str(row["scientific_name"]).split()[0]
-        hits = bc_labels[
-            bc_labels["scientific_name"].str.match(rf"^{re.escape(genus)}\s", na=False)
-        ]
+        hits = bc_labels[bc_labels["scientific_name"].str.match(rf"^{re.escape(genus)}\s", na=False)]
         if len(hits) > 0:
             proxy_map[str(row["primary_label"])] = hits["bc_index"].astype(int).tolist()
-    selected_proxy_pos = np.array(
-        [label_to_idx[c] for c in proxy_map if c in label_to_idx], dtype=np.int32
-    )
-    idx_selected_proxy_active_texture = np.intersect1d(
-        selected_proxy_pos, idx_active_texture
-    )
-    idx_selected_prioronly_active_texture = np.setdiff1d(
-        idx_unmapped_active_texture, selected_proxy_pos
-    )
-    idx_selected_prioronly_active_event = np.setdiff1d(
-        idx_unmapped_active_event, selected_proxy_pos
-    )
+    selected_proxy_pos = np.array([label_to_idx[c] for c in proxy_map if c in label_to_idx], dtype=np.int32)
+    idx_selected_proxy_active_texture = np.intersect1d(selected_proxy_pos, idx_active_texture)
+    idx_selected_prioronly_active_texture = np.setdiff1d(idx_unmapped_active_texture, selected_proxy_pos)
+    idx_selected_prioronly_active_event = np.setdiff1d(idx_unmapped_active_event, selected_proxy_pos)
 
     # Smoothing indices
     idx_smooth_amphibia = np.array(
-        [
-            label_to_idx[c]
-            for c in active_classes
-            if class_name_map.get(c) == "Amphibia"
-        ],
+        [label_to_idx[c] for c in active_classes if class_name_map.get(c) == "Amphibia"],
         dtype=np.int32,
     )
     idx_smooth_insecta = np.array(
@@ -595,11 +525,7 @@ def main() -> None:
         dtype=np.int32,
     )
     idx_smooth_aves_direct = np.array(
-        [
-            label_to_idx[c]
-            for c in active_classes
-            if class_name_map.get(c) == "Aves" and mapped_mask[label_to_idx[c]]
-        ],
+        [label_to_idx[c] for c in active_classes if class_name_map.get(c) == "Aves" and mapped_mask[label_to_idx[c]]],
         dtype=np.int32,
     )
     idx_smooth_aves_uncertain = np.array(
@@ -639,9 +565,7 @@ def main() -> None:
         va_idx = np.sort(va_idx)
         val_sites = set(meta_full.iloc[va_idx]["site"].tolist())
         prior_m = ~sc_clean["site"].isin(val_sites).values
-        tables = fit_prior_tables(
-            sc_clean.loc[prior_m].reset_index(drop=True), Y_SC[prior_m]
-        )
+        tables = fit_prior_tables(sc_clean.loc[prior_m].reset_index(drop=True), Y_SC[prior_m])
         fused, prior_vals = fuse_scores_full(
             scores_full_raw[va_idx],
             meta_full.iloc[va_idx]["site"].to_numpy(),
@@ -668,9 +592,7 @@ def main() -> None:
     n_comp = min(PROBE_PCA_DIM, emb_scaled.shape[0] - 1, emb_scaled.shape[1])
     pca = PCA(n_components=n_comp)
     z_full = pca.fit_transform(emb_scaled).astype(np.float32)
-    print(
-        f"PCA: {n_comp} components, explained var = {pca.explained_variance_ratio_.sum():.4f}"
-    )
+    print(f"PCA: {n_comp} components, explained var = {pca.explained_variance_ratio_.sum():.4f}")
 
     # Class prototypes in PCA space
     class_prototypes: dict[int, np.ndarray] = {}
@@ -685,12 +607,8 @@ def main() -> None:
     for ci, label in enumerate(primary_labels):
         fam = family_map.get(label, "Unknown")
         family_groups.setdefault(fam, []).append(ci)
-    family_idx_map = {
-        fam: np.array(idxs, dtype=np.int32) for fam, idxs in family_groups.items()
-    }
-    class_family = {
-        ci: family_map.get(label, "Unknown") for ci, label in enumerate(primary_labels)
-    }
+    family_idx_map = {fam: np.array(idxs, dtype=np.int32) for fam, idxs in family_groups.items()}
+    class_family = {ci: family_map.get(label, "Unknown") for ci, label in enumerate(primary_labels)}
 
     # -----------------------------------------------------------------------
     # OOF probe computation
@@ -712,29 +630,17 @@ def main() -> None:
                 continue
 
             proto_sim_tr = (
-                cosine_sim_to_prototype(z_full[tr_idx], class_prototypes[ci])
-                if ci in class_prototypes
-                else None
+                cosine_sim_to_prototype(z_full[tr_idx], class_prototypes[ci]) if ci in class_prototypes else None
             )
             proto_sim_va = (
-                cosine_sim_to_prototype(z_full[va_idx], class_prototypes[ci])
-                if ci in class_prototypes
-                else None
+                cosine_sim_to_prototype(z_full[va_idx], class_prototypes[ci]) if ci in class_prototypes else None
             )
 
             fam = class_family.get(ci, "Unknown")
             other_fam = family_idx_map.get(fam, np.array([]))
             other_fam = other_fam[other_fam != ci]
-            fam_mean_tr = (
-                oof_base[tr_idx][:, other_fam].mean(axis=1)
-                if len(other_fam) > 0
-                else None
-            )
-            fam_mean_va = (
-                oof_base[va_idx][:, other_fam].mean(axis=1)
-                if len(other_fam) > 0
-                else None
-            )
+            fam_mean_tr = oof_base[tr_idx][:, other_fam].mean(axis=1) if len(other_fam) > 0 else None
+            fam_mean_va = oof_base[va_idx][:, other_fam].mean(axis=1) if len(other_fam) > 0 else None
 
             X_tr = build_class_features(
                 z_full[tr_idx],
@@ -756,32 +662,20 @@ def main() -> None:
             clf = _make_probe_clf()
             clf.fit(X_tr, y_tr)
             pred = _probe_score(clf, X_va)
-            oof_probe[va_idx, ci] = (1.0 - PROBE_ALPHA) * oof_base[
-                va_idx, ci
-            ] + PROBE_ALPHA * pred
+            oof_probe[va_idx, ci] = (1.0 - PROBE_ALPHA) * oof_base[va_idx, ci] + PROBE_ALPHA * pred
 
         n_probes = len([ci for ci in probe_cls if Y_FULL[tr_idx, ci].sum() > 0])
         print(f"  Fold {fold_i + 1}/5 — {n_probes} probes trained")
 
     auc_probe = roc_auc_score(Y_FULL[:, keep], oof_probe[:, keep], average="macro")
-    print(
-        f"OOF AUC (probe-augmented): {auc_probe:.6f}  (delta vs prior: +{auc_probe - auc_base:.4f})"
-    )
+    print(f"OOF AUC (probe-augmented): {auc_probe:.6f}  (delta vs prior: +{auc_probe - auc_base:.4f})")
 
     # cmAP
     from sklearn.metrics import average_precision_score
 
     active_cls = np.where(Y_FULL.sum(0) > 0)[0]
-    aps_base = [
-        average_precision_score(Y_FULL[:, c], oof_base[:, c])
-        for c in active_cls
-        if Y_FULL[:, c].sum() > 0
-    ]
-    aps_probe = [
-        average_precision_score(Y_FULL[:, c], oof_probe[:, c])
-        for c in active_cls
-        if Y_FULL[:, c].sum() > 0
-    ]
+    aps_base = [average_precision_score(Y_FULL[:, c], oof_base[:, c]) for c in active_cls if Y_FULL[:, c].sum() > 0]
+    aps_probe = [average_precision_score(Y_FULL[:, c], oof_probe[:, c]) for c in active_cls if Y_FULL[:, c].sum() > 0]
     print(f"OOF cmAP (prior only):   {np.mean(aps_base):.4f}")
     print(f"OOF cmAP (probe-augmented): {np.mean(aps_probe):.4f}")
 
@@ -811,11 +705,7 @@ def main() -> None:
         if y.sum() == 0 or y.sum() == len(y):
             continue
 
-        proto_sim = (
-            cosine_sim_to_prototype(z_full, class_prototypes[ci])
-            if ci in class_prototypes
-            else None
-        )
+        proto_sim = cosine_sim_to_prototype(z_full, class_prototypes[ci]) if ci in class_prototypes else None
         fam = class_family.get(ci, "Unknown")
         other_fam = family_idx_map.get(fam, np.array([]))
         other_fam = other_fam[other_fam != ci]
@@ -836,11 +726,7 @@ def main() -> None:
         full_probe_models[ci] = clf
 
     print(f"  Full probe models fitted: {len(full_probe_models)} classes")
-    aps_full = [
-        average_precision_score(Y_FULL[:, c], full_probe[:, c])
-        for c in active_cls
-        if Y_FULL[:, c].sum() > 0
-    ]
+    aps_full = [average_precision_score(Y_FULL[:, c], full_probe[:, c]) for c in active_cls if Y_FULL[:, c].sum() > 0]
     print(f"  Full (in-sample) cmAP: {np.mean(aps_full):.4f}")
 
     # -----------------------------------------------------------------------
@@ -863,29 +749,22 @@ def main() -> None:
     # for the 59sc-fitted probes), which matches test-time inference quality.
     # -----------------------------------------------------------------------
     if args.apply_extra_npz is not None:
-        print(
-            f"\n--- Applying 59sc probes to extra soundscapes in {args.apply_extra_npz} ---"
-        )
+        print(f"\n--- Applying 59sc probes to extra soundscapes in {args.apply_extra_npz} ---")
         extra_npz_path = PERCH_META_DIR / args.apply_extra_npz
         extra_npz = np.load(extra_npz_path)
         extra_emb_all = extra_npz["emb_full"].astype(np.float32)
         extra_scores_all = extra_npz["scores_full_raw"].astype(np.float32)
-        extra_meta_file = args.apply_extra_npz.replace(
-            "full_perch_arrays", "full_perch_meta"
-        ).replace(".npz", ".parquet")
-        extra_meta_all = pd.read_parquet(PERCH_META_DIR / extra_meta_file)
-        print(
-            f"  Loaded extra NPZ: {extra_emb_all.shape}, meta: {extra_meta_all.shape}"
+        extra_meta_file = args.apply_extra_npz.replace("full_perch_arrays", "full_perch_meta").replace(
+            ".npz", ".parquet"
         )
+        extra_meta_all = pd.read_parquet(PERCH_META_DIR / extra_meta_file)
+        print(f"  Loaded extra NPZ: {extra_emb_all.shape}, meta: {extra_meta_all.shape}")
 
         # Identify the extra rows not present in the base NPZ
         base_filenames = set(meta_full["filename"].tolist())
         extra_mask = ~extra_meta_all["filename"].isin(base_filenames).values
         n_extra = extra_mask.sum()
-        print(
-            f"  Extra soundscapes: {n_extra} windows "
-            f"({extra_meta_all[extra_mask]['filename'].nunique()} files)"
-        )
+        print(f"  Extra soundscapes: {n_extra} windows ({extra_meta_all[extra_mask]['filename'].nunique()} files)")
 
         extra_emb = extra_emb_all[extra_mask]
         extra_scores_raw = extra_scores_all[extra_mask]
@@ -907,17 +786,11 @@ def main() -> None:
         # Apply per-class probe models to extra rows
         extra_probe = extra_base.copy()
         for ci, clf in full_probe_models.items():
-            proto_sim_extra = (
-                cosine_sim_to_prototype(extra_z, class_prototypes[ci])
-                if ci in class_prototypes
-                else None
-            )
+            proto_sim_extra = cosine_sim_to_prototype(extra_z, class_prototypes[ci]) if ci in class_prototypes else None
             fam = class_family.get(ci, "Unknown")
             other_fam = family_idx_map.get(fam, np.array([]))
             other_fam = other_fam[other_fam != ci]
-            fam_mean_extra = (
-                extra_base[:, other_fam].mean(axis=1) if len(other_fam) > 0 else None
-            )
+            fam_mean_extra = extra_base[:, other_fam].mean(axis=1) if len(other_fam) > 0 else None
             X_extra = build_class_features(
                 extra_z,
                 raw_col=extra_scores_raw[:, ci],
@@ -927,9 +800,7 @@ def main() -> None:
                 family_mean_col=fam_mean_extra,
             )
             pred_extra = clf.decision_function(X_extra).astype(np.float32)
-            extra_probe[:, ci] = (1.0 - PROBE_ALPHA) * extra_base[
-                :, ci
-            ] + PROBE_ALPHA * pred_extra
+            extra_probe[:, ci] = (1.0 - PROBE_ALPHA) * extra_base[:, ci] + PROBE_ALPHA * pred_extra
 
         # Combine base (59sc) + extra in the order they appear in the larger NPZ
         # Reorder to match the larger NPZ's row order
@@ -954,22 +825,9 @@ def main() -> None:
 
         print(f"  Combined probe scores shape: {combined_probe.shape}")
         # Derive suffix from the extra NPZ filename
-        extra_stem = (
-            args.apply_extra_npz.replace("full_perch_arrays", "")
-            .replace(".npz", "")
-            .strip("_")
-            or "extended"
-        )
-        base_stem = (
-            args.npz_file.replace("full_perch_arrays", "")
-            .replace(".npz", "")
-            .strip("_")
-            or "base"
-        )
-        combined_out_path = (
-            PERCH_META_DIR
-            / f"full_probe_scores{suffix}_{base_stem}_probes_{extra_stem}_data.npy"
-        )
+        extra_stem = args.apply_extra_npz.replace("full_perch_arrays", "").replace(".npz", "").strip("_") or "extended"
+        base_stem = args.npz_file.replace("full_perch_arrays", "").replace(".npz", "").strip("_") or "base"
+        combined_out_path = PERCH_META_DIR / f"full_probe_scores{suffix}_{base_stem}_probes_{extra_stem}_data.npy"
         np.save(combined_out_path, combined_probe)
         print(f"Saved combined: {combined_out_path}  shape={combined_probe.shape}")
 

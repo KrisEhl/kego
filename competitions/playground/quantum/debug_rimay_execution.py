@@ -47,12 +47,8 @@ def fetch_execution_logs(execution_id: str) -> None:
             f.write(f"Execution ID: {execution_id}\n")
             f.write("=" * 60 + "\n\n")
             f.write("Note: Logs retrieved from PlanQK service API\n")
-            f.write(
-                "Status: Check the PlanQK dashboard for detailed error information\n"
-            )
-            f.write(
-                f"Dashboard URL: Check your PlanQK console for execution ID {execution_id}\n"
-            )
+            f.write("Status: Check the PlanQK dashboard for detailed error information\n")
+            f.write(f"Dashboard URL: Check your PlanQK console for execution ID {execution_id}\n")
 
         print(f"\n  Log file saved: {log_path}")
         print("\n  To investigate the failure:")

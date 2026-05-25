@@ -86,25 +86,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         + (df["Exercise angina"] == 1).astype(int)
         + (df["Chest pain type"] == 4).astype(int)
     )
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["risk_score"] = (
-        df["Age"] / 10
-        + df["Chest pain type"] * 2
-        + df["Number of vessels fluro"] * 1.5
-        + df["Thallium"] / 2
+        df["Age"] / 10 + df["Chest pain type"] * 2 + df["Number of vessels fluro"] * 1.5 + df["Thallium"] / 2
     )
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
     df["chestpain_x_slope"] = df["Chest pain type"] * df["Slope of ST"]
     sex_mean_stdep = df.groupby("Sex")["ST depression"].transform("mean")
     df["ST depression_dev_sex"] = df["ST depression"] - sex_mean_stdep
-    df["signal_conflict"] = (
-        (df["Exercise angina"] == 1) & (df["ST depression"] == 0)
-    ).astype(int)
+    df["signal_conflict"] = ((df["Exercise angina"] == 1) & (df["ST depression"] == 0)).astype(int)
     df["chestpain_x_angina"] = df["Chest pain type"] * df["Exercise angina"]
     return df
 

@@ -11,10 +11,7 @@ class TestMakeLearnerId:
         assert make_learner_id("catboost", "raw", 5) == "catboost/raw/5f"
 
     def test_with_variant_name(self):
-        assert (
-            make_learner_id("xgboost_deep", "ablation-pruned", 10)
-            == "xgboost_deep/ablation-pruned/10f"
-        )
+        assert make_learner_id("xgboost_deep", "ablation-pruned", 10) == "xgboost_deep/ablation-pruned/10f"
 
 
 class TestGetSeedsForLearner:

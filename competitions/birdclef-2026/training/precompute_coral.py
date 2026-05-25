@@ -60,9 +60,7 @@ def main() -> None:
         )
         target_emb = emb_tgt_unlabeled
     except Exception as e:
-        print(
-            f"  WARNING: could not filter by site ({e}), using all cache windows as target"
-        )
+        print(f"  WARNING: could not filter by site ({e}), using all cache windows as target")
         target_emb = emb_tgt
 
     # -------------------------------------------------------------------------
@@ -101,10 +99,7 @@ def main() -> None:
     std_aligned = emb_aligned.std(axis=0)
     mu_err = float(np.abs(mu_aligned - mu_tgt).mean())
     std_ratio = float((std_aligned / (std_tgt + EPS)).mean())
-    print(
-        f"  Alignment check: mean |μ_aligned - μ_tgt| = {mu_err:.6f}  "
-        f"mean(σ_aligned / σ_tgt) = {std_ratio:.4f}"
-    )
+    print(f"  Alignment check: mean |μ_aligned - μ_tgt| = {mu_err:.6f}  mean(σ_aligned / σ_tgt) = {std_ratio:.4f}")
 
     # -------------------------------------------------------------------------
     # Save
@@ -120,10 +115,7 @@ def main() -> None:
     np.save(META_DIR / "coral_emb_aligned.npy", emb_aligned)
 
     print("  coral_transform.npz : mu/std arrays (1536,) each")
-    print(
-        f"  coral_emb_aligned.npy: {emb_aligned.shape}  "
-        f"range [{emb_aligned.min():.3f}, {emb_aligned.max():.3f}]"
-    )
+    print(f"  coral_emb_aligned.npy: {emb_aligned.shape}  range [{emb_aligned.min():.3f}, {emb_aligned.max():.3f}]")
     print("\nDone.", flush=True)
 
 

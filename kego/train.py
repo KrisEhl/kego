@@ -64,15 +64,11 @@ def train_model_split(
         x_holdout = holdout[features].copy()
 
         if fold_preprocess is not None:
-            x_train, x_valid, x_test, x_holdout = fold_preprocess(
-                x_train, y_train, x_valid, x_test, x_holdout
-            )
+            x_train, x_valid, x_test, x_holdout = fold_preprocess(x_train, y_train, x_valid, x_test, x_holdout)
 
         model_trained = model(**kwargs_model)
         if use_eval_set:
-            model_trained.fit(
-                x_train, y_train, eval_set=[(x_valid, y_valid)], **kwargs_fit
-            )
+            model_trained.fit(x_train, y_train, eval_set=[(x_valid, y_valid)], **kwargs_fit)
         else:
             model_trained.fit(x_train, y_train, **kwargs_fit)
 

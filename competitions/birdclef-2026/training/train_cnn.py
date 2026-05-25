@@ -101,9 +101,7 @@ def load_audio(path: Path, sr: int = SR) -> np.ndarray:
             offset = start / native_sr
         else:
             offset = 0.0
-        y, _ = librosa.load(
-            path, sr=sr, mono=True, offset=offset, duration=CLIP_DURATION
-        )
+        y, _ = librosa.load(path, sr=sr, mono=True, offset=offset, duration=CLIP_DURATION)
     except Exception:
         y, _ = librosa.load(path, sr=sr, mono=True, duration=CLIP_DURATION)
     return y
@@ -324,15 +322,9 @@ def load_spec_and_pcen_crop(
 
     # Try fast path: both specs from cache
     mel_cache_path = cache_dir / subdir / f"{stem}.npy"
-    pcen_cache_path = (
-        pcen_cache_dir / subdir / f"{stem}.npy" if pcen_cache_dir is not None else None
-    )
+    pcen_cache_path = pcen_cache_dir / subdir / f"{stem}.npy" if pcen_cache_dir is not None else None
 
-    if (
-        mel_cache_path.exists()
-        and pcen_cache_path is not None
-        and pcen_cache_path.exists()
-    ):
+    if mel_cache_path.exists() and pcen_cache_path is not None and pcen_cache_path.exists():
         spec = np.load(mel_cache_path).astype(np.float32)
         pcen_spec = np.load(pcen_cache_path).astype(np.float32)
         for arr in (spec, pcen_spec):
@@ -348,9 +340,7 @@ def load_spec_and_pcen_crop(
             if spec.shape[1] < clip_frames:
                 spec = np.pad(spec, ((0, 0), (0, clip_frames - spec.shape[1])))
             if pcen_spec.shape[1] < clip_frames:
-                pcen_spec = np.pad(
-                    pcen_spec, ((0, 0), (0, clip_frames - pcen_spec.shape[1]))
-                )
+                pcen_spec = np.pad(pcen_spec, ((0, 0), (0, clip_frames - pcen_spec.shape[1])))
     else:
         # Slow fallback: compute from audio
         path = DATA / "train_audio" / filename
@@ -360,12 +350,8 @@ def load_spec_and_pcen_crop(
         except Exception:
             zeros = np.zeros((n_mels, clip_frames), dtype=np.float32)
             return zeros, zeros
-        spec = make_melspec(
-            y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
-        )
-        pcen_spec = make_pcen(
-            y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk
-        )
+        spec = make_melspec(y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk)
+        pcen_spec = make_pcen(y, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=fmin, htk=htk)
 
     if augment:
         if gain_aug:
@@ -503,11 +489,7 @@ class BirdDataset(Dataset):
                 gain_aug=self.gain_aug,
                 gain_db=self.gain_db,
             )
-            if (
-                self.augment
-                and self.bg_specs is not None
-                and np.random.random() < self.bg_noise_p
-            ):
+            if self.augment and self.bg_specs is not None and np.random.random() < self.bg_noise_p:
                 spec = add_background_noise(spec, self.bg_specs)
             if self.birdset_norm:
                 x = spec_to_tensor_birdset(spec)
@@ -585,9 +567,7 @@ class SoundscapeDataset(Dataset):
     def _load_chunk(self, filename: str, start_sec: int) -> np.ndarray:
         path = self.soundscape_dir / filename
         try:
-            y, _ = librosa.load(
-                path, sr=SR, mono=True, offset=float(start_sec), duration=5.0
-            )
+            y, _ = librosa.load(path, sr=SR, mono=True, offset=float(start_sec), duration=5.0)
         except Exception:
             return np.zeros(CLIP_SAMPLES, dtype=np.float32)
         return crop_or_pad(y)
@@ -595,9 +575,7 @@ class SoundscapeDataset(Dataset):
     def __getitem__(self, idx: int):
         row = self.rows[idx]
         y = self._load_chunk(row["soundscape_filename"], int(row["start_sec"]))
-        spec = make_melspec(
-            y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length
-        )
+        spec = make_melspec(y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length)
         if self.augment:
             spec = specaugment(
                 spec,
@@ -723,9 +701,7 @@ class SoundscapeLabelsDataset(Dataset):
                     start_frame = int(start_sec * SR / self.hop_length)
                     spec = full_spec[:, start_frame : start_frame + self.clip_frames]
                     if spec.shape[1] < self.clip_frames:
-                        spec = np.pad(
-                            spec, ((0, 0), (0, self.clip_frames - spec.shape[1]))
-                        )
+                        spec = np.pad(spec, ((0, 0), (0, self.clip_frames - spec.shape[1])))
                 else:
                     spec = self._load_from_audio(row["filename"], start_sec)
             else:
@@ -741,19 +717,13 @@ class SoundscapeLabelsDataset(Dataset):
                     n_freq_masks=self.n_freq_masks,
                     n_time_masks=self.n_time_masks,
                 )
-            x = (
-                spec_to_tensor_minmax(spec)
-                if self.minmax_norm
-                else spec_to_tensor(spec)
-            )
+            x = spec_to_tensor_minmax(spec) if self.minmax_norm else spec_to_tensor(spec)
         return x, torch.from_numpy(self._make_label(row["primary_label"]))
 
     def _load_from_audio(self, filename: str, start_sec: int) -> np.ndarray:
         path = self.soundscape_dir / filename
         try:
-            y, _ = librosa.load(
-                path, sr=SR, mono=True, offset=float(start_sec), duration=5.0
-            )
+            y, _ = librosa.load(path, sr=SR, mono=True, offset=float(start_sec), duration=5.0)
         except Exception:
             return np.zeros((self.n_mels, self.clip_frames), dtype=np.float32)
         y = crop_or_pad(y)
@@ -766,9 +736,7 @@ class SoundscapeLabelsDataset(Dataset):
             htk=self.htk,
         )
 
-    def _load_spec_and_pcen(
-        self, filename: str, start_sec: int
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _load_spec_and_pcen(self, filename: str, start_sec: int) -> tuple[np.ndarray, np.ndarray]:
         """Load log-mel + PCEN for a soundscape segment.
 
         Fast path: slice from precomputed PCEN cache (specs_cache_pcen_soundscape_224_htk/).
@@ -778,14 +746,8 @@ class SoundscapeLabelsDataset(Dataset):
         start_frame = int(start_sec * SR / self.hop_length)
         zeros = np.zeros((self.n_mels, self.clip_frames), dtype=np.float32)
 
-        mel_cache_path = (
-            self.cache_dir / f"{stem}.npy" if self.cache_dir is not None else None
-        )
-        pcen_cache_path = (
-            self.pcen_cache_dir / f"{stem}.npy"
-            if self.pcen_cache_dir is not None
-            else None
-        )
+        mel_cache_path = self.cache_dir / f"{stem}.npy" if self.cache_dir is not None else None
+        pcen_cache_path = self.pcen_cache_dir / f"{stem}.npy" if self.pcen_cache_dir is not None else None
 
         if (
             mel_cache_path is not None
@@ -800,17 +762,13 @@ class SoundscapeLabelsDataset(Dataset):
             if spec.shape[1] < self.clip_frames:
                 spec = np.pad(spec, ((0, 0), (0, self.clip_frames - spec.shape[1])))
             if pcen_spec.shape[1] < self.clip_frames:
-                pcen_spec = np.pad(
-                    pcen_spec, ((0, 0), (0, self.clip_frames - pcen_spec.shape[1]))
-                )
+                pcen_spec = np.pad(pcen_spec, ((0, 0), (0, self.clip_frames - pcen_spec.shape[1])))
             return spec, pcen_spec
 
         # Fallback: compute from audio
         path = self.soundscape_dir / filename
         try:
-            y, _ = librosa.load(
-                path, sr=SR, mono=True, offset=float(start_sec), duration=5.0
-            )
+            y, _ = librosa.load(path, sr=SR, mono=True, offset=float(start_sec), duration=5.0)
         except Exception:
             return zeros, zeros
         y = crop_or_pad(y)
@@ -867,9 +825,7 @@ class PerchDataset(Dataset):
         all_labels = data["labels"].astype(np.float32)  # (N, 234) Perch probs
         npz_species = list(data["species"])
         # Map NPZ species order → train.py sorted species order (-1 = absent)
-        self.remap = np.array(
-            [species_to_idx.get(sp, -1) for sp in npz_species], dtype=np.int32
-        )
+        self.remap = np.array([species_to_idx.get(sp, -1) for sp in npz_species], dtype=np.int32)
         all_entries = []
         for key in data["filenames"]:
             fname, start = str(key).rsplit(":", 1)
@@ -928,9 +884,7 @@ class PerchDataset(Dataset):
             except Exception:
                 y = np.zeros(CLIP_SAMPLES, dtype=np.float32)
             y = crop_or_pad(y)
-            spec = make_melspec(
-                y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length
-            )
+            spec = make_melspec(y, n_mels=self.n_mels, n_fft=self.n_fft, hop_length=self.hop_length)
 
         if self.augment:
             spec = specaugment(
@@ -1024,9 +978,7 @@ class BirdModelSED(nn.Module):
 
     def __init__(self, backbone: str, n_classes: int, pretrained: bool = True):
         super().__init__()
-        self.encoder = timm.create_model(
-            backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
-        )
+        self.encoder = timm.create_model(backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3)
         feat_dim = self.encoder.num_features
         self.fc = nn.Linear(feat_dim, n_classes)
         self.att = nn.Linear(feat_dim, n_classes)
@@ -1038,9 +990,7 @@ class BirdModelSED(nn.Module):
         logit = self.fc(feat)  # (B, T', n_classes) — frame logits
         att = self.att(feat)  # (B, T', n_classes) — attention logits
         # Attention-weighted clip-level prediction (PANNs-style)
-        clip = (torch.sigmoid(logit) * torch.sigmoid(att)).sum(1) / (
-            torch.sigmoid(att).sum(1) + 1e-7
-        )
+        clip = (torch.sigmoid(logit) * torch.sigmoid(att)).sum(1) / (torch.sigmoid(att).sum(1) + 1e-7)
         return clip  # (B, n_classes) probabilities
 
 
@@ -1100,9 +1050,7 @@ class BirdModelBaseline(nn.Module):
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.encoder = timm.create_model(
-            backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3
-        )
+        self.encoder = timm.create_model(backbone, pretrained=pretrained, num_classes=0, global_pool="", in_chans=3)
         # num_features is unreliable for some backbones (e.g. HGNetV2) — probe actual output
         with torch.no_grad():
             _dummy = torch.zeros(1, 3, 64, 128)
@@ -1132,9 +1080,7 @@ class BirdModelBirdSet(nn.Module):
         super().__init__()
         from transformers import EfficientNetModel
 
-        self.encoder = EfficientNetModel.from_pretrained(
-            "DBD-research-group/EfficientNet-B1-BirdSet-XCL"
-        )
+        self.encoder = EfficientNetModel.from_pretrained("DBD-research-group/EfficientNet-B1-BirdSet-XCL")
         self.gem_pool = GEMFreqPool(p_init=3.0)
         self.head = AttentionSEDHead(self.FEAT_DIM, n_classes, dropout)
 
@@ -1158,9 +1104,7 @@ def _bce(preds: torch.Tensor, targets: torch.Tensor, sed: bool) -> torch.Tensor:
     return F.binary_cross_entropy_with_logits(preds, targets)
 
 
-def _dual_loss(
-    out, targets: torch.Tensor, label_smoothing: float = 0.05, ce_loss: bool = False
-) -> torch.Tensor:
+def _dual_loss(out, targets: torch.Tensor, label_smoothing: float = 0.05, ce_loss: bool = False) -> torch.Tensor:
     """Dual clip+frame loss for BirdModelBaseline.
 
     out: (clip_probs, frame_logits) where frame_logits is (B, n_classes, T).
@@ -1389,12 +1333,8 @@ def main():
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument(
-        "--smoke", action="store_true", help="Smoke test: 2 epochs, 64 samples"
-    )
-    parser.add_argument(
-        "--sed", action="store_true", help="Use SED head (attention pooling over time)"
-    )
+    parser.add_argument("--smoke", action="store_true", help="Smoke test: 2 epochs, 64 samples")
+    parser.add_argument("--sed", action="store_true", help="Use SED head (attention pooling over time)")
     parser.add_argument(
         "--baseline",
         action="store_true",
@@ -1493,8 +1433,7 @@ def main():
     parser.add_argument(
         "--warm-restarts",
         action="store_true",
-        help="Use CosineAnnealingWarmRestarts(T_0=5) instead of CosineAnnealingLR. "
-        "Matches public baseline scheduler.",
+        help="Use CosineAnnealingWarmRestarts(T_0=5) instead of CosineAnnealingLR. Matches public baseline scheduler.",
     )
     parser.add_argument(
         "--warm-restarts-t0",
@@ -1543,8 +1482,7 @@ def main():
         "--resume-from",
         type=str,
         default="",
-        help="Path to a pre-trained checkpoint (.pt) to resume from. "
-        "Loads model weights only (not optimizer state).",
+        help="Path to a pre-trained checkpoint (.pt) to resume from. Loads model weights only (not optimizer state).",
     )
     parser.add_argument(
         "--pretrained-backbone",
@@ -1643,13 +1581,9 @@ def main():
     else:
         head = "plain"
     backbone_name = "EfficientNet-B1-BirdSet-XCL" if args.birdset else args.backbone
-    print(
-        f"Device: {device} | Backbone: {backbone_name} | Head: {head} | Fold: {args.fold}"
-    )
+    print(f"Device: {device} | Backbone: {backbone_name} | Head: {head} | Fold: {args.fold}")
     print(f"Mel: n_mels={n_mels_cfg}, n_fft={n_fft_cfg} | Cache: {cache_dir.name}")
-    print(
-        f"SpecAugment: freq_mask={freq_mask}×{args.n_freq_masks}, time_mask={time_mask}×{args.n_time_masks}"
-    )
+    print(f"SpecAugment: freq_mask={freq_mask}×{args.n_freq_masks}, time_mask={time_mask}×{args.n_time_masks}")
     print(f"Secondary labels: {'hard (1.0)' if args.hard_labels else 'soft (0.5)'}")
     print(
         f"HTK mel: {args.htk} (fmin={fmin_cfg}) | Gain aug: {args.gain_aug} (±{args.gain_db}dB) | "
@@ -1720,8 +1654,7 @@ def main():
             sc_cache_candidate = SOUNDSCAPE_CACHE_DIR_BASELINE
         if sc_cache_candidate.exists():
             print(
-                f"Background noise: preloading {len(bg_pool)} specs from"
-                f" {sc_cache_candidate.name} ...",
+                f"Background noise: preloading {len(bg_pool)} specs from {sc_cache_candidate.name} ...",
                 end=" ",
                 flush=True,
             )
@@ -1747,9 +1680,7 @@ def main():
             gain_db=args.gain_db,
             **ds_kwargs,
         )
-        val_ds = BirdDataset(
-            val_df, species_to_idx, n_species, audio_dir, augment=False, **ds_kwargs
-        )
+        val_ds = BirdDataset(val_df, species_to_idx, n_species, audio_dir, augment=False, **ds_kwargs)
     else:
         # Finetune-SC mode: skip XC dataset (will train on soundscapes only below)
         from torch.utils.data import TensorDataset
@@ -1773,9 +1704,7 @@ def main():
         sc_cache = sc_cache_candidate if sc_cache_candidate.exists() else None
         sc_pcen_cache = (
             PCEN_SOUNDSCAPE_CACHE_DIR_BASELINE_HTK
-            if args.pcen
-            and args.htk
-            and PCEN_SOUNDSCAPE_CACHE_DIR_BASELINE_HTK.exists()
+            if args.pcen and args.htk and PCEN_SOUNDSCAPE_CACHE_DIR_BASELINE_HTK.exists()
             else None
         )
 
@@ -1821,9 +1750,7 @@ def main():
         )
         train_ds = ConcatDataset([train_ds, sc_ds])
         n_sc_train_files = sc_train_labels["filename"].nunique()
-        print(
-            f"Soundscape labels: {len(sc_ds)} segments ({n_sc_train_files} soundscapes) added to train"
-        )
+        print(f"Soundscape labels: {len(sc_ds)} segments ({n_sc_train_files} soundscapes) added to train")
 
         if sc_val_labels is not None and len(sc_val_labels) > 0:
             sc_val_ds = SoundscapeLabelsDataset(
@@ -1850,10 +1777,7 @@ def main():
                 pin_memory=True,
             )
             n_sc_val_files = sc_val_labels["filename"].nunique()
-            print(
-                f"  Soundscape val (held-out): {n_sc_val_files} files, {len(sc_val_ds)} segs "
-                f"(frac={val_frac})"
-            )
+            print(f"  Soundscape val (held-out): {n_sc_val_files} files, {len(sc_val_ds)} segs (frac={val_frac})")
             print("  Early stopping: soundscape cmAP (leakage-free)")
         else:
             print(f"  All {n_sc_train_files} soundscapes in train (no holdout)")
@@ -1862,9 +1786,7 @@ def main():
         if sc_cache:
             print(f"  Using spec cache: {sc_cache.name}")
         else:
-            print(
-                "  WARNING: soundscape spec cache not found — slow on-the-fly loading"
-            )
+            print("  WARNING: soundscape spec cache not found — slow on-the-fly loading")
             print("  Run: python precompute_specs.py --soundscapes")
 
     # Pseudo-labeled soundscape segments
@@ -1887,9 +1809,7 @@ def main():
             n_time_masks=args.n_time_masks,
         )
         train_ds = ConcatDataset([train_ds, pseudo_ds])
-        print(
-            f"Pseudo-labels: {len(pseudo_ds)} segments added (weight={args.pseudo_weight})"
-        )
+        print(f"Pseudo-labels: {len(pseudo_ds)} segments added (weight={args.pseudo_weight})")
         print(f"Combined train set: {len(train_ds)} samples")
 
     train_loader = DataLoader(
@@ -1941,24 +1861,15 @@ def main():
         if not args.resume_from:
             raise ValueError("--finetune-sc requires --resume-from <checkpoint.pt>")
         if sc_val_loader is None:
-            raise ValueError(
-                "--finetune-sc requires --soundscape-labels and --soundscape-val-frac > 0"
-            )
+            raise ValueError("--finetune-sc requires --soundscape-labels and --soundscape-val-frac > 0")
 
-        ft_best_path = (
-            OUT / f"{args.tag}_fold{args.fold}.pt"
-            if args.tag
-            else OUT / f"soundscape-ft_fold{args.fold}.pt"
-        )
+        ft_best_path = OUT / f"{args.tag}_fold{args.fold}.pt" if args.tag else OUT / f"soundscape-ft_fold{args.fold}.pt"
         # Optionally freeze backbone (encoder) and fine-tune head only
         if args.finetune_sc_head_only:
             for param in model.encoder.parameters():
                 param.requires_grad = False
             ft_params = [p for p in model.parameters() if p.requires_grad]
-            print(
-                f"Head-only fine-tuning: backbone frozen, "
-                f"{sum(p.numel() for p in ft_params):,} trainable params"
-            )
+            print(f"Head-only fine-tuning: backbone frozen, {sum(p.numel() for p in ft_params):,} trainable params")
         else:
             ft_params = model.parameters()
 
@@ -1980,12 +1891,8 @@ def main():
         use_dual_loss = args.baseline or args.birdset
 
         # Evaluate before any fine-tuning to confirm baseline sc_cmap
-        sc_cmap_start = eval_soundscape_cmAP(
-            model, sc_val_loader, device, is_prob=is_prob_model
-        )
-        print(
-            f"\n── Soundscape fine-tuning: {len(sc_ds)} segs, {args.finetune_sc_epochs} epochs, lr={args.lr} ──"
-        )
+        sc_cmap_start = eval_soundscape_cmAP(model, sc_val_loader, device, is_prob=is_prob_model)
+        print(f"\n── Soundscape fine-tuning: {len(sc_ds)} segs, {args.finetune_sc_epochs} epochs, lr={args.lr} ──")
         print(f"Starting sc_cmap (no fine-tuning): {sc_cmap_start:.4f}")
         ft_best_metric = float("inf")
 
@@ -2000,9 +1907,7 @@ def main():
                 baseline=use_dual_loss,
             )
             ft_scheduler.step()
-            sc_cmap = eval_soundscape_cmAP(
-                model, sc_val_loader, device, is_prob=is_prob_model
-            )
+            sc_cmap = eval_soundscape_cmAP(model, sc_val_loader, device, is_prob=is_prob_model)
             elapsed = time.time() - t0
             improvement_metric = -sc_cmap
             marker = " *" if improvement_metric < ft_best_metric else ""
@@ -2051,9 +1956,7 @@ def main():
             optimizer, T_0=args.warm_restarts_t0, eta_min=1e-5
         )
     else:
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=args.patience * 3, eta_min=1e-5
-        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.patience * 3, eta_min=1e-5)
 
     OUT.mkdir(exist_ok=True)
     best_metric = float("inf")  # minimized: -sc_cmap (preferred) or val_loss
@@ -2086,9 +1989,7 @@ def main():
         if perch_cache:
             print(f"Perch spec cache: {perch_cache}")
         else:
-            print(
-                "WARNING: Soundscape spec cache not found — using slow on-the-fly loading."
-            )
+            print("WARNING: Soundscape spec cache not found — using slow on-the-fly loading.")
             print("  Run: python precompute_specs.py --soundscapes")
         perch_ds = PerchDataset(
             npz_path=Path(args.perch_npz),
@@ -2118,10 +2019,7 @@ def main():
 
     # ── Stage 1: Perch soft-label pretraining (only when p_soundscape == 0) ───
     if perch_loader is not None and args.perch_epochs > 0 and args.p_soundscape == 0:
-        print(
-            f"\n── Stage 1: Perch pretraining — {len(perch_ds)} windows, "
-            f"{args.perch_epochs} epochs ──"
-        )
+        print(f"\n── Stage 1: Perch pretraining — {len(perch_ds)} windows, {args.perch_epochs} epochs ──")
         is_prob_model = args.sed or args.baseline or args.birdset
         use_dual_loss = args.baseline or args.birdset
         for epoch in range(1, args.perch_epochs + 1):
@@ -2136,8 +2034,7 @@ def main():
             )
             scheduler.step()
             print(
-                f"  [Perch] Epoch {epoch:02d}/{args.perch_epochs} | "
-                f"train={train_loss:.4f} | {time.time() - t0:.0f}s",
+                f"  [Perch] Epoch {epoch:02d}/{args.perch_epochs} | train={train_loss:.4f} | {time.time() - t0:.0f}s",
                 flush=True,
             )
         print("── Stage 1 done. Starting stage 2 (XC fine-tuning) ──\n")
@@ -2189,9 +2086,7 @@ def main():
         # Soundscape cmAP on held-out files — leakage-free, closer to LB metric
         sc_cmap: float | None = None
         if sc_val_loader is not None:
-            sc_cmap = eval_soundscape_cmAP(
-                model, sc_val_loader, device, is_prob=is_prob_model
-            )
+            sc_cmap = eval_soundscape_cmAP(model, sc_val_loader, device, is_prob=is_prob_model)
 
         # Early stopping uses soundscape cmAP when available, else XC val loss
         improvement_metric = -sc_cmap if sc_cmap is not None else val_loss
@@ -2263,9 +2158,7 @@ def main():
         else:
             epochs_no_improve += 1
             if args.patience > 0 and epochs_no_improve >= args.patience:
-                print(
-                    f"\nEarly stopping at epoch {epoch} (no improvement for {args.patience} epochs)"
-                )
+                print(f"\nEarly stopping at epoch {epoch} (no improvement for {args.patience} epochs)")
                 break
 
     metric_label = "sc_cmap" if sc_val_loader is not None else "val_loss"

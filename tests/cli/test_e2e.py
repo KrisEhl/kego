@@ -16,9 +16,7 @@ from pathlib import Path
 import pytest
 
 
-def _run_kego(
-    args: list[str], env: dict[str, str], cwd: Path
-) -> subprocess.CompletedProcess[str]:
+def _run_kego(args: list[str], env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
     kego_bin = Path(sys.executable).parent / "kego"
     return subprocess.run(  # noqa: S603
         [str(kego_bin), *args],
@@ -35,11 +33,7 @@ def test_run_and_ls(tmp_path: Path, repo_root: Path) -> None:
     env = _base_env(repo_root, mlflow_uri)
 
     script = tmp_path / "train.py"
-    script.write_text(
-        "print('KEGO_METRIC fold_auc 0.9123')\n"
-        "print('KEGO_PARAM backbone test_net')\n"
-        "print('Done!')\n"
-    )
+    script.write_text("print('KEGO_METRIC fold_auc 0.9123')\nprint('KEGO_PARAM backbone test_net')\nprint('Done!')\n")
 
     result = _run_kego(
         ["run", str(script), "--name", "e2e-test"],
@@ -95,14 +89,9 @@ def test_run_nonzero_exit_still_logs(tmp_path: Path, repo_root: Path) -> None:
     env = _base_env(repo_root, mlflow_uri)
 
     script = tmp_path / "train.py"
-    script.write_text(
-        "print('KEGO_METRIC fold_auc 0.7500')\n"
-        "raise RuntimeError('intentional failure')\n"
-    )
+    script.write_text("print('KEGO_METRIC fold_auc 0.7500')\nraise RuntimeError('intentional failure')\n")
 
-    result = _run_kego(
-        ["run", str(script), "--name", "failing-run"], env=env, cwd=repo_root
-    )
+    result = _run_kego(["run", str(script), "--name", "failing-run"], env=env, cwd=repo_root)
     assert result.returncode != 0
 
     ls_result = _run_kego(["ls", "--all"], env=env, cwd=repo_root)
@@ -141,9 +130,7 @@ def test_logs_no_ray_submission_id(tmp_path: Path, repo_root: Path) -> None:
     # Create a run via kego run (local — no ray_submission_id tag)
     script = tmp_path / "train.py"
     script.write_text("print('KEGO_METRIC fold_auc 0.9')\n")
-    run_result = _run_kego(
-        ["run", str(script), "--name", "logs-test"], env=env, cwd=repo_root
-    )
+    run_result = _run_kego(["run", str(script), "--name", "logs-test"], env=env, cwd=repo_root)
     assert run_result.returncode == 0, run_result.stderr
 
     # Extract the kego ID from the run output
@@ -154,9 +141,7 @@ def test_logs_no_ray_submission_id(tmp_path: Path, repo_root: Path) -> None:
     assert "ray_submission_id" in result.stdout
 
 
-def test_logs_unknown_submission_id(
-    tmp_path: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_logs_unknown_submission_id(tmp_path: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """kego logs with a fake ray_submission_id gets a 404 and exits non-zero."""
     import mlflow
 

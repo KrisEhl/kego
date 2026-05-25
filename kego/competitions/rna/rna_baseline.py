@@ -76,9 +76,7 @@ class RNABaselineModel(nn.Module):
 
         return coordinates
 
-    def compute_loss(
-        self, pred_coords: torch.Tensor, true_coords: torch.Tensor
-    ) -> torch.Tensor:
+    def compute_loss(self, pred_coords: torch.Tensor, true_coords: torch.Tensor) -> torch.Tensor:
         """Compute MSE loss between predicted and true coordinates.
 
         Args:

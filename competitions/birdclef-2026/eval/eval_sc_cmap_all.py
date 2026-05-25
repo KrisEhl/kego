@@ -108,9 +108,7 @@ def load_meta(path: Path) -> dict:
     }
 
 
-def load_model(
-    path: Path, n_species: int, meta: dict, device: torch.device
-) -> nn.Module:
+def load_model(path: Path, n_species: int, meta: dict, device: torch.device) -> nn.Module:
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     if meta["is_baseline"]:
         model = BirdModelBaseline(backbone=meta["backbone"], n_classes=n_species)
@@ -124,9 +122,7 @@ def load_model(
     return model.eval().to(device)
 
 
-def make_loader(
-    df: pd.DataFrame, meta: dict, species_to_idx: dict, n_species: int
-) -> DataLoader:
+def make_loader(df: pd.DataFrame, meta: dict, species_to_idx: dict, n_species: int) -> DataLoader:
     htk = meta["htk"]
     # Pick cache that matches mel config
     if meta["n_mels"] > 128 and htk:
@@ -192,9 +188,7 @@ def eval_group(
         print(f"  meta load failed: {e}")
         return None, None, lb, 0
 
-    print(
-        f"  backbone={meta['backbone']} n_mels={meta['n_mels']} htk={meta['htk']} fmin={meta['fmin']}"
-    )
+    print(f"  backbone={meta['backbone']} n_mels={meta['n_mels']} htk={meta['htk']} fmin={meta['fmin']}")
 
     loader_all = make_loader(sc_labels_all, meta, species_to_idx, n_species)
     loader_held = make_loader(sc_labels_held, meta, species_to_idx, n_species)
@@ -234,9 +228,7 @@ def eval_group(
 
     cmap_all = compute_cmap(fold_preds_all, labels_all_arr)
     cmap_held = compute_cmap(fold_preds_held, labels_held_arr)
-    print(
-        f"  sc_cmap ALL={cmap_all:.4f}  HELD={cmap_held:.4f}  (sc_labels={sc_labels_used})"
-    )
+    print(f"  sc_cmap ALL={cmap_all:.4f}  HELD={cmap_held:.4f}  (sc_labels={sc_labels_used})")
     return cmap_all, cmap_held, lb, len(ckpt_paths)
 
 
@@ -252,18 +244,12 @@ def main():
     print(f"Species: {n_species}")
 
     sc_labels = pd.read_csv(LABELS_CSV)
-    print(
-        f"Soundscape labels: {len(sc_labels)} segments, {sc_labels['filename'].nunique()} files"
-    )
+    print(f"Soundscape labels: {len(sc_labels)} segments, {sc_labels['filename'].nunique()} files")
 
     held_out_files = get_held_out_files(sc_labels)
-    sc_held = sc_labels[sc_labels["filename"].isin(held_out_files)].reset_index(
-        drop=True
-    )
+    sc_held = sc_labels[sc_labels["filename"].isin(held_out_files)].reset_index(drop=True)
     sc_all = sc_labels.reset_index(drop=True)
-    print(
-        f"Held-out val: {sc_held['filename'].nunique()} files, {len(sc_held)} segments"
-    )
+    print(f"Held-out val: {sc_held['filename'].nunique()} files, {len(sc_held)} segments")
 
     results = []
     for label, subdir, pattern, lb, sc_labels_used in GROUPS:
@@ -284,9 +270,7 @@ def main():
 
     # Summary table
     print("\n\n" + "=" * 88)
-    print(
-        f"{'Model':<28} {'sc_cmap(all)':>12}  {'sc_cmap(held)':>13}  {'LB':>7}  {'scL':>4}  {'F':>2}"
-    )
+    print(f"{'Model':<28} {'sc_cmap(all)':>12}  {'sc_cmap(held)':>13}  {'LB':>7}  {'scL':>4}  {'F':>2}")
     print("-" * 88)
     for label, ca, ch, lb, scl, nf in results:
         ca_s = f"{ca:.4f}" if ca is not None else "   N/A"
@@ -296,9 +280,7 @@ def main():
         print(f"{label:<28} {ca_s:>12}  {ch_s:>13}  {lb_s:>7}  {scl_s:>4}  {nf:>2}")
     print("=" * 88)
     print("scL=trained with soundscape labels  F=number of folds")
-    print(
-        "sc_cmap(all) = leaky for scL=Y models | sc_cmap(held) = 14-file holdout (val_frac=0.15)"
-    )
+    print("sc_cmap(all) = leaky for scL=Y models | sc_cmap(held) = 14-file holdout (val_frac=0.15)")
 
 
 if __name__ == "__main__":

@@ -43,9 +43,7 @@ def check_files(train, train_info, wavelengths, path_data_train):
         for band in ["AIRS-CH0", "FGS1"]:
             calib_path = f"train/{pid}/{band}_calibration"
             calib_files = (
-                {os.path.splitext(f)[0] for f in os.listdir(calib_path)}
-                if os.path.exists(calib_path)
-                else set()
+                {os.path.splitext(f)[0] for f in os.listdir(calib_path)} if os.path.exists(calib_path) else set()
             )
             missing = expected - calib_files
             if missing:
@@ -62,7 +60,5 @@ def check_files(train, train_info, wavelengths, path_data_train):
 
     # --- 7. Planet-Star Uniqueness Check ---
     merged = train[["planet_id"]].join(train_info, on="planet_id", how="left")
-    unique_links = merged[
-        ["planet_id"] + [col for col in train_info.columns if col != "planet_id"]
-    ].unique()
+    unique_links = merged[["planet_id"] + [col for col in train_info.columns if col != "planet_id"]].unique()
     print("\n🔗 Unique planet-star mappings:", unique_links.shape[0])

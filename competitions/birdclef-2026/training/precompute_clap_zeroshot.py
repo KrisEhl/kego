@@ -122,9 +122,7 @@ def get_queries(label: str) -> list[str]:
     return SONOTYPE_QUERIES.get(label, SONOTYPE_QUERIES["default"])
 
 
-def load_window(
-    path: Path, start_sec: float, sr_target: int = SAMPLE_RATE_CLAP
-) -> np.ndarray:
+def load_window(path: Path, start_sec: float, sr_target: int = SAMPLE_RATE_CLAP) -> np.ndarray:
     """Load a 5-second window from a .ogg file, resampled to CLAP's expected rate."""
     import librosa  # lazy import
 
@@ -145,9 +143,7 @@ def main() -> None:
     all_labels = taxonomy["primary_label"].tolist()
 
     # Identify the 28 soundscape-only species
-    sc_only = [
-        lbl for lbl in all_labels if lbl not in audio_species and "son" in lbl.lower()
-    ]
+    sc_only = [lbl for lbl in all_labels if lbl not in audio_species and "son" in lbl.lower()]
     print(f"Soundscape-only sonotype species: {len(sc_only)}")
     for sp in sorted(sc_only):
         print(f"  {sp}")
@@ -168,9 +164,7 @@ def main() -> None:
     query_idx: dict[str, list[int]] = {}
     for sp in sc_only:
         q_list = get_queries(sp)
-        query_idx[sp] = list(
-            range(len(all_queries_flat), len(all_queries_flat) + len(q_list))
-        )
+        query_idx[sp] = list(range(len(all_queries_flat), len(all_queries_flat) + len(q_list)))
         all_queries_flat.extend(q_list)
 
     print(f"Encoding {len(all_queries_flat)} text queries...")
@@ -178,9 +172,7 @@ def main() -> None:
     if hasattr(text_embeddings, "cpu"):
         text_embeddings = text_embeddings.cpu().numpy()
     text_embeddings = np.array(text_embeddings, dtype=np.float32)
-    text_embeddings = text_embeddings / np.linalg.norm(
-        text_embeddings, axis=1, keepdims=True
-    )
+    text_embeddings = text_embeddings / np.linalg.norm(text_embeddings, axis=1, keepdims=True)
 
     # Build per-species mean text embedding
     sp_text_emb = np.zeros((len(sc_only), text_embeddings.shape[1]), dtype=np.float32)
@@ -234,9 +226,7 @@ def main() -> None:
             tmp_wav_paths.append(tmp_path)
 
         # Batch encode audio via file paths
-        audio_embeddings = clap_model.get_audio_embeddings(
-            tmp_wav_paths, resample=False
-        )  # (n_windows, d)
+        audio_embeddings = clap_model.get_audio_embeddings(tmp_wav_paths, resample=False)  # (n_windows, d)
 
         # Clean up temp files
         for p in tmp_wav_paths:
@@ -245,9 +235,7 @@ def main() -> None:
         if hasattr(audio_embeddings, "cpu"):
             audio_embeddings = audio_embeddings.cpu().numpy()
         audio_embeddings = np.array(audio_embeddings, dtype=np.float32)
-        audio_embeddings = audio_embeddings / np.linalg.norm(
-            audio_embeddings, axis=1, keepdims=True
-        )
+        audio_embeddings = audio_embeddings / np.linalg.norm(audio_embeddings, axis=1, keepdims=True)
 
         # Cosine similarity with per-species text embedding
         sims = audio_embeddings @ sp_text_emb.T  # (n_windows, n_species)
@@ -268,9 +256,7 @@ def main() -> None:
     from sklearn.metrics import average_precision_score
 
     try:
-        labels_csv = pd.read_csv(
-            DATA_ROOT / "birdclef/birdclef-2026/train_soundscapes_labels.csv"
-        )
+        labels_csv = pd.read_csv(DATA_ROOT / "birdclef/birdclef-2026/train_soundscapes_labels.csv")
         all_labels_list = taxonomy["primary_label"].tolist()
         label_to_idx = {lbl: i for i, lbl in enumerate(all_labels_list)}
 
@@ -307,9 +293,7 @@ def main() -> None:
         print(f"  Worst    = {min(aps):.4f} ({sc_only[active[np.argmin(aps)]]})")
         print("\nPer-species AP:")
         for c in active:
-            print(
-                f"  {sc_only[c]:<16} n_pos={int(Y_check[:, c].sum()):3d}  AP={aps[active.index(c)]:.4f}"
-            )
+            print(f"  {sc_only[c]:<16} n_pos={int(Y_check[:, c].sum()):3d}  AP={aps[active.index(c)]:.4f}")
     except Exception as e:
         print(f"Sanity check failed: {e}")
 

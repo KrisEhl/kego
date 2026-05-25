@@ -30,9 +30,7 @@ from train import (
 class BirdModel(nn.Module):
     def __init__(self, backbone: str, n_classes: int):
         super().__init__()
-        self.backbone = timm.create_model(
-            backbone, pretrained=False, num_classes=n_classes, in_chans=3
-        )
+        self.backbone = timm.create_model(backbone, pretrained=False, num_classes=n_classes, in_chans=3)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.backbone(x)
@@ -74,9 +72,7 @@ def predict_soundscape(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--models", nargs="+", required=True, help="Checkpoint paths or glob"
-    )
+    parser.add_argument("--models", nargs="+", required=True, help="Checkpoint paths or glob")
     parser.add_argument("--backbone", default="efficientnet_b0")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--threshold", type=float, default=0.5)

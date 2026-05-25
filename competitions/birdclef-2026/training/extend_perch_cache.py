@@ -93,9 +93,7 @@ birdclassifier = tf.saved_model.load(str(MODEL_DIR))
 infer_fn = birdclassifier.signatures["serving_default"]
 
 # Build species mapping
-perch_labels_path = next(MODEL_DIR.rglob("labels.csv"), None) or next(
-    MODEL_DIR.rglob("label.csv"), None
-)
+perch_labels_path = next(MODEL_DIR.rglob("labels.csv"), None) or next(MODEL_DIR.rglob("label.csv"), None)
 if perch_labels_path is None:
     print("ERROR: label(s).csv not found", flush=True)
     sys.exit(1)
@@ -129,9 +127,7 @@ for fn in MISSING_FILES:
         sys.exit(1)
 
     audio = read_soundscape(path)
-    windows = [
-        audio[i * WINDOW_SAMPLES : (i + 1) * WINDOW_SAMPLES] for i in range(N_WINDOWS)
-    ]
+    windows = [audio[i * WINDOW_SAMPLES : (i + 1) * WINDOW_SAMPLES] for i in range(N_WINDOWS)]
     x = np.stack(windows).astype(np.float32)
 
     out = infer_fn(inputs=tf.convert_to_tensor(x))
@@ -139,9 +135,7 @@ for fn in MISSING_FILES:
     emb = out["embedding"].numpy()
 
     emb_new[write_row : write_row + N_WINDOWS] = emb
-    scores_new[write_row : write_row + N_WINDOWS, MAPPED_OUR] = logits[
-        :N_WINDOWS, MAPPED_PERCH
-    ]
+    scores_new[write_row : write_row + N_WINDOWS, MAPPED_OUR] = logits[:N_WINDOWS, MAPPED_PERCH]
 
     meta = parse_filename(fn)
     stem = Path(fn).stem

@@ -44,11 +44,7 @@ def _stream_job_logs(base: str, submission_id: str, follow: bool) -> int:
             print(f"  Ray API error (HTTP {e.code}): {e.read().decode()}")
             return 1 if e.code == 404 else 0
         except OSError:
-            print(
-                f"  Cannot reach Ray cluster at {base} — "
-                "is the cluster online?\n"
-                "  Start cluster: make cluster-start"
-            )
+            print(f"  Cannot reach Ray cluster at {base} — is the cluster online?\n  Start cluster: make cluster-start")
             return 1
 
         logs = result.get("logs", "")
@@ -128,9 +124,7 @@ def _logs(args: argparse.Namespace, extra_args: list[str]) -> int:
         print(f"=== {run.info.run_name} fold={fold} ===")
 
         if not submission_id:
-            print(
-                "  No ray_submission_id tag — job may have been submitted before log tracking was added."
-            )
+            print("  No ray_submission_id tag — job may have been submitted before log tracking was added.")
             continue
 
         rc = _stream_job_logs(base, submission_id, follow=follow)

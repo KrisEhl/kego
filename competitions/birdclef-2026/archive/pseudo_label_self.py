@@ -62,9 +62,7 @@ def _load_checkpoint_meta(path: Path) -> dict:
     }
 
 
-def _make_melspec(
-    y: np.ndarray, n_mels: int, n_fft: int, hop_length: int
-) -> np.ndarray:
+def _make_melspec(y: np.ndarray, n_mels: int, n_fft: int, hop_length: int) -> np.ndarray:
     mel = librosa.feature.melspectrogram(
         y=y,
         sr=SR,
@@ -179,18 +177,14 @@ def main() -> None:
     # load checkpoints
     ckpt_dir = Path(__file__).parent / "outputs"
     ckpt_paths = sorted(ckpt_dir.glob(args.ckpt_pattern))
-    assert ckpt_paths, (
-        f"No checkpoints found matching {args.ckpt_pattern} in {ckpt_dir}"
-    )
+    assert ckpt_paths, f"No checkpoints found matching {args.ckpt_pattern} in {ckpt_dir}"
     print(f"Loading {len(ckpt_paths)} fold checkpoints...")
     models = []
     for p in ckpt_paths:
         meta = _load_checkpoint_meta(p)
         model = _build_model(meta, n_species, device)
         models.append((model, meta))
-        print(
-            f"  {p.name}  n_mels={meta['n_mels']}  epoch={torch.load(p, map_location='cpu').get('epoch')}"
-        )
+        print(f"  {p.name}  n_mels={meta['n_mels']}  epoch={torch.load(p, map_location='cpu').get('epoch')}")
 
     # soundscape files
     sc_files = sorted(SOUNDSCAPE_DIR.glob("*.ogg"))
@@ -225,9 +219,7 @@ def main() -> None:
                 print(f"  WARN: {sc_path.name}: {e}", flush=True)
                 continue
 
-            preds = predict_soundscape(
-                y, models, device, species_list
-            )  # (n_windows, 234)
+            preds = predict_soundscape(y, models, device, species_list)  # (n_windows, 234)
 
             for w in range(len(preds)):
                 row_preds = preds[w]

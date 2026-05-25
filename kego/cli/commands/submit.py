@@ -79,10 +79,7 @@ def _submit(args: argparse.Namespace, extra_args: list[str]) -> int:
     config = cfg_module.load_config(competition_dir=competition_dir)
 
     if config.competition is None or config.competition_dir is None:
-        print(
-            "Error: no competition config found. "
-            "Run from a competition directory or pass --competition."
-        )
+        print("Error: no competition config found. Run from a competition directory or pass --competition.")
         return 1
 
     comp = config.competition
@@ -144,9 +141,7 @@ def _submit(args: argparse.Namespace, extra_args: list[str]) -> int:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmppath = Path(tmpdir)
         shutil.copy2(notebook_file, tmppath / notebook_file.name)
-        (tmppath / "kernel-metadata.json").write_text(
-            json.dumps(kernel_meta, indent=2) + "\n"
-        )
+        (tmppath / "kernel-metadata.json").write_text(json.dumps(kernel_meta, indent=2) + "\n")
 
         result = subprocess.run(  # noqa: S603
             ["kaggle", "kernels", "push", "-p", tmpdir],  # noqa: S607

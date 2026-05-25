@@ -58,11 +58,7 @@ from sklearn.metrics import roc_auc_score
 # ── Constants ─────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DATA_DIR = (
-    Path(os.environ.get("KEGO_PATH_DATA", PROJECT_ROOT / "data"))
-    / "playground"
-    / "playground-series-s6e2"
-)
+DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", PROJECT_ROOT / "data")) / "playground" / "playground-series-s6e2"
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 TARGET = "Heart Disease"
 
@@ -163,12 +159,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["angina_x_stdep"] = df["Exercise angina"] * df["ST depression"]
 
     # Composite risk scores
-    df["top4_sum"] = (
-        df["Thallium"]
-        + df["Chest pain type"]
-        + df["Number of vessels fluro"]
-        + df["Exercise angina"]
-    )
+    df["top4_sum"] = df["Thallium"] + df["Chest pain type"] + df["Number of vessels fluro"] + df["Exercise angina"]
     df["abnormal_count"] = (
         (df["Thallium"] >= 6).astype(int)
         + (df["Number of vessels fluro"] >= 1).astype(int)
@@ -193,9 +184,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["ST depression_dev_sex"] = df["ST depression"] * (df["Sex"] + 1)
 
     # Signal conflict
-    df["signal_conflict"] = (df["Chest pain type"] >= 3).astype(int) ^ (
-        df["ST depression"] <= 0.5
-    ).astype(int)
+    df["signal_conflict"] = (df["Chest pain type"] >= 3).astype(int) ^ (df["ST depression"] <= 0.5).astype(int)
 
     return df
 
@@ -293,9 +282,7 @@ def upload_data_and_wait_approval(
 
     # Upload file
     with open(dataset_path, "rb") as f:
-        api_client.api.data_pools.add_data_pool_file(
-            id=input_dp.id, file=("data.json", f)
-        )
+        api_client.api.data_pools.add_data_pool_file(id=input_dp.id, file=("data.json", f))
     print(f"  File uploaded: {dataset_path.name}")
     print(f"  File size: {dataset_path.stat().st_size / 1024:.1f} KB")
 
@@ -341,9 +328,7 @@ def create_output_datapool_and_wait_approval(
     )
 
     # Create output datapool
-    output_dp = api_client.api.data_pools.create_data_pool(
-        name="Quantum Workflow Output"
-    )
+    output_dp = api_client.api.data_pools.create_data_pool(name="Quantum Workflow Output")
 
     config = {
         "input_datapool_id": input_dp_id,
@@ -534,9 +519,7 @@ def download_and_prepare_features(
 
     for file_info in files:
         print(f"    - {file_info.name}")
-        file_stream = api_client.api.data_pools.get_data_pool_file(
-            id=output_dp_id, file_id=file_info.id
-        )
+        file_stream = api_client.api.data_pools.get_data_pool_file(id=output_dp_id, file_id=file_info.id)
         fpath = download_dir / file_info.name
         with open(fpath, "wb") as f:
             for chunk in file_stream:
@@ -588,11 +571,7 @@ def train_evaluate_lgb(
     # Feature importances
     importances = dict(
         zip(
-            (
-                X_train.columns
-                if isinstance(X_train, pd.DataFrame)
-                else [f"f{i}" for i in range(X_train.shape[1])]
-            ),
+            (X_train.columns if isinstance(X_train, pd.DataFrame) else [f"f{i}" for i in range(X_train.shape[1])]),
             model.feature_importances_,
         )
     )
@@ -677,15 +656,9 @@ def run_evaluation(
         print("\n  DEBUG: Quantum feature shapes")
         print(f"    Xq_train shape: {Xq_train.shape}, dtype: {Xq_train.dtype}")
         print(f"    Xq_test shape: {Xq_test.shape}, dtype: {Xq_test.dtype}")
-        print(
-            f"    Xq_train NaNs: {np.isnan(Xq_train).sum()}, Infs: {np.isinf(Xq_train).sum()}"
-        )
-        print(
-            f"    Xq_train min: {np.nanmin(Xq_train):.4f}, max: {np.nanmax(Xq_train):.4f}"
-        )
-        print(
-            f"    Xq_train mean: {np.nanmean(Xq_train):.4f}, std: {np.nanstd(Xq_train):.4f}"
-        )
+        print(f"    Xq_train NaNs: {np.isnan(Xq_train).sum()}, Infs: {np.isinf(Xq_train).sum()}")
+        print(f"    Xq_train min: {np.nanmin(Xq_train):.4f}, max: {np.nanmax(Xq_train):.4f}")
+        print(f"    Xq_train mean: {np.nanmean(Xq_train):.4f}, std: {np.nanstd(Xq_train):.4f}")
         print(f"    X_train_classical shape: {X_train_classical.shape}")
 
         X_train_combined = pd.concat(
@@ -761,9 +734,7 @@ def run_evaluation(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Quantum Feature Extraction with Rimay API"
-    )
+    parser = argparse.ArgumentParser(description="Quantum Feature Extraction with Rimay API")
     parser.add_argument(
         "--skip-upload",
         action="store_true",
@@ -823,9 +794,7 @@ def main():
         print("  Downloading quantum features from datapool...")
         print(f"  Datapool ID: {args.output_datapool_id}\n")
 
-        quantum_features = download_and_prepare_features(
-            args.output_datapool_id, num_runs=args.num_runs
-        )
+        quantum_features = download_and_prepare_features(args.output_datapool_id, num_runs=args.num_runs)
     else:
         # ────────────────────────────────────────────────────────────────────────
         # STAGE 1: DATA UPLOAD (with manual approval)
@@ -837,9 +806,7 @@ def main():
             if not metadata_path.exists():
                 print(f"ERROR: No metadata at {metadata_path}")
                 print("\nUsage with manual datapool ID:")
-                print(
-                    "  uv run python quantum_rimay_workflow.py --evaluate-only --output-datapool-id <ID>"
-                )
+                print("  uv run python quantum_rimay_workflow.py --evaluate-only --output-datapool-id <ID>")
                 sys.exit(1)
             with open(metadata_path) as f:
                 metadata = json.load(f)
@@ -889,12 +856,8 @@ def main():
                 metadata_path = RESULTS_DIR / "rimay_metadata.json"
                 if not metadata_path.exists():
                     print(f"ERROR: No metadata at {metadata_path}")
-                    print(
-                        "\nUsage: Provide output datapool ID with --output-datapool-id"
-                    )
-                    print(
-                        "  uv run python quantum_rimay_workflow.py --evaluate-only --output-datapool-id <ID>"
-                    )
+                    print("\nUsage: Provide output datapool ID with --output-datapool-id")
+                    print("  uv run python quantum_rimay_workflow.py --evaluate-only --output-datapool-id <ID>")
                     sys.exit(1)
                 with open(metadata_path) as f:
                     metadata = json.load(f)
@@ -902,9 +865,7 @@ def main():
                 num_runs_param = metadata["num_runs"]
                 print(f"  Loaded output datapool ID from metadata: {output_dp_id}")
 
-            quantum_features = download_and_prepare_features(
-                output_dp_id, num_runs=num_runs_param
-            )
+            quantum_features = download_and_prepare_features(output_dp_id, num_runs=num_runs_param)
         elif args.skip_submit:
             print("\n  [Skipping job submission, using existing metadata]")
             metadata_path = RESULTS_DIR / "rimay_metadata.json"
@@ -915,9 +876,7 @@ def main():
                 metadata = json.load(f)
             output_dp_id = metadata["output_datapool_id"]
 
-            quantum_features = download_and_prepare_features(
-                output_dp_id, num_runs=metadata["num_runs"]
-            )
+            quantum_features = download_and_prepare_features(output_dp_id, num_runs=metadata["num_runs"])
         else:
             # Full workflow: upload data, create datapools, submit job, wait, download
 
@@ -946,9 +905,7 @@ def main():
             with open(metadata_path) as f:
                 metadata = json.load(f)
 
-            quantum_features = download_and_prepare_features(
-                output_dp_id, num_runs=metadata["num_runs"]
-            )
+            quantum_features = download_and_prepare_features(output_dp_id, num_runs=metadata["num_runs"])
 
     run_evaluation(train, test, quantum_features)
 

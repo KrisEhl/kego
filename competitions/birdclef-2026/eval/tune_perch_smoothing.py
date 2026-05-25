@@ -65,13 +65,9 @@ def _load() -> tuple:
         .apply(union_labels)
         .reset_index(name="label_list")
     )
-    sc_clean["end_sec"] = (
-        pd.to_timedelta(sc_clean["end"]).dt.total_seconds().astype(int)
-    )
+    sc_clean["end_sec"] = pd.to_timedelta(sc_clean["end"]).dt.total_seconds().astype(int)
     sc_clean["row_id"] = (
-        sc_clean["filename"].str.replace(".ogg", "", regex=False)
-        + "_"
-        + sc_clean["end_sec"].astype(str)
+        sc_clean["filename"].str.replace(".ogg", "", regex=False) + "_" + sc_clean["end_sec"].astype(str)
     )
     meta_cols = sc_clean["filename"].apply(parse_fname).apply(pd.Series)
     sc_clean = pd.concat([sc_clean, meta_cols], axis=1)
@@ -79,9 +75,7 @@ def _load() -> tuple:
     wpf = sc_clean.groupby("filename").size()
     full_files = sorted(wpf[wpf == N_WINDOWS].index.tolist())
     full_truth = (
-        sc_clean[sc_clean["filename"].isin(full_files)]
-        .sort_values(["filename", "end_sec"])
-        .reset_index(drop=False)
+        sc_clean[sc_clean["filename"].isin(full_files)].sort_values(["filename", "end_sec"]).reset_index(drop=False)
     )
 
     # Ground truth matrix
@@ -97,9 +91,7 @@ def _load() -> tuple:
     scores_raw = arr["scores_full_raw"].astype(np.float32)
 
     # Align ground truth
-    full_truth_aligned = (
-        full_truth.set_index("row_id").loc[meta_full["row_id"]].reset_index(drop=False)
-    )
+    full_truth_aligned = full_truth.set_index("row_id").loc[meta_full["row_id"]].reset_index(drop=False)
     Y_FULL = Y_SC[full_truth_aligned["index"].to_numpy()]
 
     # Taxonomy class map
@@ -112,11 +104,7 @@ def _load() -> tuple:
     # treat all active Aves as "direct" (conservative) for local tuning
     ACTIVE_CLASSES = [PRIMARY_LABELS[i] for i in np.where(Y_SC.sum(axis=0) > 0)[0]]
     idx_smooth_amphibia = np.array(
-        [
-            label_to_idx[c]
-            for c in ACTIVE_CLASSES
-            if class_name_map.get(c) == "Amphibia"
-        ],
+        [label_to_idx[c] for c in ACTIVE_CLASSES if class_name_map.get(c) == "Amphibia"],
         dtype=np.int32,
     )
     idx_smooth_insecta = np.array(
@@ -125,11 +113,7 @@ def _load() -> tuple:
     )
     _RARE_TAXA = {"Mammalia", "Reptilia"}
     idx_smooth_rare = np.array(
-        [
-            label_to_idx[c]
-            for c in ACTIVE_CLASSES
-            if class_name_map.get(c) in _RARE_TAXA
-        ],
+        [label_to_idx[c] for c in ACTIVE_CLASSES if class_name_map.get(c) in _RARE_TAXA],
         dtype=np.int32,
     )
     idx_smooth_aves = np.array(

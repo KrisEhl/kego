@@ -89,24 +89,16 @@ def get_completed_fingerprints(experiment_name, tracking_uri):
     # Only keep runs that have a config_fingerprint param
     fp_col = "params.config_fingerprint"
     if fp_col not in runs.columns:
-        logger.warning(
-            f"No runs with config_fingerprint in '{experiment_name}' "
-            f"(old experiment without fingerprints?)"
-        )
+        logger.warning(f"No runs with config_fingerprint in '{experiment_name}' (old experiment without fingerprints?)")
         return set(), runs
 
     has_fp = runs[fp_col].notna()
     fingerprints = set(runs.loc[has_fp, fp_col].tolist())
-    logger.info(
-        f"Experiment '{experiment_name}': {len(runs)} runs, "
-        f"{len(fingerprints)} with fingerprints"
-    )
+    logger.info(f"Experiment '{experiment_name}': {len(runs)} runs, {len(fingerprints)} with fingerprints")
     return fingerprints, runs[has_fp]
 
 
-def load_predictions_from_mlflow(
-    experiment_names, tracking_uri, folds: int | None = None
-):
+def load_predictions_from_mlflow(experiment_names, tracking_uri, folds: int | None = None):
     """Load per-model averaged predictions from MLflow experiments.
 
     Args:
@@ -134,9 +126,7 @@ def load_predictions_from_mlflow(
             if folds_col in runs.columns:
                 runs = runs[runs[folds_col] == str(folds)]
             else:
-                logger.warning(
-                    f"Column '{folds_col}' not found in '{exp_name}', skipping folds filter"
-                )
+                logger.warning(f"Column '{folds_col}' not found in '{exp_name}', skipping folds filter")
 
         logger.info(f"Experiment '{exp_name}': {len(runs)} model runs")
         all_runs.append(runs)

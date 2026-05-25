@@ -88,9 +88,7 @@ def main() -> None:
     for sidx in range(n_sites):
         for h in range(N_HOURS):
             if joint_count[sidx, h] > 0:
-                joint_priors[:, sidx, h] = (
-                    joint_sum[:, sidx, h] / joint_count[sidx, h]
-                ).astype(np.float32)
+                joint_priors[:, sidx, h] = (joint_sum[:, sidx, h] / joint_count[sidx, h]).astype(np.float32)
             else:
                 # Fall back to site mean, then diel mean, then global
                 site_cnt = joint_count[sidx, :].sum()
@@ -116,10 +114,7 @@ def main() -> None:
     with open(OUT_DIR / "diel_priors_meta.json", "w") as f:
         json.dump(meta_out, f, indent=2)
 
-    print(
-        f"  diel_priors.npy       : {diel_priors.shape}  "
-        f"range [{diel_priors.min():.3f}, {diel_priors.max():.3f}]"
-    )
+    print(f"  diel_priors.npy       : {diel_priors.shape}  range [{diel_priors.min():.3f}, {diel_priors.max():.3f}]")
     print(f"  site_priors_all.npy   : {site_priors.shape}")
     print(f"  diel_site_priors.npy  : {joint_priors.shape}")
     print("\nTop 5 most active species at hour 7 (dawn):")

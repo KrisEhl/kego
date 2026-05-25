@@ -56,16 +56,12 @@ def create_submission(y_true, y_prediction, X_prediction, model, target_column):
         raise ValueError(f"Need to provide {X_prediction} or {y_prediction}")
     if y_prediction is None and X_prediction is not None:
         if model is None or target_column is None:
-            raise ValueError(
-                "Need to provide `model` and `target_column` when `X_prediction` given."
-            )
+            raise ValueError("Need to provide `model` and `target_column` when `X_prediction` given.")
         else:
             prediction_values = model.predict(X_prediction.copy())
             y_prediction = pd.DataFrame(data={target_column: prediction_values})
     elif y_prediction is not None:
-        assert target_column in y_prediction, (
-            f"{target_column=} not found in `y_prediction`."
-        )
+        assert target_column in y_prediction, f"{target_column=} not found in `y_prediction`."
     if not isinstance(y_true, pd.DataFrame):
         y_true = pd.DataFrame(data={target_column: np.array(y_true)})
     return y_true, y_prediction

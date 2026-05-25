@@ -9,9 +9,7 @@ from kego.cli import config as cfg_module
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
-    p = subparsers.add_parser(
-        "kernel-list", help="List runs submitted as Kaggle kernels"
-    )
+    p = subparsers.add_parser("kernel-list", help="List runs submitted as Kaggle kernels")
     p.add_argument(
         "--competition",
         metavar="SLUG",

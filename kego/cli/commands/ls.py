@@ -26,11 +26,7 @@ def _resolve_metric(runs: pd.DataFrame, primary_metric: str) -> str:
         return primary_metric
     for col in runs.columns:
         name = col[len("metrics.") :]
-        if (
-            col.startswith("metrics.")
-            and name not in _SKIP_METRICS
-            and runs[col].notna().any()
-        ):
+        if col.startswith("metrics.") and name not in _SKIP_METRICS and runs[col].notna().any():
             return name
     return primary_metric
 
@@ -82,8 +78,7 @@ def format_table(
         ago = _ago(start) if start is not None and pd.notna(start) else "?"
         metric_name_cell = f" {metric_name:<10}" if show_metric_name else ""
         lines.append(
-            f"{exp_id:<8} {name:<26} {competition:<20} {target:<8}"
-            f" {metric:>8}{metric_name_cell} {status:<10} {ago}"
+            f"{exp_id:<8} {name:<26} {competition:<20} {target:<8} {metric:>8}{metric_name_cell} {status:<10} {ago}"
         )
 
     return lines

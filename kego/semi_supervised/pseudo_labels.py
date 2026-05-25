@@ -11,9 +11,7 @@ Example::
     from kego.semi_supervised.pseudo_labels import soft_pseudo_label_experiment
 
 
-    def my_train_fn(
-        X_train, y_train, X_holdout, y_holdout, X_test, seed, sample_weight
-    ):
+    def my_train_fn(X_train, y_train, X_holdout, y_holdout, X_test, seed, sample_weight):
         # train your model, return (holdout_auc, test_predictions)
         ...
 
@@ -78,9 +76,7 @@ def self_training_round(
 
     for seed in seeds:
         if soft_labels is not None:
-            X_combined = pd.concat(
-                [X_train, X_unlabeled.reset_index(drop=True)], ignore_index=True
-            )
+            X_combined = pd.concat([X_train, X_unlabeled.reset_index(drop=True)], ignore_index=True)
             y_combined = pd.concat(
                 [
                     y_train.reset_index(drop=True),
@@ -95,9 +91,7 @@ def self_training_round(
             y_combined = y_train
             sw = None
 
-        auc, unlabeled_preds = train_fn(
-            X_combined, y_combined, X_holdout, y_holdout, X_unlabeled, seed, sw
-        )
+        auc, unlabeled_preds = train_fn(X_combined, y_combined, X_holdout, y_holdout, X_unlabeled, seed, sw)
         aucs.append(auc)
         all_unlabeled_preds.append(unlabeled_preds)
 

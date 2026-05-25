@@ -52,9 +52,7 @@ def parallelize(
     return results
 
 
-def starmap_with_kwargs(
-    pool, function: Callable, args_iter: Iterable, kwargs_iter: Iterable
-):
+def starmap_with_kwargs(pool, function: Callable, args_iter: Iterable, kwargs_iter: Iterable):
     """Helper function to parallelize functions with args and kwargs"""
     if kwargs_iter is None:
         args_for_starmap = zip(itertools.repeat(function), args_iter)

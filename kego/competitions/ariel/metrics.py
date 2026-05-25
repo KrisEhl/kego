@@ -49,17 +49,11 @@ def score(
 
     y_pred = submission.iloc[:, :n_wavelengths].values
     # Set a non-zero minimum sigma pred to prevent division by zero errors.
-    sigma_pred = np.clip(
-        submission.iloc[:, n_wavelengths:].values, a_min=10**-15, a_max=None
-    )
+    sigma_pred = np.clip(submission.iloc[:, n_wavelengths:].values, a_min=10**-15, a_max=None)
     y_true = solution.values
 
     GLL_pred = np.sum(scipy.stats.norm.logpdf(y_true, loc=y_pred, scale=sigma_pred))
-    GLL_true = np.sum(
-        scipy.stats.norm.logpdf(
-            y_true, loc=y_true, scale=sigma_true * np.ones_like(y_true)
-        )
-    )
+    GLL_true = np.sum(scipy.stats.norm.logpdf(y_true, loc=y_true, scale=sigma_true * np.ones_like(y_true)))
     GLL_mean = np.sum(
         scipy.stats.norm.logpdf(
             y_true,

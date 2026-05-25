@@ -103,12 +103,8 @@ class SkorchResNet:
 
     def fit(self, X, y, **kwargs):
         torch.manual_seed(self.random_state)
-        self.scaler = QuantileTransformer(
-            output_distribution="normal", random_state=self.random_state
-        )
-        X_np = self.scaler.fit_transform(
-            X.values if isinstance(X, pd.DataFrame) else X
-        ).astype(np.float32)
+        self.scaler = QuantileTransformer(output_distribution="normal", random_state=self.random_state)
+        X_np = self.scaler.fit_transform(X.values if isinstance(X, pd.DataFrame) else X).astype(np.float32)
         y_np = (y.values if hasattr(y, "values") else y).astype(np.float32)
         d_in = X_np.shape[1]
 
@@ -155,9 +151,7 @@ class SkorchResNet:
         return self
 
     def predict_proba(self, X):
-        X_np = self.scaler.transform(
-            X.values if isinstance(X, pd.DataFrame) else X
-        ).astype(np.float32)
+        X_np = self.scaler.transform(X.values if isinstance(X, pd.DataFrame) else X).astype(np.float32)
         return self.net.predict_proba(X_np)
 
     def predict(self, X):

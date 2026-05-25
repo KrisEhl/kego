@@ -12,9 +12,7 @@ from kego.cli import config as cfg_module
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
-    p = subparsers.add_parser(
-        "kernel-status", help="Show Kaggle kernel status for a submitted experiment"
-    )
+    p = subparsers.add_parser("kernel-status", help="Show Kaggle kernel status for a submitted experiment")
     p.add_argument(
         "experiment",
         metavar="ID_OR_NAME",
@@ -49,10 +47,7 @@ def _kernel_status(args: argparse.Namespace, extra_args: list[str]) -> int:
     config = cfg_module.load_config(competition_dir=competition_dir)
 
     if config.competition is None or config.competition_dir is None:
-        print(
-            "Error: no competition config found. "
-            "Run from a competition directory or pass --competition."
-        )
+        print("Error: no competition config found. Run from a competition directory or pass --competition.")
         return 1
 
     mlflow.set_tracking_uri(config.cluster.mlflow_uri)

@@ -263,9 +263,7 @@ def main() -> None:
     # Load checkpoints
     ckpt_paths = sorted(CKPT_DIR.glob(args.ckpt_pattern))
     if not ckpt_paths:
-        print(
-            f"ERROR: No checkpoints found matching '{args.ckpt_pattern}' in {CKPT_DIR}"
-        )
+        print(f"ERROR: No checkpoints found matching '{args.ckpt_pattern}' in {CKPT_DIR}")
         sys.exit(1)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -337,12 +335,9 @@ def main() -> None:
             elapsed = time.time() - t_start
             rate = (i + 1) / elapsed
             eta_min = (len(files) - i - 1) / rate / 60
-            mean_max = np.mean(
-                [p.max() for p in all_labels[-min(200, len(all_labels)) :]]
-            )
+            mean_max = np.mean([p.max() for p in all_labels[-min(200, len(all_labels)) :]])
             print(
-                f"  [{i + 1}/{len(files)}]  {rate:.1f} files/s  "
-                f"ETA {eta_min:.1f} min  mean_max_prob={mean_max:.3f}",
+                f"  [{i + 1}/{len(files)}]  {rate:.1f} files/s  ETA {eta_min:.1f} min  mean_max_prob={mean_max:.3f}",
                 flush=True,
             )
 
@@ -359,12 +354,8 @@ def main() -> None:
 
     elapsed = time.time() - t_start
     print(f"\nDone in {elapsed / 60:.1f} min")
-    print(
-        f"Windows: {len(all_filenames):,}  ({labels_arr.nbytes / 1e6:.1f} MB uncompressed)"
-    )
-    print(
-        f"Cache hits: {n_cache_hits}/{len(files)} ({100 * n_cache_hits / max(len(files), 1):.0f}%)"
-    )
+    print(f"Windows: {len(all_filenames):,}  ({labels_arr.nbytes / 1e6:.1f} MB uncompressed)")
+    print(f"Cache hits: {n_cache_hits}/{len(files)} ({100 * n_cache_hits / max(len(files), 1):.0f}%)")
     print(f"Label density (mean_max_prob): {labels_arr.max(axis=1).mean():.4f}")
     print(f"Windows with max_prob ≥ 0.1: {(labels_arr.max(axis=1) >= 0.1).sum():,}")
     print(f"Windows with max_prob ≥ 0.3: {(labels_arr.max(axis=1) >= 0.3).sum():,}")

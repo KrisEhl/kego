@@ -77,9 +77,7 @@ KNOWN_LB: dict[str, float | None] = {
 # ---------------------------------------------------------------------------
 
 
-def padded_cmap(
-    y_true: np.ndarray, y_pred: np.ndarray, padding_factor: int = 5
-) -> float:
+def padded_cmap(y_true: np.ndarray, y_pred: np.ndarray, padding_factor: int = 5) -> float:
     """Padded class-mean AP matching competition scorer.
 
     For each class with ≥1 positive, append `padding_factor` (negative, 0-score)
@@ -98,9 +96,7 @@ def padded_cmap(
     return float(np.mean(aps)) if aps else 0.0
 
 
-def per_class_ap(
-    y_true: np.ndarray, y_pred: np.ndarray, species_names: list[str]
-) -> pd.Series:
+def per_class_ap(y_true: np.ndarray, y_pred: np.ndarray, species_names: list[str]) -> pd.Series:
     aps: dict[str, float] = {}
     for c, sp in enumerate(species_names):
         if y_true[:, c].sum() > 0:
@@ -182,11 +178,7 @@ def apply_postproc(
     def _idx(class_name: str | set) -> np.ndarray:
         names = {class_name} if isinstance(class_name, str) else class_name
         return np.array(
-            [
-                label_to_idx[lbl]
-                for lbl in primary_labels
-                if class_name_map.get(lbl) in names and lbl in label_to_idx
-            ],
+            [label_to_idx[lbl] for lbl in primary_labels if class_name_map.get(lbl) in names and lbl in label_to_idx],
             dtype=np.int32,
         )
 
@@ -279,9 +271,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
 
     meta = pd.read_parquet(DATA_ROOT / "perch-meta/full_perch_meta.parquet")
     taxonomy = pd.read_csv(DATA_ROOT / "birdclef/birdclef-2026/taxonomy.csv")
-    labels_csv = pd.read_csv(
-        DATA_ROOT / "birdclef/birdclef-2026/train_soundscapes_labels.csv"
-    )
+    labels_csv = pd.read_csv(DATA_ROOT / "birdclef/birdclef-2026/train_soundscapes_labels.csv")
     train_audio = pd.read_csv(DATA_ROOT / "birdclef/birdclef-2026/train.csv")
 
     primary_labels = taxonomy["primary_label"].tolist()
@@ -295,19 +285,11 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
     sc_only_cls = [c for c in active_cls if primary_labels[c] not in audio_species]
     audio_present_cls = [c for c in active_cls if primary_labels[c] in audio_species]
 
-    print(
-        f"\nGround truth: {len(Y_true)} windows | {n_pos_total} positives | "
-        f"{len(active_cls)} active classes"
-    )
-    print(
-        f"  Audio-present: {len(audio_present_cls)} | "
-        f"Soundscape-only: {len(sc_only_cls)}"
-    )
+    print(f"\nGround truth: {len(Y_true)} windows | {n_pos_total} positives | {len(active_cls)} active classes")
+    print(f"  Audio-present: {len(audio_present_cls)} | Soundscape-only: {len(sc_only_cls)}")
 
     # -- Forward pass ---------------------------------------------------------
-    all_batches = build_file_batches(
-        emb, logits, Y_true, sites_arr, hours_arr, filenames_arr, site_to_idx
-    )
+    all_batches = build_file_batches(emb, logits, Y_true, sites_arr, hours_arr, filenames_arr, site_to_idx)
     file_to_rows: dict[str, list[int]] = {}
     for i, fn in enumerate(filenames_arr):
         file_to_rows.setdefault(fn, []).append(i)
@@ -345,9 +327,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
     configs: list[tuple[str, np.ndarray, dict, str | None]] = []
 
     # Perch logits
-    configs.append(
-        ("perch logits only", logits, dict(rank_power=0.0), "perch logits only")
-    )
+    configs.append(("perch logits only", logits, dict(rank_power=0.0), "perch logits only"))
     configs.append(("perch + rank_power=0.4", logits, dict(rank_power=0.4), None))
 
     # Stage2 weight sweep (rank_power=0.4, no smooth)
@@ -376,9 +356,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
             "pp: none (raw sigmoid)",
         )
     )
-    configs.append(
-        ("pp: rank_power=0.4", s2_logits, dict(rank_power=0.4), "pp: rank_power=0.4")
-    )
+    configs.append(("pp: rank_power=0.4", s2_logits, dict(rank_power=0.4), "pp: rank_power=0.4"))
     configs.append(
         (
             "pp: rank_power=0.4 + smooth + boost_top2 (v52)",
@@ -533,9 +511,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
         else:
             p_so = float("nan")
         if audio_present_cls:
-            p_au = padded_cmap(
-                Y_true[:, audio_present_cls], preds[:, audio_present_cls]
-            )
+            p_au = padded_cmap(Y_true[:, audio_present_cls], preds[:, audio_present_cls])
         else:
             p_au = float("nan")
         return p, p_au, p_so
@@ -553,9 +529,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
         lb_s = f"{lb:.3f}" if lb is not None else "  ?"
         short = cfg_name[:54]
         print(f"  {short:<54} {cmap:>7.4f} {cmap_au:>7.4f} {cmap_so:>8.4f} {lb_s:>7}")
-        rows.append(
-            dict(name=cfg_name, cmap=cmap, cmap_au=cmap_au, cmap_so=cmap_so, lb=lb)
-        )
+        rows.append(dict(name=cfg_name, cmap=cmap, cmap_au=cmap_au, cmap_so=cmap_so, lb=lb))
 
     # -- Calibration table ---------------------------------------------------
     print(f"\n{'--- Local vs LB calibration':-<80}")
@@ -566,9 +540,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
         print("  " + "-" * (len(header) - 2))
         for r in known:
             ratio = r["lb"] / r["cmap"] if r["cmap"] > 0 else float("nan")
-            print(
-                f"  {r['name'][:53]:<54} {r['cmap']:>7.4f} {r['lb']:>7.3f} {ratio:>7.2f}"
-            )
+            print(f"  {r['name'][:53]:<54} {r['cmap']:>7.4f} {r['lb']:>7.3f} {ratio:>7.2f}")
 
         # Correlation
         if len(known) >= 3:
@@ -578,10 +550,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
             lb_vals = np.array([r["lb"] for r in known])
             rp, _ = pearsonr(local_vals, lb_vals)
             rs, _ = spearmanr(local_vals, lb_vals)
-            print(
-                f"\n  Pearson r = {rp:.3f}   Spearman r = {rs:.3f}  "
-                f"(n={len(known)} configs with known LB)"
-            )
+            print(f"\n  Pearson r = {rp:.3f}   Spearman r = {rs:.3f}  (n={len(known)} configs with known LB)")
         else:
             print(f"\n  Only {len(known)} LB data point(s) — need ≥3 for correlation.")
             print(f"  LB/local ratio: {known[0]['lb'] / known[0]['cmap']:.2f}×")
@@ -606,9 +575,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
         )
 
     # -- Site-stratified hold-out on Perch-only (no in-sample bias) ----------
-    print(
-        f"\n{'--- Site-stratified hold-out (Perch logits only — zero in-sample bias)':-<80}"
-    )
+    print(f"\n{'--- Site-stratified hold-out (Perch logits only — zero in-sample bias)':-<80}")
     print("  (Held-out site: each site in turn; trained on remaining sites)")
     loso_cmaps = []
     for held_site in sorted(set(sites_list)):
@@ -630,9 +597,7 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
 
     # -- Per-class AP (verbose) -----------------------------------------------
     if verbose:
-        print(
-            f"\n{'--- Per-class AP (Stage2 w=0.70, rank=0.4 — worst 20 / best 20)':-<80}"
-        )
+        print(f"\n{'--- Per-class AP (Stage2 w=0.70, rank=0.4 — worst 20 / best 20)':-<80}")
         ap_series = per_class_ap(Y_true, preds_v16, primary_labels)
         print("  Worst 20:")
         for sp, ap in ap_series.head(20).items():
@@ -644,13 +609,9 @@ def run_calibration(checkpoint_path: Path, verbose: bool = False) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Local calibration eval for BirdCLEF 2026 ProtoSSM pipeline"
-    )
+    parser = argparse.ArgumentParser(description="Local calibration eval for BirdCLEF 2026 ProtoSSM pipeline")
     parser.add_argument("--checkpoint", default="outputs/protossm_v3.pt")
-    parser.add_argument(
-        "--verbose", action="store_true", help="Print per-class AP breakdown"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Print per-class AP breakdown")
     args = parser.parse_args()
 
     ckpt_path = Path(args.checkpoint)

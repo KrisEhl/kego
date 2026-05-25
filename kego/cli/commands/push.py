@@ -124,10 +124,7 @@ def _push(args: argparse.Namespace, extra_args: list[str]) -> int:
     config = cfg_module.load_config(competition_dir=competition_dir)
 
     if config.competition is None or config.competition_dir is None:
-        print(
-            "Error: no competition config found. "
-            "Run from a competition directory or pass --competition."
-        )
+        print("Error: no competition config found. Run from a competition directory or pass --competition.")
         return 1
 
     comp = config.competition
@@ -169,11 +166,7 @@ def _push(args: argparse.Namespace, extra_args: list[str]) -> int:
         )
 
     if not checkpoints:
-        hint = (
-            "\nAdd ssh_host to kego.toml [cluster] to fetch from cluster."
-            if not config.cluster.ssh_host
-            else ""
-        )
+        hint = "\nAdd ssh_host to kego.toml [cluster] to fetch from cluster." if not config.cluster.ssh_host else ""
         print(f"No checkpoints found: {ckpt_dir}/{run_name}_fold*.pt{hint}")
         return 1
 
@@ -195,9 +188,7 @@ def _push(args: argparse.Namespace, extra_args: list[str]) -> int:
             "id": ds,
             "licenses": [{"name": "CC0-1.0"}],
         }
-        (tmppath / "dataset-metadata.json").write_text(
-            json.dumps(metadata, indent=2) + "\n"
-        )
+        (tmppath / "dataset-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
         # Try version (dataset exists) → fall back to create
         result = subprocess.run(  # noqa: S603
@@ -205,9 +196,7 @@ def _push(args: argparse.Namespace, extra_args: list[str]) -> int:
             capture_output=True,
             text=True,
         )
-        if result.returncode != 0 and (
-            "404" in result.stderr or "not found" in result.stderr.lower()
-        ):
+        if result.returncode != 0 and ("404" in result.stderr or "not found" in result.stderr.lower()):
             print("Dataset not found — creating new dataset...")
             result = subprocess.run(  # noqa: S603
                 ["kaggle", "datasets", "create", "-p", tmpdir],  # noqa: S607

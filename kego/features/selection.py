@@ -21,9 +21,7 @@ Typical usage::
         model=model,
     )
     print(f"Baseline: {result.baseline_score:.5f}")
-    print(
-        f"Optimized: {result.selected_score:.5f} ({len(result.selected_features)} features)"
-    )
+    print(f"Optimized: {result.selected_score:.5f} ({len(result.selected_features)} features)")
     for entry in result.feature_results:
         print(f"  {entry['feature']}: {entry['delta']:+.5f}")
 """
@@ -133,9 +131,7 @@ def eval_multiseed(
     scores = [score for score, _ in results]
     fitted_models = [fitted_model for _, fitted_model in results]
     iterations = [
-        getattr(
-            fitted_model, "best_iteration_", getattr(fitted_model, "n_estimators", 0)
-        )
+        getattr(fitted_model, "best_iteration_", getattr(fitted_model, "n_estimators", 0))
         for fitted_model in fitted_models
     ]
     return float(np.mean(scores)), int(np.mean(iterations))
@@ -187,8 +183,7 @@ def drop_one_ablation(
     )
     if verbose:
         print(
-            f"Baseline {metric} ({len(features)} features, {len(seeds)} seeds): "
-            f"{baseline:.5f} ({baseline_iters} iters)"
+            f"Baseline {metric} ({len(features)} features, {len(seeds)} seeds): {baseline:.5f} ({baseline_iters} iters)"
         )
 
     feature_results = []
@@ -225,9 +220,7 @@ def drop_one_ablation(
     if verbose:
         score_header = f"{metric} without"
         score_width = max(len(score_header), 12)
-        print(
-            f"\n{'Feature':<30} {score_header:>{score_width}} {'Delta':>10} {'Iters':>7} {'Verdict':>10}"
-        )
+        print(f"\n{'Feature':<30} {score_header:>{score_width}} {'Delta':>10} {'Iters':>7} {'Verdict':>10}")
         print("-" * (30 + score_width + 10 + 7 + 10 + 4))
         for entry in feature_results:
             verdict = "HARMFUL" if entry["delta"] > 0 else "helpful"
@@ -299,9 +292,7 @@ def forward_selection(
     feature_results = []
     score_width = max(len(metric), 10)
     if verbose:
-        print(
-            f"\n{'N':>3} {'Added feature':<30} {metric:>{score_width}} {'Delta':>10} {'Iters':>7}"
-        )
+        print(f"\n{'N':>3} {'Added feature':<30} {metric:>{score_width}} {'Delta':>10} {'Iters':>7}")
         print("-" * (3 + 1 + 30 + 1 + score_width + 1 + 10 + 1 + 7))
 
     previous_score = 0.0
@@ -328,14 +319,10 @@ def forward_selection(
             }
         )
         if verbose:
-            print(
-                f"{i:>3} {subset[-1]:<30} {score:>{score_width}.5f} {delta:>+10.5f} {iters:>7}"
-            )
+            print(f"{i:>3} {subset[-1]:<30} {score:>{score_width}.5f} {delta:>+10.5f} {iters:>7}")
         previous_score = score
 
-    best_index = max(
-        range(len(feature_results)), key=lambda i: feature_results[i]["score"]
-    )
+    best_index = max(range(len(feature_results)), key=lambda i: feature_results[i]["score"])
     selected = features_ordered[: best_index + 1]
     best_score = feature_results[best_index]["score"]
 
@@ -403,9 +390,7 @@ def greedy_add_one_screening(
             fit_kwargs,
         )
     if verbose:
-        print(
-            f"Baseline {metric}: {baseline_score:.5f} ({len(baseline_features)} features)"
-        )
+        print(f"Baseline {metric}: {baseline_score:.5f} ({len(baseline_features)} features)")
         print(f"Screening {len(candidate_features)} candidates...\n")
 
     feature_results = []
@@ -442,9 +427,7 @@ def greedy_add_one_screening(
     if verbose:
         score_header = f"{metric} with"
         score_width = max(len(score_header), 10)
-        print(
-            f"\n{'Feature':<30} {score_header:>{score_width}} {'Delta':>10} {'Iters':>7}"
-        )
+        print(f"\n{'Feature':<30} {score_header:>{score_width}} {'Delta':>10} {'Iters':>7}")
         print("-" * (30 + score_width + 10 + 7 + 3))
         for entry in feature_results:
             print(
@@ -454,9 +437,7 @@ def greedy_add_one_screening(
         helpful = [entry["feature"] for entry in feature_results if entry["delta"] > 0]
         print(f"\nHelpful candidates ({len(helpful)}): {helpful}")
 
-    helpful_candidates = [
-        entry["feature"] for entry in feature_results if entry["delta"] > 0
-    ]
+    helpful_candidates = [entry["feature"] for entry in feature_results if entry["delta"] > 0]
     selected = baseline_features + helpful_candidates
     if helpful_candidates:
         selected_score, _ = eval_multiseed(

@@ -32,30 +32,22 @@ def _assert_same_type(variable, type_from_variable):
     """Check if `variable` shares type with `type_from_variable`"""
     if isinstance(variable, Iterable):
         if not isinstance(type_from_variable, Iterable):
-            raise TypeError(
-                f"Variable {variable=} is iterable but type is not {type_from_variable=}"
-            )
+            raise TypeError(f"Variable {variable=} is iterable but type is not {type_from_variable=}")
         for v, typ in zip(variable, type_from_variable):
             _assert_same_type(v, typ)
     else:
         if not isinstance(variable, type(type_from_variable)):
-            raise TypeError(
-                f"Variable {variable=} different type than expected {type_from_variable=}"
-            )
+            raise TypeError(f"Variable {variable=} different type than expected {type_from_variable=}")
 
 
-def assert_same_type_as(
-    variable: object, type_from_variable: object, alternative: object | None = None
-):
+def assert_same_type_as(variable: object, type_from_variable: object, alternative: object | None = None):
     """Check if `variable` is same type as `type_from_variable` unless `variable` is `alternative`"""
     if variable is alternative:
         return
     try:
         _assert_same_type(variable, type_from_variable)
     except TypeError:
-        raise TypeError(
-            f"Variable {variable} not of expected type {type_from_variable}"
-        ) from None
+        raise TypeError(f"Variable {variable} not of expected type {type_from_variable}") from None
 
 
 def any_of_type(variable_list: Iterable, type_: type):
@@ -66,16 +58,12 @@ def all_same_type(variable_list: Iterable, type_: type):
     return all([isinstance(var, type_) for var in variable_list])
 
 
-def assert_shape(
-    variable, shape: tuple, name: str | None = None, ignore_none: bool = True
-):
+def assert_shape(variable, shape: tuple, name: str | None = None, ignore_none: bool = True):
     if ignore_none:
         if variable is None:
             return
     if np.shape(variable) != shape:
-        raise TypeError(
-            f"{name + ': ' if name is not None else ''}{variable=} doesn't have required {shape=}!"
-        )
+        raise TypeError(f"{name + ': ' if name is not None else ''}{variable=} doesn't have required {shape=}!")
 
 
 def assert_all_same_type(variable_list: Iterable, type_: type):
@@ -88,9 +76,7 @@ def validate_array(array: np.ndarray, type_: str = "float", name: str | None = N
     """Validate numpy based on `type`, e.g. no nan-values"""
     if type_ == "float":
         if np.sum(np.isnan(array.astype(float))) > 0:
-            raise ValueError(
-                f"Found nan-values {f'in {name}' if name is not None else ''}!"
-            )
+            raise ValueError(f"Found nan-values {f'in {name}' if name is not None else ''}!")
     else:
         raise ValueError(f"{type_=} unknown!")
 
