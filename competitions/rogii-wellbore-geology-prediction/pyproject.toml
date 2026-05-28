@@ -10,3 +10,6 @@ dependencies = [
 
 [tool.uv.sources]
 kego = { workspace = true }
+
+[tool.ruff]
+line-length = 120

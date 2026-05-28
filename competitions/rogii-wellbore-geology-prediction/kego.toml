@@ -1,0 +1,4 @@
+[competition]
+slug = "rogii-wellbore-geology-prediction"
+primary_metric = "oof_rmse"
+checkpoint_dir = "outputs"

@@ -77,6 +77,8 @@ def run(argv: list[str]) -> int:
             active_run = mlflow.start_run(run_name=run_name, tags=tags)
             if cli_params:
                 mlflow.log_params(cli_params)
+            # Expose run ID so the subprocess can log artifacts (e.g. figures) to this run.
+            os.environ["KEGO_MLFLOW_RUN_ID"] = active_run.info.run_id
 
     cmd = [sys.executable, *list(argv)]
     process = subprocess.Popen(  # noqa: S603
