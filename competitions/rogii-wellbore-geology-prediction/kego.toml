@@ -1,4 +1,9 @@
 [competition]
 slug = "rogii-wellbore-geology-prediction"
-primary_metric = "oof_rmse"
+kaggle_user = "aldisued"
+enable_gpu = false
+submit_file = "outputs/submission.csv"
+pattern = "script"
+inference_notebook = "train_rogii.py"
 checkpoint_dir = "outputs"
+primary_metric = "oof_rmse"
