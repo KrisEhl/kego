@@ -100,6 +100,9 @@ FEATURE_COLS: list[str] = [
     "tvt_anchor",
     "delta_md_from_ps",
     "typewell_tvt_nn",
+    "typewell_pattern_tvt_nn",
+    "prePS_tvt_nn",
+    "prePS_tvt_dev",
     "md_frac",
     "well_md_range",
     "gr_roll_mean_10",
@@ -120,19 +123,73 @@ def _list_well_ids(directory: Path) -> list[str]:
     )
 
 
+def _tvt_nn_1d(gr_query: np.ndarray, ref_gr: np.ndarray, ref_tvt: np.ndarray) -> np.ndarray:
+    """Vectorised 1-D nearest-neighbour TVT lookup keyed on GR value."""
+    right_idx = np.searchsorted(ref_gr, gr_query).clip(0, len(ref_gr) - 1)
+    left_idx = (right_idx - 1).clip(0)
+    left_dist = np.abs(gr_query - ref_gr[left_idx])
+    right_dist = np.abs(gr_query - ref_gr[right_idx])
+    return np.where(left_dist <= right_dist, ref_tvt[left_idx], ref_tvt[right_idx])
+
+
 def _typewell_tvt_nn(gr: pd.Series, typewell: pd.DataFrame) -> pd.Series:
     """Nearest-neighbour TVT lookup in typewell keyed on GR value."""
     tw = typewell.dropna(subset=["TVT", "GR"]).sort_values("GR")
     if tw.empty:
         return pd.Series(np.nan, index=gr.index)
-    tw_gr = tw["GR"].to_numpy()
-    tw_tvt = tw["TVT"].to_numpy()
-    gr_vals = gr.fillna(gr.median()).to_numpy()
-    right_idx = np.searchsorted(tw_gr, gr_vals).clip(0, len(tw_gr) - 1)
-    left_idx = (right_idx - 1).clip(0)
-    left_dist = np.abs(gr_vals - tw_gr[left_idx])
-    right_dist = np.abs(gr_vals - tw_gr[right_idx])
-    chosen = np.where(left_dist <= right_dist, tw_tvt[left_idx], tw_tvt[right_idx])
+    chosen = _tvt_nn_1d(gr.fillna(gr.median()).to_numpy(), tw["GR"].to_numpy(), tw["TVT"].to_numpy())
+    return pd.Series(chosen, index=gr.index)
+
+
+def _typewell_pattern_tvt_nn(gr: pd.Series, typewell: pd.DataFrame) -> pd.Series:
+    """Pattern-based TVT lookup: match (GR, roll_mean_10, roll_mean_50, roll_std_50)
+    against the same 4-D descriptor computed for the typewell.
+    More robust than point-wise GR matching — uses the local GR pattern.
+    """
+    from sklearn.neighbors import KNeighborsRegressor
+
+    tw = typewell.dropna(subset=["TVT", "GR"]).sort_values("TVT").reset_index(drop=True)
+    if len(tw) < 10:
+        return pd.Series(np.nan, index=gr.index)
+
+    # Build 4-D descriptor for typewell
+    tg = tw["GR"]
+    tw_feats = np.column_stack(
+        [
+            tg.values,
+            tg.rolling(10, min_periods=1, center=True).mean().values,
+            tg.rolling(50, min_periods=1, center=True).mean().values,
+            tg.rolling(50, min_periods=1, center=True).std().fillna(0).values,
+        ]
+    )
+
+    # Build 4-D descriptor for horizontal well
+    gf = gr.ffill().bfill().fillna(gr.median())
+    h_feats = np.column_stack(
+        [
+            gf.values,
+            gf.rolling(10, min_periods=1, center=True).mean().values,
+            gf.rolling(50, min_periods=1, center=True).mean().values,
+            gf.rolling(50, min_periods=1, center=True).std().fillna(0).values,
+        ]
+    )
+
+    knn = KNeighborsRegressor(n_neighbors=3, metric="euclidean")
+    knn.fit(tw_feats, tw["TVT"].values)
+    return pd.Series(knn.predict(h_feats), index=gr.index)
+
+
+def _prePS_tvt_nn(gr: pd.Series, tvt_input: pd.Series) -> pd.Series:
+    """Nearest-neighbour TVT using the well's own pre-PS anchor region as reference.
+    Pre-PS rows have exact TVT_input — richer and well-specific vs the generic typewell.
+    """
+    known = tvt_input.notna() & gr.notna()
+    if known.sum() < 2:
+        return pd.Series(np.nan, index=gr.index)
+    ref = pd.Series(tvt_input[known].values, index=gr[known].values).sort_index()
+    ref_gr = ref.index.to_numpy(dtype=float)
+    ref_tvt = ref.values
+    chosen = _tvt_nn_1d(gr.fillna(gr.median()).to_numpy(), ref_gr, ref_tvt)
     return pd.Series(chosen, index=gr.index)
 
 
@@ -150,6 +207,8 @@ def load_dataset(directory: Path, max_wells: int | None = None) -> pd.DataFrame:
         h["well_id"] = wid
         h["_row_idx"] = np.arange(len(h))  # original 0-based row index within each well's CSV
         h["_typewell_tvt_nn"] = _typewell_tvt_nn(h["GR"], t)
+        h["_typewell_pattern_tvt_nn"] = _typewell_pattern_tvt_nn(h["GR"], t)
+        h["_prePS_tvt_nn"] = _prePS_tvt_nn(h["GR"], h["TVT_input"])
         frames.append(h)
 
     return pd.concat(frames, ignore_index=True)
@@ -170,8 +229,12 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["tvt_input_interp"] = tvt_interp
     df["tvt_input_is_known"] = df["TVT_input"].notna().astype(np.float32)
 
-    # Typewell-derived TVT prior
+    # Typewell-derived TVT priors
     df["typewell_tvt_nn"] = df["_typewell_tvt_nn"]
+    df["typewell_pattern_tvt_nn"] = df["_typewell_pattern_tvt_nn"]
+
+    # Pre-PS self-reference: match post-PS GR against this well's own pre-PS GR↔TVT
+    df["prePS_tvt_nn"] = df["_prePS_tvt_nn"]
 
     # PS anchor features: TVT at the last known point, and MD distance from it
     for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
@@ -181,6 +244,9 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         anchor_md = grp.loc[known, "MD"].iloc[-1] if known.any() else grp["MD"].iloc[0]
         df.loc[grp_idx, "tvt_anchor"] = anchor_tvt
         df.loc[grp_idx, "delta_md_from_ps"] = grp["MD"] - anchor_md
+
+    # Pre-PS deviation: GR-predicted TVT relative to the anchor
+    df["prePS_tvt_dev"] = df["prePS_tvt_nn"] - df["tvt_anchor"]
 
     # Relative position within each well's borehole
     md_min = df.groupby("well_id", sort=False)["MD"].transform("min")
