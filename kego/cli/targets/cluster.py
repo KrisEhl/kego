@@ -118,7 +118,7 @@ def submit_fold(
     cluster_script = _cluster_script_path(script, config)
     runtime_env = _build_runtime_env(config, experiment_name, run_name, experiment_id, cli_params, mlflow_run_id)
     args_str = " ".join(script_args)
-    entrypoint = f"cd {config.cluster.uv_project_dir} && uv run python -m kego.cli.runner {cluster_script} {args_str}"
+    entrypoint = f"export PATH=$HOME/.local/bin:$PATH && cd {config.cluster.uv_project_dir} && uv run python -m kego.cli.runner {cluster_script} {args_str}"
     # heavy_gpu=1 pins the job to a 3090 (≥20 GB VRAM custom resource on the cluster)
     resources = {"heavy_gpu": 1} if heavy_gpu else None
     return _submit_http(config, entrypoint, runtime_env, num_gpus, num_cpus, resources)
