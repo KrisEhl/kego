@@ -18,6 +18,7 @@ def main() -> None:
     from kego.cli.commands import run as run_cmd
     from kego.cli.commands import status as status_cmd
     from kego.cli.commands import submit as submit_cmd
+    from kego.cli.commands import sync as sync_cmd
 
     parser = argparse.ArgumentParser(prog="kego", description="kego ML experiment engine")
     subparsers = parser.add_subparsers(dest="command")
@@ -27,6 +28,7 @@ def main() -> None:
     ls_cmd.add_parser(subparsers)
     gc_cmd.add_parser(subparsers)
     status_cmd.add_parser(subparsers)
+    sync_cmd.add_parser(subparsers)
     cluster_cmd.add_parser(subparsers)
     logs_cmd.add_parser(subparsers)
     cancel_cmd.add_parser(subparsers)
