@@ -172,6 +172,61 @@ def test_logs_unknown_submission_id(tmp_path: Path, repo_root: Path, monkeypatch
     assert "Ray API error" in result.stdout or "Cannot reach Ray cluster" in result.stdout
 
 
+def test_run_multifold_creates_parent_and_children(tmp_path: Path) -> None:
+    """Multi-fold _pre_create_runs creates one parent + N child MLflow runs."""
+    import os
+
+    import mlflow
+    from mlflow.tracking import MlflowClient
+
+    from kego.cli.commands.run import _pre_create_runs
+    from kego.cli.config import ClusterConfig, CompetitionConfig, KegoConfig
+
+    mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
+    os.environ["MLFLOW_TRACKING_URI"] = mlflow_uri
+
+    try:
+        config = KegoConfig(
+            cluster=ClusterConfig(ray_address="http://x:8265", mlflow_uri=mlflow_uri),
+            competition=CompetitionConfig(
+                slug="test-comp",
+                kaggle_user="u",
+                enable_gpu=False,
+                submit_file="s.csv",
+                pattern="script",
+                inference_notebook="t.py",
+                checkpoint_dir="out",
+                primary_metric="rmse",
+            ),
+            repo_root=tmp_path,
+            competition_dir=None,
+        )
+
+        mlflow.set_tracking_uri(mlflow_uri)
+        mlflow.set_experiment("test-comp")
+
+        fold_run_ids = _pre_create_runs(config, "test-comp", "my-run", "abc123", {}, [0, 1, 2])
+
+        client = MlflowClient()
+        exp_id = mlflow.get_experiment_by_name("test-comp").experiment_id
+        all_runs = client.search_runs(experiment_ids=[exp_id])
+
+        parent_runs = [r for r in all_runs if r.data.tags.get("kego_is_parent") == "true"]
+        child_runs = [r for r in all_runs if r.data.tags.get("mlflow.parentRunId")]
+
+        assert len(parent_runs) == 1
+        assert len(child_runs) == 3
+        assert parent_runs[0].data.tags["kego_fold_count"] == "3"
+        parent_id = parent_runs[0].info.run_id
+        for child in child_runs:
+            assert child.data.tags["mlflow.parentRunId"] == parent_id
+        assert set(fold_run_ids.keys()) == {0, 1, 2}
+        assert set(fold_run_ids.values()) == {r.info.run_id for r in child_runs}
+    finally:
+        os.environ.pop("MLFLOW_TRACKING_URI", None)
+        mlflow.set_tracking_uri("")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

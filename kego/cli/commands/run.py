@@ -20,9 +20,11 @@ def _pre_create_runs(
     cli_params: dict[str, str],
     folds: list[int],
 ) -> dict[int, str]:
-    """Create one MLflow run per fold so cluster jobs appear immediately in kego ls.
+    """Create MLflow runs for a multi-fold submission.
 
-    Returns a dict mapping fold index → mlflow run_id.
+    Single fold: creates one run (unchanged behaviour).
+    Multi-fold: creates one parent run + one child run per fold.
+    Returns fold → child_run_id (callers unchanged).
     Falls back gracefully if MLflow is unreachable.
     """
     import mlflow
@@ -39,20 +41,47 @@ def _pre_create_runs(
         mlflow.set_tracking_uri(tracking_uri)
         client = MlflowClient()
         exp = mlflow.set_experiment(experiment_name)
-        for fold in folds:
-            fold_params = {**cli_params, "fold": str(fold)}
-            tags = {
+        primary_metric = config.competition.primary_metric if config.competition else ""
+        multi = len(folds) > 1
+
+        parent_run_id: str | None = None
+        if multi:
+            parent_tags = {
                 "kego_id": experiment_id,
                 "kego_target": "cluster",
                 "kego_debug": "false",
                 "mlflow.runName": run_name,
-                "kego_primary_metric": config.competition.primary_metric if config.competition else "",
+                "kego_primary_metric": primary_metric,
+                "kego_is_parent": "true",
+                "kego_fold_count": str(len(folds)),
             }
-            # Create run via low-level client so it stays RUNNING (no context manager).
-            # The cluster runner will resume it by run_id and call set_terminated().
-            run = client.create_run(
+            parent = client.create_run(
                 experiment_id=exp.experiment_id,
                 run_name=run_name,
+                tags=parent_tags,
+            )
+            parent_run_id = parent.info.run_id
+            if cli_params:
+                client.log_batch(
+                    parent_run_id,
+                    params=[Param(k, str(v)) for k, v in cli_params.items()],
+                )
+
+        for fold in folds:
+            fold_params = {**cli_params, "fold": str(fold)}
+            fold_run_name = f"{run_name} fold={fold}" if multi else run_name
+            tags = {
+                "kego_id": experiment_id,
+                "kego_target": "cluster",
+                "kego_debug": "false",
+                "mlflow.runName": fold_run_name,
+                "kego_primary_metric": primary_metric,
+            }
+            if parent_run_id:
+                tags["mlflow.parentRunId"] = parent_run_id
+            run = client.create_run(
+                experiment_id=exp.experiment_id,
+                run_name=fold_run_name,
                 tags=tags,
             )
             client.log_batch(
