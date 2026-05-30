@@ -293,12 +293,12 @@ def train_fold(
                     val_trues.extend((w["target"][ps:] + w["ps_tvt"]).tolist())
 
             val_rmse = float(np.sqrt(mean_squared_error(val_trues, val_preds)))
-            train_loss_avg = train_loss / max(n_samples, 1)
+            train_rmse = float(np.sqrt(train_loss / max(n_samples, 1)))  # sqrt → same units as val
             print(
-                f"  epoch {epoch + 1:3d}  train_loss={train_loss_avg:.4f}  val_post_ps_rmse={val_rmse:.4f}",
+                f"  epoch {epoch + 1:3d}  train_rmse={train_rmse:.4f}  val_rmse={val_rmse:.4f}",
                 flush=True,
             )
-            log_epoch(epoch + 1, train_loss_avg, val_rmse)
+            log_epoch(epoch + 1, train_rmse, val_rmse)
 
             if val_rmse < best_val:
                 best_val = val_rmse
