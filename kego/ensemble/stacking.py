@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 from sklearn.model_selection import StratifiedKFold
 
@@ -48,8 +50,16 @@ def l2_stacking(
             eval_set=[(X_train[out_idx], train_labels[out_idx])],
             callbacks=[lgbm.early_stopping(50, verbose=False)],
         )
-        l2_oof[out_idx] = lgb.predict_proba(X_train[out_idx])[:, 1]
-        l2_holdout += lgb.predict_proba(X_holdout)[:, 1] / n_splits
-        l2_test += lgb.predict_proba(X_test)[:, 1] / n_splits
+        # LightGBM 4.x assigns auto feature names on numpy inputs; sklearn then warns
+        # when predicting on numpy that lacks those names. Suppress the spurious warning.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="X does not have valid feature names",
+                category=UserWarning,
+            )
+            l2_oof[out_idx] = lgb.predict_proba(X_train[out_idx])[:, 1]
+            l2_holdout += lgb.predict_proba(X_holdout)[:, 1] / n_splits
+            l2_test += lgb.predict_proba(X_test)[:, 1] / n_splits
 
     return l2_oof, l2_holdout, l2_test
