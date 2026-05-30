@@ -41,8 +41,34 @@ DATA_DIR = (
 TRAIN_DIR = DATA_DIR / "train"
 TEST_DIR = DATA_DIR / "test"
 OUTPUT_DIR = Path(__file__).parent / "outputs"
+CACHE_DIR = OUTPUT_DIR / "feat_cache"
 
 NON_FEATURES = {"well", "id", "target"}
+
+
+def _feat_version() -> str:
+    """Hash of the feature library so the cache invalidates when feature logic changes."""
+    import hashlib
+
+    code = (Path(__file__).parent / "rogii_features.py").read_bytes()
+    return hashlib.md5(code).hexdigest()[:10]
+
+
+def _build_or_load(hw_paths, is_train, FI, DI, n_wells):
+    """Build features, or load a cached parquet. The build is deterministic given the
+    feature code + well set, so caching lets local runs skip the ~12min rebuild and just
+    vary model/seed. Key = feature-code hash + train/test + well count (debug-safe)."""
+    tag = "train" if is_train else "test"
+    cache = CACHE_DIR / f"{tag}_{_feat_version()}_{n_wells}w.parquet"
+    if cache.exists():
+        print(f"Loading cached features: {cache.name}", flush=True)
+        return pd.read_parquet(cache)
+    df = rf.build_dataset(hw_paths, is_train=is_train, FI=FI, DI=DI, n_jobs=4)
+    if len(df):
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(cache)
+        print(f"Cached features -> {cache.name}", flush=True)
+    return df
 
 
 def _detect_device() -> str:
@@ -160,8 +186,8 @@ def main() -> None:
 
     print("Building features (per-well estimators)...", flush=True)
     t0 = time.time()
-    df = rf.build_dataset(hw_paths, is_train=True, FI=FI, DI=DI, n_jobs=4)
-    print(f"Built {len(df):,} rows × {len(df.columns)} cols in {time.time() - t0:.0f}s", flush=True)
+    df = _build_or_load(hw_paths, True, FI, DI, len(train_wids))
+    print(f"Built/loaded {len(df):,} rows × {len(df.columns)} cols in {time.time() - t0:.0f}s", flush=True)
     log_metric_live("progress_pct", 40)
 
     feat_cols = [c for c in df.columns if c not in NON_FEATURES]
@@ -216,7 +242,7 @@ def main() -> None:
         # Test predictions: imputers fit on ALL train wells, no exclusion
         test_paths = sorted(TEST_DIR.glob("*__horizontal_well.csv"))
         if test_paths:
-            df_te = rf.build_dataset(test_paths, is_train=False, FI=FI, DI=DI, n_jobs=4)
+            df_te = _build_or_load(test_paths, False, FI, DI, len(test_paths))
             if len(df_te):
                 Xte = df_te[feat_cols].to_numpy(np.float32)
                 Xte[~np.isfinite(Xte)] = np.nan

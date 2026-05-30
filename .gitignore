@@ -50,3 +50,4 @@ catboost_info/
 quantum_docs.md
 .worktrees/
 competitions/rogii-wellbore-geology-prediction/inference_kernel.py
+competitions/rogii-wellbore-geology-prediction/outputs/feat_cache/
