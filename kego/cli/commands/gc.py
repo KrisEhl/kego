@@ -74,10 +74,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
 
 
 def _gc(args: argparse.Namespace, extra_args: list[str]) -> int:
+    # Lazy imports (function top, once): defer heavy deps so light CLI commands stay fast.
     import logging
     import os
 
     import mlflow
+    import pandas as pd
     from mlflow.tracking import MlflowClient
 
     from kego.cli import config as cfg_module
@@ -117,25 +119,18 @@ def _gc(args: argparse.Namespace, extra_args: list[str]) -> int:
 
     ray_status = _ray_job_statuses(config.cluster.ray_address)
 
-    # Decide a new status for each RUNNING run: Ray terminal state wins, else time-kill.
-    actions: list[tuple[str, str, str, str]] = []  # (run_id, name, new_status, reason)
-    for _, r in runs.iterrows():
-        sub_id = r.get("tags.ray_submission_id")
-        run_id = r["run_id"]
-        name = str(r.get("tags.mlflow.runName", "?"))[:26]
+    # New status for one RUNNING run: Ray terminal state wins; else time-kill if old + no live job.
+    def _decide(r) -> tuple[str, str] | None:  # (new_status, reason) or None to leave alone
+        if (sub := r.get("tags.ray_submission_id")) is not None and pd.notna(sub) and sub in ray_status:
+            return (m, f"ray {ray_status[sub]}") if (m := _RAY_TERMINAL.get(ray_status[sub])) else None
         start = r.get("start_time")
-
-        import pandas as pd
-
-        if sub_id is not None and pd.notna(sub_id) and sub_id in ray_status:
-            mapped = _RAY_TERMINAL.get(ray_status[sub_id])
-            if mapped:
-                actions.append((run_id, name, mapped, f"ray {ray_status[sub_id]}"))
-                continue
-            # Ray says still RUNNING/PENDING — leave it.
-            continue
         if start is not None and pd.notna(start) and int(start.timestamp() * 1000) < cutoff_ms:
-            actions.append((run_id, name, "KILLED", f"older than {args.older_than}, no live Ray job"))
+            return "KILLED", f"older than {args.older_than}, no live Ray job"
+        return None
+
+    actions = [
+        (r["run_id"], str(r.get("tags.mlflow.runName", "?"))[:26], *d) for _, r in runs.iterrows() if (d := _decide(r))
+    ]
 
     if not actions:
         print("No zombie runs — all RUNNING runs have live Ray jobs and are recent.")
