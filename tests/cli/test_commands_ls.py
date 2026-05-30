@@ -303,3 +303,47 @@ def test_ls_shows_nested_runs_with_fold_column(mlflow_db, capsys):
     assert "f0" in out
     assert "f1" in out
     assert "└─" in out  # child rows are visually indented
+
+
+def test_ls_filter_fetches_parent_when_only_children_match(mlflow_db, capsys):
+    """When a filter returns children but not their parent, the parent is fetched and shown."""
+    import secrets
+
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient()
+    exp = mlflow.set_experiment("test-exp")
+
+    parent = client.create_run(
+        exp.experiment_id,
+        run_name="parent-run",
+        tags={
+            "kego_id": secrets.token_hex(3),
+            "kego_target": "cluster",
+            "kego_debug": "false",
+            "kego_is_parent": "true",
+            "kego_fold_count": "2",
+        },
+    )
+    client.set_terminated(parent.info.run_id, status="FINISHED")  # parent is FINISHED
+
+    for fold in range(2):
+        child = client.create_run(
+            exp.experiment_id,
+            run_name=f"parent-run fold={fold}",
+            tags={
+                "kego_id": secrets.token_hex(3),
+                "kego_target": "cluster",
+                "kego_debug": "false",
+                "mlflow.parentRunId": parent.info.run_id,
+            },
+        )
+        client.log_param(child.info.run_id, "fold", str(fold))
+        # Leave children RUNNING so --status running returns them but not the parent
+
+    # Filter to running only — parent is FINISHED so it won't be in the MLflow result
+    _ls(_make_ls_args(status="running"), [])
+    out = capsys.readouterr().out
+    # Parent must be injected so children render with context
+    assert "parent-run" in out
+    assert "└─" in out

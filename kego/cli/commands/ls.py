@@ -288,9 +288,59 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
         )
         return 1
 
+    import pandas as pd
+
     # Filter debug runs in Python — MLflow filter doesn't handle missing tags correctly
     if not args.show_all and "tags.kego_debug" in runs.columns:
         runs = runs[runs["tags.kego_debug"] != "true"]
+
+    # When child runs appear without their parent (e.g. due to --status filter),
+    # fetch the missing parent runs so the nested structure stays intact.
+    if "tags.mlflow.parentRunId" in runs.columns:
+        child_parent_ids = runs["tags.mlflow.parentRunId"].dropna().pipe(lambda s: s[s != ""]).unique().tolist()
+        present_ids = set(runs["run_id"].tolist()) if "run_id" in runs.columns else set()
+        missing = [pid for pid in child_parent_ids if pid not in present_ids]
+        if missing:
+            parent_rows = []
+            for pid in missing:
+                try:
+                    pr = client.get_run(pid)
+                    row: dict = {
+                        "run_id": pr.info.run_id,
+                        "experiment_id": pr.info.experiment_id,
+                        "status": pr.info.status,
+                        "start_time": pd.Timestamp(pr.info.start_time, unit="ms", tz="UTC"),
+                    }
+                    row.update({f"tags.{k}": v for k, v in pr.data.tags.items()})
+                    row.update({f"params.{k}": v for k, v in pr.data.params.items()})
+                    row.update({f"metrics.{k}": v for k, v in pr.data.metrics.items()})
+                    parent_rows.append(row)
+                except Exception as exc:
+                    logging.getLogger(__name__).debug("Could not fetch parent run %s: %s", pid, exc)
+            if parent_rows:
+                runs = pd.concat([runs, pd.DataFrame(parent_rows)], ignore_index=True)
+
+    # Re-sort so each parent row appears immediately before its children.
+    # Groups are ordered by parent start_time DESC; within a group parent comes first.
+    if "tags.kego_is_parent" in runs.columns and "tags.mlflow.parentRunId" in runs.columns:
+        parent_times = dict(
+            zip(
+                runs.loc[runs["tags.kego_is_parent"].fillna("") == "true", "run_id"],
+                runs.loc[runs["tags.kego_is_parent"].fillna("") == "true", "start_time"],
+            )
+        )
+        runs["_group_time"] = runs.apply(
+            lambda r: (
+                parent_times.get(r.get("tags.mlflow.parentRunId", ""), r["start_time"])
+                if (pd.notna(r.get("tags.mlflow.parentRunId", "")) and r.get("tags.mlflow.parentRunId", ""))
+                else r["start_time"]
+            ),
+            axis=1,
+        )
+        runs["_is_parent"] = (runs["tags.kego_is_parent"].fillna("") == "true").astype(int)
+        runs = runs.sort_values(["_group_time", "_is_parent"], ascending=[False, False], ignore_index=True).drop(
+            columns=["_group_time", "_is_parent"]
+        )
 
     primary_metric = "metric"
     if config.competition:
