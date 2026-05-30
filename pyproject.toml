@@ -29,6 +29,7 @@ dev = [
     "lightgbm>=4.0.0",
     "pre-commit>=3.6.0",
     "pytest>=8.0.0",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.pytest.ini_options]
