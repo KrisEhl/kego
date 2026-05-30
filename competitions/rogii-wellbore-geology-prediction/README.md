@@ -198,3 +198,9 @@ Same xgb config (seed 42, 212 divergence feat), **three runs: 10.48 (v15 GPU) / 
 - ensemble "+0.04" → noise
 
 **Only the coarse result is real**: ported estimator suite ~10.6 vs 15.4 constant-ish plateau (>4 ft, far above noise). **Methodology fix**: use **multi-seed averaging** (mean over ≥5 seeds) for any feature/model A/B; single-run deltas < ~0.3 are meaningless. LB is the only single-shot trustworthy signal.
+
+**5-seed divergence A/B VERDICT (offline CPU, 2026-05-31)** — divergence is **NEUTRAL**:
+- div mean **10.804** (std 0.043) vs nodiv mean **10.814** (std 0.074) → **Δ 0.01, far below std**.
+- ⚠️ At 3 seeds nodiv "led" by 0.04; seeds 4–5 FLIPPED it. **3 seeds was still noise** — need ≥5.
+- So divergence/slopes/ensemble gains were ALL noise. **Honest best = single-xgb 198-feat, LB 10.538.** Divergence kept in code (neutral, `--no-divergence` to drop). Next real lever must be >noise: full ensemble (XGB+CB+HGB NNLS) + Optuna (ref's path to 9.85/8.905) — GPU-bound; test HGB diversity locally meanwhile.
+- Note: CPU OOF (~10.81) runs ~0.25 above GPU (~10.55); A/B valid (both CPU).
