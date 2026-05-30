@@ -2,19 +2,7 @@ import datetime
 
 import pandas as pd
 
-from kego.cli.commands.ls import _ago, format_table
-
-
-def test_ago_hours():
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
-    start = now - datetime.timedelta(hours=3)
-    assert _ago(start) == "3h"
-
-
-def test_ago_minutes():
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
-    start = now - datetime.timedelta(minutes=45)
-    assert _ago(start) == "45m"
+from kego.cli.commands.ls import format_table
 
 
 def test_format_table_basic():

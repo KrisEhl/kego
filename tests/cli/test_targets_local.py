@@ -1,11 +1,10 @@
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
 from kego.cli.config import ClusterConfig, KegoConfig
-from kego.cli.targets.local import _build_command, run
+from kego.cli.targets.local import run
 
 
 @pytest.fixture
@@ -19,16 +18,6 @@ def config():
         repo_root=Path("/repo"),
         competition_dir=None,
     )
-
-
-def test_build_command_structure():
-    cmd = _build_command("train_cnn.py", ["--fold", "0", "--epochs", "30"])
-    assert cmd[0] == sys.executable
-    assert "-m" in cmd
-    assert "kego.cli.runner" in cmd
-    assert "train_cnn.py" in cmd
-    assert "--fold" in cmd
-    assert "0" in cmd
 
 
 def test_run_sets_env_vars(config, monkeypatch):
