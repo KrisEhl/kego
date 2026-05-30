@@ -235,48 +235,33 @@ def train_fold(
         train_loss = 0.0
         n_samples = 0
 
-        # Mini-batch: truncate each well to fixed length, stack into one GPU call
-        # pre-PS: last PRE_LEN rows; post-PS: first POST_LEN rows → total SEQ_LEN
-        PRE_LEN, POST_LEN = 500, 2000
-
+        # Dynamic-padding mini-batch: pad each batch to its longest well.
+        # Loss mask ignores padded positions so no signal bleeds from padding.
         for batch_start in range(0, len(train_order), args.batch_size):
             batch_idx = train_order[batch_start : batch_start + args.batch_size]
-            feats, targets, post_starts = [], [], []
-
-            for idx in batch_idx:
-                w = train_wells[idx]
-                if w["target"] is None:
-                    continue
-                ps = w["ps"]
-                # Take last PRE_LEN pre-PS rows + first POST_LEN post-PS rows
-                pre_rows = w["feat"][max(0, ps - PRE_LEN) : ps]
-                post_rows = w["feat"][ps : ps + POST_LEN]
-                pre_tgt = w["target"][max(0, ps - PRE_LEN) : ps]
-                post_tgt = w["target"][ps : ps + POST_LEN]
-
-                # Pad to fixed length if well is shorter
-                pad_pre = PRE_LEN - len(pre_rows)
-                pad_post = POST_LEN - len(post_rows)
-                if pad_pre > 0:
-                    pre_rows = np.concatenate([np.zeros((pad_pre, N_FEAT), dtype=np.float32), pre_rows])
-                    pre_tgt = np.concatenate([np.zeros(pad_pre, dtype=np.float32), pre_tgt])
-                if pad_post > 0:
-                    post_rows = np.concatenate([post_rows, np.zeros((pad_post, N_FEAT), dtype=np.float32)])
-                    post_tgt = np.concatenate([post_tgt, np.zeros(pad_post, dtype=np.float32)])
-
-                feats.append(np.concatenate([pre_rows, post_rows]))
-                targets.append(np.concatenate([pre_tgt, post_tgt]))
-                post_starts.append(PRE_LEN)
-
-            if not feats:
+            valid = [train_wells[i] for i in batch_idx if train_wells[i]["target"] is not None]
+            if not valid:
                 continue
 
-            feat_t = torch.from_numpy(np.stack(feats)).to(device)  # (B, SEQ_LEN, F)
-            tgt_t = torch.from_numpy(np.stack(targets)).to(device)  # (B, SEQ_LEN)
-            ps_idx = post_starts[0]  # same for all (PRE_LEN)
+            max_len = max(len(w["feat"]) for w in valid)
+            B = len(valid)
+            feat_np = np.zeros((B, max_len, N_FEAT), dtype=np.float32)
+            tgt_np = np.zeros((B, max_len), dtype=np.float32)
+            mask_np = np.zeros((B, max_len), dtype=bool)  # True = valid post-PS position
 
-            pred = model(feat_t)
-            loss = F.mse_loss(pred[:, ps_idx:], tgt_t[:, ps_idx:])
+            for i, w in enumerate(valid):
+                n = len(w["feat"])
+                ps = w["ps"]
+                feat_np[i, :n] = w["feat"]
+                tgt_np[i, :n] = w["target"]
+                mask_np[i, ps:n] = True  # only post-PS rows contribute to loss
+
+            feat_t = torch.from_numpy(feat_np).to(device)
+            tgt_t = torch.from_numpy(tgt_np).to(device)
+            mask_t = torch.from_numpy(mask_np).to(device)
+
+            pred = model(feat_t)  # (B, max_len)
+            loss = (F.mse_loss(pred, tgt_t, reduction="none") * mask_t).sum() / mask_t.sum().clamp(min=1)
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -328,7 +313,7 @@ def train_fold(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Rogii sequence model")
-    parser.add_argument("--folds", type=int, default=5)
+    parser.add_argument("--folds", type=int, default=3)
     parser.add_argument("--fold", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epochs", type=int, default=100)
