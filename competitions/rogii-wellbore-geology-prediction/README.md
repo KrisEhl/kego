@@ -204,3 +204,7 @@ Same xgb config (seed 42, 212 divergence feat), **three runs: 10.48 (v15 GPU) / 
 - ⚠️ At 3 seeds nodiv "led" by 0.04; seeds 4–5 FLIPPED it. **3 seeds was still noise** — need ≥5.
 - So divergence/slopes/ensemble gains were ALL noise. **Honest best = single-xgb 198-feat, LB 10.538.** Divergence kept in code (neutral, `--no-divergence` to drop). Next real lever must be >noise: full ensemble (XGB+CB+HGB NNLS) + Optuna (ref's path to 9.85/8.905) — GPU-bound; test HGB diversity locally meanwhile.
 - Note: CPU OOF (~10.81) runs ~0.25 above GPU (~10.55); A/B valid (both CPU).
+
+**HGB ensemble member (offline CPU, 2026-05-31)** — promising, awaiting multi-seed:
+- xgb+HGB NNLS, **seed 1**: xgb 10.79 (w 0.74) + HGB 10.93 (w **0.29**) → blend **10.75**. Blend beats best member; **NNLS gives HGB a real 0.29 weight → HGB is genuinely diverse** (different algo). But ~0.04 < noise std → need multi-seed mean (3-seed loop running, ~37min/run; HGB ~10min/fold CPU).
+- **Direction confirmed for GPU**: the script ALREADY supports `--model ensemble --ensemble-members xgboost,catboost,hgb` → fire the full 3-model NNLS ensemble + Optuna on GPU when cluster returns (ref's ~0.7 lever to 9.85). CPU too slow for catboost/HGB multi-seed at scale.
