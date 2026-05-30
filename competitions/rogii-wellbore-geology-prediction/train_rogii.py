@@ -103,6 +103,17 @@ FEATURE_COLS: list[str] = [
     "typewell_pattern_tvt_nn",
     "prePS_tvt_nn",
     "prePS_tvt_dev",
+    # Multi-scale Pearson NCC: primary signal from public solutions (r=0.9993 with TVT)
+    "ncc_tvt_hw8",
+    "ncc_tvt_hw15",
+    "ncc_tvt_hw25",
+    "ncc_score_hw8",
+    "ncc_score_hw15",
+    "ncc_score_hw25",
+    "ncc_tvt_blend",  # softmax-weighted blend across scales
+    # Formation spatial KNN with per-well bias calibration
+    "knn_tvt_pred",
+    "knn_tvt_dev",  # deviation from anchor
     "md_frac",
     "well_md_range",
     "gr_roll_mean_10",
@@ -193,6 +204,110 @@ def _prePS_tvt_nn(gr: pd.Series, tvt_input: pd.Series) -> pd.Series:
     return pd.Series(chosen, index=gr.index)
 
 
+def _ncc_tvt_vectorised(
+    gr_filled: np.ndarray,
+    tw_gr: np.ndarray,
+    tw_tvt: np.ndarray,
+    hw: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorised Pearson NCC via matrix multiply: O(N_h × N_tw × wsize) total.
+
+    For each horizontal row i, find the typewell position j where the GR window
+    [j-hw:j+hw] has the highest Pearson correlation with h_gr[i-hw:i+hw].
+
+    Returns (tvt_pred, ncc_score) of shape (N_h,).
+    """
+    wsize = 2 * hw + 1
+    n_h = len(gr_filled)
+    n_tw = len(tw_gr)
+    n_valid_tw = n_tw - wsize + 1
+    if n_valid_tw < 1:
+        return np.full(n_h, np.nan), np.zeros(n_h)
+
+    # Pad arrays at edges so every row gets a full window
+    h_pad = np.pad(gr_filled, hw, mode="edge")
+    tw_pad = np.pad(tw_gr, hw, mode="edge")
+
+    # Extract all windows: (N_h, wsize) and (N_tw, wsize)
+    h_wins = np.lib.stride_tricks.sliding_window_view(h_pad, wsize)[:n_h]  # (N_h, W)
+    tw_wins = np.lib.stride_tricks.sliding_window_view(tw_pad, wsize)[:n_tw]  # (N_tw, W)
+
+    # Normalize each window to zero mean, unit std (Pearson normalisation)
+    h_means = h_wins.mean(axis=1, keepdims=True)
+    h_stds = h_wins.std(axis=1, keepdims=True).clip(min=1e-6)
+    h_norm = (h_wins - h_means) / h_stds  # (N_h, W)
+
+    tw_means = tw_wins.mean(axis=1, keepdims=True)
+    tw_stds = tw_wins.std(axis=1, keepdims=True).clip(min=1e-6)
+    tw_norm = (tw_wins - tw_means) / tw_stds  # (N_tw, W)
+
+    # NCC matrix: (N_h, N_tw) — one BLAS dgemm call
+    ncc_mat = (h_norm @ tw_norm.T) / wsize  # Pearson r
+
+    # Best typewell position for each horizontal row
+    best_j = np.argmax(ncc_mat, axis=1)
+    tvt_pred = tw_tvt[np.minimum(best_j + hw, n_tw - 1)]
+    ncc_score = ncc_mat[np.arange(n_h), best_j]
+
+    return tvt_pred, ncc_score
+
+
+def _ncc_tvt_all_scales(
+    gr: pd.Series,
+    typewell: pd.DataFrame,
+    ps_tvt: float,
+    search_range_ft: float = 150.0,
+) -> dict[str, np.ndarray]:
+    """NCC TVT predictions at hw=8, 15, 25 with softmax-weighted blend.
+
+    Constrains the typewell search to ps_tvt ± search_range_ft — critical because
+    the post-PS zone is only ±15 ft std; searching the full typewell finds spurious matches.
+    """
+    tw = typewell.dropna(subset=["TVT", "GR"]).sort_values("TVT").reset_index(drop=True)
+    n = len(gr)
+    nan_result = {
+        k: np.full(n, np.nan)
+        for k in [
+            "ncc_tvt_hw8",
+            "ncc_tvt_hw15",
+            "ncc_tvt_hw25",
+            "ncc_score_hw8",
+            "ncc_score_hw15",
+            "ncc_score_hw25",
+            "ncc_tvt_blend",
+        ]
+    }
+    if tw.empty:
+        return nan_result
+
+    # Restrict typewell to search window around ps_tvt
+    mask = (tw["TVT"] >= ps_tvt - search_range_ft) & (tw["TVT"] <= ps_tvt + search_range_ft)
+    tw_w = tw[mask].reset_index(drop=True)
+    if len(tw_w) < 5:
+        return nan_result
+
+    tw_gr = tw_w["GR"].values.astype(np.float64)
+    tw_tvt = tw_w["TVT"].values
+    gr_filled = gr.ffill().bfill().fillna(float(gr.median())).values.astype(np.float64)
+
+    results: dict[str, np.ndarray] = {}
+    scores, preds = [], []
+    for hw in [8, 15, 25]:
+        tvt, score = _ncc_tvt_vectorised(gr_filled, tw_gr, tw_tvt, hw)
+        results[f"ncc_tvt_hw{hw}"] = tvt
+        results[f"ncc_score_hw{hw}"] = score
+        scores.append(score)
+        preds.append(tvt)
+
+    # Softmax blend across scales
+    scores_arr = np.stack(scores)
+    preds_arr = np.stack(preds)
+    w = np.exp(np.clip(scores_arr, -10, 10))
+    w /= w.sum(axis=0, keepdims=True).clip(min=1e-9)
+    results["ncc_tvt_blend"] = (preds_arr * w).sum(axis=0)
+    return results
+
+
 def load_dataset(directory: Path, max_wells: int | None = None) -> pd.DataFrame:
     """Load and concatenate all horizontal wells from directory."""
     well_ids = _list_well_ids(directory)
@@ -209,6 +324,14 @@ def load_dataset(directory: Path, max_wells: int | None = None) -> pd.DataFrame:
         h["_typewell_tvt_nn"] = _typewell_tvt_nn(h["GR"], t)
         h["_typewell_pattern_tvt_nn"] = _typewell_pattern_tvt_nn(h["GR"], t)
         h["_prePS_tvt_nn"] = _prePS_tvt_nn(h["GR"], h["TVT_input"])
+
+        # Multi-scale NCC — constrained to ±150 ft around PS anchor
+        ps = int(h["TVT_input"].notna().sum())
+        ps_tvt = float(h.iloc[ps - 1]["TVT_input"]) if ps > 0 else 0.0
+        ncc = _ncc_tvt_all_scales(h["GR"], t, ps_tvt=ps_tvt)
+        for k, v in ncc.items():
+            h[f"_{k}"] = v
+
         frames.append(h)
 
     return pd.concat(frames, ignore_index=True)
@@ -247,6 +370,41 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Pre-PS deviation: GR-predicted TVT relative to the anchor
     df["prePS_tvt_dev"] = df["prePS_tvt_nn"] - df["tvt_anchor"]
+
+    # Multi-scale NCC features (from load_dataset)
+    for col in [
+        "ncc_tvt_hw8",
+        "ncc_tvt_hw15",
+        "ncc_tvt_hw25",
+        "ncc_score_hw8",
+        "ncc_score_hw15",
+        "ncc_score_hw25",
+        "ncc_tvt_blend",
+    ]:
+        df[col] = df[f"_{col}"].fillna(df["tvt_anchor"])
+
+    # Formation KNN with per-well bias calibration
+    # TVT ≈ -Z + formation_depth(X,Y) + bias_well  (physics formula from public solutions)
+    # We use the EGFDU column (available in train) or recover from TVT_input for test
+    has_egfdu = "EGFDU" in df.columns
+    if has_egfdu:
+        df["_knn_raw"] = -df["Z"] + df["EGFDU"]
+    else:
+        # Recover from anchor: EGFDU_rec = TVT_input + Z - egfdu_tw, but we just need the
+        # per-well bias from the anchor rows
+        df["_knn_raw"] = df["tvt_anchor"]  # fallback for test wells without EGFDU
+
+    # Per-well bias: calibrate from anchor region where TVT_input is known
+    knn_tvt = df["tvt_anchor"].copy()
+    for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
+        grp = df.loc[grp_idx]
+        known = grp["TVT_input"].notna()
+        if known.sum() > 0 and has_egfdu:
+            # bias = mean(TVT_input - (-Z + EGFDU)) over known anchor rows
+            bias = float((grp.loc[known, "TVT_input"] - grp.loc[known, "_knn_raw"]).mean())
+            knn_tvt.loc[grp_idx] = grp["_knn_raw"] + bias
+    df["knn_tvt_pred"] = knn_tvt
+    df["knn_tvt_dev"] = df["knn_tvt_pred"] - df["tvt_anchor"]
 
     # Relative position within each well's borehole
     md_min = df.groupby("well_id", sort=False)["MD"].transform("min")

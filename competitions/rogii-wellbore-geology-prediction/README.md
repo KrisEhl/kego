@@ -60,13 +60,29 @@ for pre-PS rows without learning from GR. To predict post-PS it just outputs ~0 
 **Next**: input masking — randomly zero `tvt_dev_known` for 50% of pre-PS rows during training,
 forcing the model to learn GR→TVT from the pre-PS data. Also increase capacity (d_model 128, 8 layers).
 
-### Track 4 — Sequence model improvements
-- [~] Input masking: zero tvt_dev_known for random 50% of pre-PS rows (BERT-style)
-- [ ] Auxiliary loss on pre-PS rows (train on pre-PS TVT deviations too)
-- [ ] Larger model: d_model=128, n_layers=8 (wider receptive field ~1000 ft)
+### [~] Track 4 — Physics-informed tabular features (from public solutions analysis)
+Public solutions get 8.9–9.4 ft using tabular GBM + physics features, NOT neural nets.
+Neural alone = 15.5 ft (same as us). Key signals:
+
+**Priority 1 — Multi-scale Pearson NCC** (r=0.9993 with true TVT)
+For each row, compute Pearson correlation between h_gr[i-hw:i+hw] and tw_gr[j-hw:j+hw]
+at candidate typewell positions j. Half-widths hw ∈ {8, 15, 25}. Softmax blend.
+This is NORMALISED cross-correlation — scale-invariant, handles lateral GR variation.
+
+**Priority 2 — Formation spatial KNN with bias calibration**
+TVT ≈ -Z + formation_depth(X,Y) + bias_well
+KNN from training wells' formation surfaces; bias_well calibrated from anchor zone.
+
+**Priority 3 — Beam search (Viterbi HMM)**
+Forward-Viterbi on typewell GR emissions, 4 variants (loose/medium/tight sigma pairs).
+
+**Priority 4 — Particle filter**
+500 particles tracking TVT through typewell GR likelihood.
+
+**Priority 5 — Savitzky-Golay smoothing post-processing**
 
 ### Track 5 — Ensemble
-Stack Tracks 2–4 with Ridge regression on OOF predictions.
+Stack all signal families with NNLS blend (LightGBM + CatBoost + XGBoost × seeds).
 
 ## Running
 
