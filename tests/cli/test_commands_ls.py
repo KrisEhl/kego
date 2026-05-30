@@ -147,6 +147,26 @@ def test_format_table_basic():
     assert "def456" in lines[3]
 
 
+def test_format_table_old_run_shows_date_not_hours():
+    """Runs older than 24h display a date string, not '48h'."""
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    runs = pd.DataFrame(
+        [
+            {
+                "tags.kego_id": "abc123",
+                "tags.mlflow.runName": "old-run",
+                "tags.kego_target": "cluster",
+                "metrics.auc": 0.9,
+                "status": "FINISHED",
+                "start_time": now - datetime.timedelta(days=2),
+            }
+        ]
+    )
+    lines = format_table(runs, primary_metric="auc")
+    assert "48h" not in lines[2]
+    assert "202" in lines[2]  # year prefix e.g. 2026-…
+
+
 def test_format_table_empty():
     lines = format_table(pd.DataFrame(), primary_metric="cmAP")
     assert lines == ["No experiments found."]

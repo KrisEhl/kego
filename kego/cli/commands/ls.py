@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 def _ago(start: datetime.datetime) -> str:
     delta = datetime.datetime.now(tz=datetime.timezone.utc) - start
     hours = int(delta.total_seconds() // 3600)
+    if hours >= 24:
+        return start.to_pydatetime().astimezone().strftime("%Y-%m-%d %H:%M")
     if hours > 0:
         return f"{hours}h"
     return f"{int(delta.total_seconds() // 60)}m"
