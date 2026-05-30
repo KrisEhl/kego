@@ -121,6 +121,21 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0):
     n = 50 if debug else 3000
     rng = np.random.default_rng(seed)
     si = rng.choice(len(Xtr), size=min(100_000, len(Xtr)), replace=False)
+    if model_name == "hgb":
+        from sklearn.ensemble import HistGradientBoostingRegressor
+
+        # early_stopping=False per ref: its internal validation_fraction is a random split
+        # that leaks per-well GR patterns; GroupKFold OOF is the true stopping criterion.
+        m = HistGradientBoostingRegressor(
+            max_iter=50 if debug else 1500,
+            learning_rate=0.05,
+            max_leaf_nodes=31,
+            l2_regularization=1.0,
+            early_stopping=False,
+            random_state=seed,
+        )
+        m.fit(Xtr, ytr)  # HGB handles NaN natively; no eval_set (no early stopping)
+        return m
     if model_name == "catboost":
         from catboost import CatBoostRegressor
 
@@ -158,7 +173,12 @@ def main() -> None:
         help="Run all folds + OOF + test in ONE job (build once). Overrides --fold (cluster default injects --fold 0).",
     )
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--model", default="xgboost", choices=["xgboost", "catboost", "ensemble"])
+    p.add_argument("--model", default="xgboost", choices=["xgboost", "catboost", "hgb", "ensemble"])
+    p.add_argument(
+        "--ensemble-members",
+        default="xgboost,catboost",
+        help="Comma-sep families for --model ensemble (e.g. xgboost,hgb). NNLS-blended.",
+    )
     p.add_argument(
         "--no-divergence",
         action="store_true",
@@ -214,7 +234,7 @@ def main() -> None:
 
     # ensemble = NNLS blend of xgboost + catboost on the SAME features (one build).
     # Reference's dominant lever (R6->R11: NNLS XGB+CB(+HGB)). Else a single family.
-    families = ["xgboost", "catboost"] if args.model == "ensemble" else [args.model]
+    families = args.ensemble_members.split(",") if args.model == "ensemble" else [args.model]
     oof = {f: np.full(len(df), np.nan) for f in families}
     fold_models = {f: [] for f in families}
     for fold_num, (tr, va) in enumerated:
