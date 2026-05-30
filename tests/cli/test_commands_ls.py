@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import secrets
+from unittest.mock import patch
 
 import mlflow
 import pandas as pd
@@ -23,6 +24,7 @@ def _make_ls_args(**overrides) -> argparse.Namespace:
         limit=50,
         show_all=False,
         show_metric_name=False,
+        show_ray=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -447,3 +449,44 @@ def test_ls_parent_status_is_derived_from_children(mlflow_db, capsys):
         line for line in out.splitlines() if "parent-run" in line and "RUNNING" in line and "fold=0" not in line
     ]
     assert parent_rows, "parent run row should show RUNNING status"
+
+
+def test_ls_ray_column_surfaces_mlflow_vs_ray_mismatch(mlflow_db, capsys):
+    """--ray adds a RAY column so a zombie (MLflow RUNNING, Ray STOPPED) is visible inline."""
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient()
+    exp = mlflow.set_experiment("test-exp")
+    client.create_run(
+        exp.experiment_id,
+        run_name="zombie-run",
+        tags={
+            "kego_id": secrets.token_hex(3),
+            "kego_target": "cluster",
+            "kego_debug": "false",
+            "ray_submission_id": "raysubmit_x",
+        },
+    )  # left RUNNING in MLflow
+
+    with patch("kego.cli.ray.job_statuses", return_value={"raysubmit_x": "STOPPED"}):
+        _ls(_make_ls_args(show_ray=True), [])
+    out = capsys.readouterr().out
+
+    assert "RAY" in out  # column header present
+    row = next(line for line in out.splitlines() if "zombie-run" in line)
+    assert "RUNNING" in row  # MLflow status
+    assert "STOPPED" in row  # Ray state alongside → mismatch obvious
+
+
+def test_ls_no_ray_column_by_default(mlflow_db, capsys):
+    from mlflow.tracking import MlflowClient
+
+    exp = mlflow.set_experiment("test-exp")
+    MlflowClient().create_run(
+        exp.experiment_id,
+        run_name="plain-run",
+        tags={"kego_id": secrets.token_hex(3), "kego_target": "cluster", "kego_debug": "false"},
+    )
+    _ls(_make_ls_args(), [])
+    out = capsys.readouterr().out
+    assert "RAY" not in out

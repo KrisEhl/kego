@@ -22,16 +22,9 @@ def _ms_cutoff(value: str) -> int:
 
 def _ray_job_statuses(ray_address: str) -> dict[str, str]:
     """Map Ray submission_id → status. Empty dict if Ray is unreachable."""
-    import json
-    import urllib.request
+    from kego.cli import ray
 
-    url = ray_address.rstrip("/") + "/api/jobs/"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
-            jobs = json.loads(resp.read())
-    except Exception:
-        return {}
-    return {j["submission_id"]: j.get("status", "") for j in jobs if j.get("submission_id")}
+    return ray.job_statuses(ray_address)
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]

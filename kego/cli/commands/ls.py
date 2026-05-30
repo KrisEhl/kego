@@ -133,6 +133,7 @@ def format_table(
     show_metric_name: bool = False,
     show_fold: bool = False,
     prefer_primary_metric: bool = False,
+    ray_status: dict[str, str] | None = None,
 ) -> list[str]:
     """Format experiment runs into a table. Returns list of lines."""
     import pandas as pd
@@ -144,9 +145,10 @@ def format_table(
 
     fold_col = f" {'FOLD':<6}" if show_fold else ""
     metric_name_col = f" {'METRIC_NAME':<10}" if show_metric_name else ""
+    ray_col = f" {'RAY':<9}" if ray_status is not None else ""
     header = (
         f"{'ID':<8} {'NAME':<26}{fold_col} {'COMPETITION':<20} {'TARGET':<8}"
-        f" {'METRIC':>8}{metric_name_col} {'STATUS':<10} {'AGO'}"
+        f" {'METRIC':>8}{metric_name_col} {'STATUS':<10}{ray_col} {'AGO'}"
     )
     sep = "-" * len(header)
     lines = [header, sep]
@@ -188,9 +190,15 @@ def format_table(
             row_id = exp_id
             row_name = name
 
+        ray_cell = ""
+        if ray_status is not None:
+            sub = row.get("tags.ray_submission_id")
+            ray_state = ray_status.get(sub, "-") if (pd.notna(sub) and sub) else "-"
+            ray_cell = f" {ray_state:<9}"
+
         lines.append(
             f"{row_id:<8} {row_name:<26}{fold_cell} {competition:<20} {target:<8}"
-            f" {metric:>8}{metric_name_cell} {status:<10} {ago}"
+            f" {metric:>8}{metric_name_cell} {status:<10}{ray_cell} {ago}"
         )
 
     return lines
@@ -239,6 +247,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         action="store_true",
         dest="show_metric_name",
         help="Show metric name column",
+    )
+    p.add_argument(
+        "--ray",
+        action="store_true",
+        dest="show_ray",
+        help="Add a RAY column with each run's Ray job state (combines ls + status)",
     )
     p.set_defaults(func=_ls)
 
@@ -380,6 +394,12 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
         "tags.kego_is_parent" in runs.columns and runs["tags.kego_is_parent"].notna().any()
     )
 
+    ray_status = None
+    if args.show_ray:
+        from kego.cli import ray
+
+        ray_status = ray.job_statuses(config.cluster.ray_address)
+
     table_lines = format_table(
         runs,
         primary_metric,
@@ -387,6 +407,7 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
         args.show_metric_name,
         show_fold=has_nested,
         prefer_primary_metric=bool(args.competition and config.competition),
+        ray_status=ray_status,
     )
     for line in table_lines:
         print(line)
