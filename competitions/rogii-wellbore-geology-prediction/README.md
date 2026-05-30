@@ -114,3 +114,5 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | seq-v2 | TCN 5-fold full sequences | 15.86 ft | fold 1: 14.79 ft — below constant |
 | seq-v3 | TCN 3-fold full sequences | 15.86 ft | fold 1: 14.79 ft — same; model still near constant baseline |
 | seq-v4 | + input masking 50% + d128/8L | **15.54 ft** | consistently below constant — masking forces GR learning |
+| seq-v5 | mask=0.9 + denoising aux loss | 16.42 ft | too aggressive — loses pre-PS TVT context |
+| seq-v6 | mask=1.0 + denoising aux loss | 15.65 ft | full blind — fold 1 best (14.58) but fold 0/2 hurt |
