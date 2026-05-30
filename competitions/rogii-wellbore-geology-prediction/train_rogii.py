@@ -202,6 +202,20 @@ FEATURE_COLS: list[str] = [
     "gr_roll_std_150",
     "well_gr_mean",
     "well_gr_std",
+    # Physics dip extrapolation (from public 9.85 solution) — inclination + apparent dip
+    "b_dip_full",
+    "b_dip_late",
+    "tvt_dip_full",
+    "tvt_dip_late",
+    # GR lags/leads — local GR context (weak individually, useful in aggregate)
+    "gr_lag_5",
+    "gr_lag_10",
+    "gr_lag_25",
+    "gr_lag_50",
+    "gr_lag_100",
+    "gr_lead_5",
+    "gr_lead_10",
+    "gr_lead_25",
 ]
 FORMATION_FEATURE_COLS: list[str] = [
     "formation_knn_tvt",
@@ -591,6 +605,22 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         denom = float(np.dot(md_c, md_c))
         return float(np.dot(md_c, tvt) / denom) if denom > 0 else 0.0
 
+    # Trajectory kinematics: borehole inclination from Z/MD (cos(incl) = -dZ/dMD).
+    # Physics dip model (from public 9.85 solution): dTVT = (cos(incl) + sin(incl)*b)*dMD,
+    # where b = apparent formation dip fit from the anchor zone. Vectorised dMD/cos/sin here.
+    dmd = df.groupby("well_id", sort=False)["MD"].diff().fillna(1.0)
+    dmd = dmd.where(dmd.abs() > 1e-6, 1.0)
+    dz = df.groupby("well_id", sort=False)["Z"].diff().fillna(0.0)
+    df["_dmd"] = dmd.to_numpy()
+    df["_cos_incl"] = np.clip(-dz.to_numpy() / dmd.to_numpy(), -1.0, 1.0)
+    df["_sin_incl"] = np.sqrt(np.clip(1.0 - df["_cos_incl"].to_numpy() ** 2, 0.0, 1.0))
+
+    def _fit_dip(dtvt: np.ndarray, cos_i: np.ndarray, sin_i: np.ndarray, dmd_: np.ndarray) -> float:
+        """Apparent dip b: min ||dTVT - (cos+sin*b)*dMD||²  →  closed form."""
+        num = float(np.sum((dtvt - cos_i * dmd_) * (sin_i * dmd_)))
+        den = float(np.sum((sin_i * dmd_) ** 2))
+        return num / den if den > 1e-9 else 0.0
+
     # Anchor-zone statistics (pre-PS TVT + GR summary — from XGB Starter notebook)
     for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
         grp = df.loc[grp_idx]
@@ -629,6 +659,31 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
                 (grp["X"] - ax) ** 2 + (grp["Y"] - ay) ** 2 + (grp["Z"] - az) ** 2
             )
             df.loc[grp_idx, "gr_minus_last_known"] = grp["GR"] - float(gr_k.iloc[-1])
+
+            # Physics dip extrapolation: fit apparent dip b on anchor, propagate via inclination
+            cos_w = grp["_cos_incl"].to_numpy()
+            sin_w = grp["_sin_incl"].to_numpy()
+            dmd_w = grp["_dmd"].to_numpy()
+            n_known = int(known.sum())
+            tvt_in = grp["TVT_input"].to_numpy()[:n_known]
+            dtvt_a = np.diff(tvt_in)
+            # steps into anchor rows 1..n_known-1 align with kinematics[1:n_known]
+            b_full = _fit_dip(dtvt_a, cos_w[1:n_known], sin_w[1:n_known], dmd_w[1:n_known])
+            w_late = min(200, n_known - 1)
+            if w_late >= 2:
+                seg = slice(n_known - w_late, n_known)
+                b_late = _fit_dip(np.diff(tvt_in[-w_late - 1 :]), cos_w[seg], sin_w[seg], dmd_w[seg])
+            else:
+                b_late = b_full
+            df.loc[grp_idx, "b_dip_full"] = b_full
+            df.loc[grp_idx, "b_dip_late"] = b_late
+            # Cumulative TVT from anchor: reset cumsum so anchor row = anchor_tvt
+            step_full = (cos_w + sin_w * b_full) * dmd_w
+            step_late = (cos_w + sin_w * b_late) * dmd_w
+            cum_full = np.cumsum(step_full)
+            cum_late = np.cumsum(step_late)
+            df.loc[grp_idx, "tvt_dip_full"] = anchor_tvt + (cum_full - cum_full[n_known - 1])
+            df.loc[grp_idx, "tvt_dip_late"] = anchor_tvt + (cum_late - cum_late[n_known - 1])
         else:
             for col in [
                 "known_tvt_std",
@@ -645,9 +700,13 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
                 "xy_dist_from_ps",
                 "xyz_dist_from_ps",
                 "gr_minus_last_known",
+                "b_dip_full",
+                "b_dip_late",
             ]:
                 df.loc[grp_idx, col] = 0.0
             df.loc[grp_idx, "baseline_tvt_slope"] = df.loc[grp_idx, "tvt_anchor"]
+            df.loc[grp_idx, "tvt_dip_full"] = df.loc[grp_idx, "tvt_anchor"]
+            df.loc[grp_idx, "tvt_dip_late"] = df.loc[grp_idx, "tvt_anchor"]
 
     # GR residual vs typewell GR at ps_tvt (constant per well, precomputed in load_dataset)
     df["tw_gr_at_ps_tvt"] = df["_tw_gr_at_ps"].fillna(df.groupby("well_id", sort=False)["GR"].transform("mean"))
@@ -682,6 +741,13 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["gr_roll_std_150"] = df.groupby("well_id", sort=False)["GR"].transform(
         lambda x: x.rolling(150, min_periods=1, center=True).std().fillna(0)
     )
+
+    # GR lags/leads (vectorised per well) — give the GBM local GR context as weak signals
+    grp_gr2 = df.groupby("well_id", sort=False)["GR"]
+    for lag in [5, 10, 25, 50, 100]:
+        df[f"gr_lag_{lag}"] = grp_gr2.shift(lag).ffill().bfill().fillna(0)
+    for lead in [5, 10, 25]:
+        df[f"gr_lead_{lead}"] = grp_gr2.shift(-lead).ffill().bfill().fillna(0)
 
     # Slim the dataframe: drop dead intermediate columns and downcast features to float32.
     # Keeps per-fold memory low so 4 parallel cluster folds don't swap (~525→~210 B/row).
