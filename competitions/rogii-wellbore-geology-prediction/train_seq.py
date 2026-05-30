@@ -34,14 +34,17 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 _mlflow_run_id = os.environ.get("KEGO_MLFLOW_RUN_ID", "")
 
 
-def log_epoch(epoch: int, train_loss: float, val_loss: float) -> None:
-    """Log train/val metrics per epoch to MLflow (visible in UI while running)."""
+def log_metric_live(key: str, value: float, step: int | None = None) -> None:
     if _mlflow_run_id:
         from mlflow.tracking import MlflowClient
 
-        client = MlflowClient()
-        client.log_metric(_mlflow_run_id, "train_loss", train_loss, step=epoch)
-        client.log_metric(_mlflow_run_id, "val_loss", val_loss, step=epoch)
+        MlflowClient().log_metric(_mlflow_run_id, key, value, step=step)
+
+
+def log_epoch(epoch: int, train_loss: float, val_loss: float) -> None:
+    """Log train/val metrics per epoch to MLflow (visible in UI while running)."""
+    log_metric_live("train_loss", train_loss, step=epoch)
+    log_metric_live("val_loss", val_loss, step=epoch)
 
 
 DATA_DIR = (
@@ -301,6 +304,7 @@ def train_fold(
                 flush=True,
             )
             log_epoch(epoch + 1, train_rmse, val_rmse)
+            log_metric_live("progress_pct", (epoch + 1) / args.epochs * 100, step=epoch + 1)
 
             if val_rmse < best_val:
                 best_val = val_rmse

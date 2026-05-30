@@ -552,6 +552,7 @@ def run_cv(
         print(f"KEGO_METRIC fold_rmse_{fold_num} {fold_rmse:.6f}", flush=True)
         print(f"KEGO_METRIC fold_r2_{fold_num} {fold_r2:.6f}", flush=True)
         log_metric_live("fold_rmse", fold_rmse, step=fold_num)
+        log_metric_live("progress_pct", (fold_num + 1) / args.folds * 100, step=fold_num)
 
         models.append((model, formation_surface))
 
