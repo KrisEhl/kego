@@ -204,12 +204,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         dest="show_metric_name",
         help="Show metric name column",
     )
-    p.add_argument(
-        "--children",
-        action="store_true",
-        dest="show_children",
-        help="Show child fold runs (hidden by default; use with multi-fold --folds submissions)",
-    )
     p.set_defaults(func=_ls)
 
 
@@ -287,20 +281,21 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
     if not args.show_all and "tags.kego_debug" in runs.columns:
         runs = runs[runs["tags.kego_debug"] != "true"]
 
-    # Hide child fold runs unless --children is requested
-    if not args.show_children and "tags.mlflow.parentRunId" in runs.columns:
-        runs = runs[runs["tags.mlflow.parentRunId"].isna() | (runs["tags.mlflow.parentRunId"] == "")]
-
     primary_metric = "metric"
     if config.competition:
         primary_metric = config.competition.primary_metric
+
+    # Auto-show FOLD column when the result contains any nested runs
+    has_nested = ("tags.mlflow.parentRunId" in runs.columns and runs["tags.mlflow.parentRunId"].notna().any()) or (
+        "tags.kego_is_parent" in runs.columns and runs["tags.kego_is_parent"].notna().any()
+    )
 
     table_lines = format_table(
         runs,
         primary_metric,
         exp_names,
         args.show_metric_name,
-        show_fold=args.show_children,
+        show_fold=has_nested,
     )
     for line in table_lines:
         print(line)

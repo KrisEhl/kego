@@ -23,7 +23,6 @@ def _make_ls_args(**overrides) -> argparse.Namespace:
         limit=50,
         show_all=False,
         show_metric_name=False,
-        show_children=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -293,20 +292,13 @@ def _setup_parent_child_runs(mlflow_db: str, fold_count: int = 2) -> None:
         client.set_terminated(child.info.run_id, status="FINISHED")
 
 
-def test_ls_hides_child_runs_by_default(mlflow_db, capsys):
+def test_ls_shows_nested_runs_with_fold_column(mlflow_db, capsys):
+    """Parent and child fold runs both appear; FOLD column is auto-added."""
     _setup_parent_child_runs(mlflow_db)
     _ls(_make_ls_args(), [])
     out = capsys.readouterr().out
-    assert "parent-run" in out
-    assert "fold=0" not in out
-    assert "fold=1" not in out
-
-
-def test_ls_children_flag_shows_fold_rows(mlflow_db, capsys):
-    _setup_parent_child_runs(mlflow_db)
-    _ls(_make_ls_args(show_children=True), [])
-    out = capsys.readouterr().out
     assert "FOLD" in out
+    assert "parent-run" in out
     assert "2×" in out  # noqa: RUF001
     assert "f0" in out
     assert "f1" in out
