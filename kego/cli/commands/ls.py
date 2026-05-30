@@ -112,8 +112,6 @@ def format_table(
     show_fold: bool = False,
 ) -> list[str]:
     """Format experiment runs into a table. Returns list of lines."""
-    import math
-
     import pandas as pd
 
     if runs.empty:
@@ -147,9 +145,9 @@ def format_table(
             parent_run_id = row.get("tags.mlflow.parentRunId", "")
             fold_count = row.get("tags.kego_fold_count", "")
             fold_param = row.get("params.fold", "")
-            if parent_run_id and not (isinstance(parent_run_id, float) and math.isnan(parent_run_id)):
-                fold_val = f"f{fold_param}" if fold_param else "?"
-            elif fold_count and not (isinstance(fold_count, float) and math.isnan(fold_count)):
+            if pd.notna(parent_run_id) and parent_run_id:
+                fold_val = f"f{fold_param}" if (pd.notna(fold_param) and fold_param) else "?"
+            elif pd.notna(fold_count) and fold_count:
                 fold_val = f"{fold_count}×"  # noqa: RUF001
             else:
                 fold_val = "-"
