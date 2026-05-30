@@ -25,11 +25,25 @@ Each horizontal well is drilled vertically then curves to horizontal. At the **P
 | Constant (predict TVT_at_PS) | 15.9 ft |
 | Nearest-neighbour deviation (5-NN blend) | 13.8 ft |
 | Current LightGBM (OOF all rows) | ~18 ft* |
-| Public LB best (DWT-based) | 9.25 ft |
+| Public LB best (drift-NCC ensemble, R11) | **8.905 ft** |
 
 \* OOF measured across all rows including easy before-PS region. Post-PS only not yet measured.
 
 **Key finding**: spatial proximity between wells does **not** help — TVT deviations are locally driven and don't correlate even between wells 400 ft apart. The GR signal is the only path to beating the constant baseline.
+
+## Reference ladder → path to 8.905 (from `drift-targeting-ncc` notebook, analyzed 2026-05-30)
+
+| Round | Change | OOF | LB |
+|---|---|---|---|
+| R6 | 163 feat + Optuna + NNLS blend (LGB+XGB+CB) | 10.01 | 9.410 |
+| R7 | CatBoost depth5, NNLS XGB 55.9%+CB 44.1% | 10.05 | 9.398 |
+| R10 | +21 "v4 features" (estimator divergence, short-window slopes, DWT GR) | 9.91 | — |
+| R11 | + HistGradientBoosting (max_iter=5000, `early_stopping=False`), NNLS XGB+CB+HGB | **9.85** | **8.905** |
+
+- **Our divergence is EXPLAINED**: their 10.01 is *already a tuned NNLS 3-model ensemble*; our 10.62 is single default-HP XGB. We have **198 feat > their R6 163** → gap = ensemble + Optuna, NOT missing features/bug.
+- **LB runs ~0.6–0.95 BETTER than OOF here** (R6 10.01→9.41; R11 9.85→8.905). So our OOF 10.62 likely → LB ~9.7–10.0; CV-optimism caveat is *reversed*. (Confirm with the pending kernel anchor.)
+- **HGB must use `early_stopping=False`** — its internal `validation_fraction` random split leaks per-well GR patterns; GroupKFold OOF is the true stopping criterion.
+- **Next-step ladder (priority order)**: (2) add v4 features (estimator divergence between our beam/PF/NCC estimators, short-window slopes, DWT GR); (3) Optuna-tune XGB (needs feature caching to be cheap); (4) NNLS blend XGB+CB(+HGB) — we already have XGB 10.62 + CB 10.81.
 
 ## Data
 
