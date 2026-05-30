@@ -132,7 +132,7 @@ def main() -> None:
         help="Run all folds + OOF + test in ONE job (build once). Overrides --fold (cluster default injects --fold 0).",
     )
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--model", default="xgboost", choices=["xgboost", "catboost"])
+    p.add_argument("--model", default="xgboost", choices=["xgboost", "catboost", "ensemble"])
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -178,21 +178,36 @@ def main() -> None:
     splits = list(gkf.split(X, y, groups))
     enumerated = list(enumerate(splits)) if run_all else [(args.fold, splits[args.fold])]
 
-    oof = np.full(len(df), np.nan)
-    models = []
+    # ensemble = NNLS blend of xgboost + catboost on the SAME features (one build).
+    # Reference's dominant lever (R6->R11: NNLS XGB+CB(+HGB)). Else a single family.
+    families = ["xgboost", "catboost"] if args.model == "ensemble" else [args.model]
+    oof = {f: np.full(len(df), np.nan) for f in families}
+    fold_models = {f: [] for f in families}
     for fold_num, (tr, va) in enumerated:
-        model = _fit_one(args.model, args.seed, args.debug, device, X[tr], y[tr], X[va], y[va], fold_num=fold_num)
-        oof[va] = model.predict(X[va])
-        fold_rmse = float(np.sqrt(mean_squared_error(y[va], oof[va])))  # drift RMSE == TVT RMSE
-        print(f"Fold {fold_num}  post_ps_rmse={fold_rmse:.4f}", flush=True)
-        print(f"KEGO_METRIC fold_rmse_{fold_num} {fold_rmse:.6f}", flush=True)
-        log_metric_live("fold_rmse", fold_rmse, step=fold_num)
+        for f in families:
+            m = _fit_one(f, args.seed, args.debug, device, X[tr], y[tr], X[va], y[va], fold_num=fold_num)
+            oof[f][va] = m.predict(X[va])
+            fold_models[f].append(m)
+            fr = float(np.sqrt(mean_squared_error(y[va], oof[f][va])))
+            print(f"Fold {fold_num} [{f}] post_ps_rmse={fr:.4f}", flush=True)
+            print(f"KEGO_METRIC fold_rmse_{f}_{fold_num} {fr:.6f}", flush=True)
         log_metric_live("progress_pct", 40 + 50 * (fold_num + 1) / args.folds)
-        models.append(model)
 
     if run_all:
-        mask = ~np.isnan(oof)
-        post_ps_rmse = float(np.sqrt(mean_squared_error(y[mask], oof[mask])))
+        mask = ~np.isnan(oof[families[0]])
+        weights = None
+        if args.model == "ensemble":
+            from scipy.optimize import nnls
+
+            A = np.column_stack([oof[f][mask] for f in families]).astype(np.float64)
+            weights, _ = nnls(A, y[mask].astype(np.float64))
+            for f, w in zip(families, weights):
+                pm = float(np.sqrt(mean_squared_error(y[mask], oof[f][mask])))
+                print(f"  {f}: OOF={pm:.4f}  weight={w:.4f}", flush=True)
+            oof_final = sum(w * oof[f] for f, w in zip(families, weights))
+        else:
+            oof_final = oof[args.model]
+        post_ps_rmse = float(np.sqrt(mean_squared_error(y[mask], oof_final[mask])))
         print(f"OOF post-PS RMSE = {post_ps_rmse:.4f} ft", flush=True)
         print(f"KEGO_METRIC post_ps_rmse {post_ps_rmse:.6f}", flush=True)
         log_metric_live("post_ps_rmse", post_ps_rmse)
@@ -205,7 +220,11 @@ def main() -> None:
             if len(df_te):
                 Xte = df_te[feat_cols].to_numpy(np.float32)
                 Xte[~np.isfinite(Xte)] = np.nan
-                drift = np.mean([m.predict(Xte) for m in models], axis=0)
+                te_pred = {f: np.mean([m.predict(Xte) for m in fold_models[f]], axis=0) for f in families}
+                if weights is not None:
+                    drift = sum(w * te_pred[f] for f, w in zip(families, weights))
+                else:
+                    drift = te_pred[families[0]]
                 sub = pd.DataFrame({"id": df_te["id"], "tvt": df_te["last_known_tvt"].to_numpy() + drift})
                 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
                 sub.to_csv(OUTPUT_DIR / "submission_seq_feats.csv", index=False)
