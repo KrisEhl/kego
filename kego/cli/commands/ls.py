@@ -50,19 +50,15 @@ def _cluster_resources(ray_address: str) -> str:
     parts: list[str] = []
     for node in data.get("data", {}).get("summary", []):
         host = node.get("hostname", node.get("ip", "?"))
-        gpus = node.get("gpus", [])
-        if gpus:
-            gpu_strs = []
-            for g in gpus:
-                name = g.get("name", "GPU").replace("NVIDIA GeForce ", "")
-                util = g.get("utilizationGpu", "?")
-                used = g.get("memoryUsed", 0) / 1024
-                total = g.get("memoryTotal", 0) / 1024
-                gpu_strs.append(f"{name} {util}% {used:.0f}/{total:.0f} GB")
-            parts.append(f"{host}: {' · '.join(gpu_strs)}")
-        else:
-            cpu = node.get("cpu", "?")
-            parts.append(f"{host}: CPU {cpu}%")
+        cpu = node.get("cpu", "?")
+        node_strs = [f"CPU {cpu}%"]
+        for g in node.get("gpus", []):
+            name = g.get("name", "GPU").replace("NVIDIA GeForce ", "")
+            util = g.get("utilizationGpu", "?")
+            used = g.get("memoryUsed", 0) / 1024
+            total = g.get("memoryTotal", 0) / 1024
+            node_strs.append(f"{name} {util}% {used:.0f}/{total:.0f} GB")
+        parts.append(f"{host}: {' · '.join(node_strs)}")
 
     return "  |  ".join(parts) if parts else "no nodes"
 
