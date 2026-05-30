@@ -18,6 +18,22 @@ def _ago(start: datetime.datetime) -> str:
     return f"{int(delta.total_seconds() // 60)}m"
 
 
+def _duration(start, end) -> str:
+    """Wall-clock run time: end-start if finished, else now-start (still running).
+
+    Distinct from AGO (time since the run finished) — a long run is obvious here.
+    """
+    import pandas as pd
+
+    if start is None or pd.isna(start):
+        return "?"
+    finish = end if (end is not None and pd.notna(end)) else datetime.datetime.now(tz=datetime.timezone.utc)
+    secs = (finish - start).total_seconds()
+    if secs >= 3600:
+        return f"{int(secs // 3600)}h{int((secs % 3600) // 60):02d}m"
+    return f"{int(secs // 60)}m"
+
+
 _SKIP_METRICS = {"epoch", "loss", "train_loss", "val_loss", "lr", "learning_rate"}
 _STATUSES = ["running", "finished", "failed", "killed"]
 _CHILD_STATUS_PRIORITY = ["RUNNING", "SCHEDULED", "FAILED", "KILLED", "FINISHED"]
@@ -148,7 +164,7 @@ def format_table(
     ray_col = f" {'RAY':<9}" if ray_status is not None else ""
     header = (
         f"{'ID':<8} {'NAME':<26}{fold_col} {'COMPETITION':<20} {'TARGET':<8}"
-        f" {'METRIC':>8}{metric_name_col} {'STATUS':<10}{ray_col} {'AGO'}"
+        f" {'METRIC':>8}{metric_name_col} {'STATUS':<10}{ray_col} {'DURATION':<9} {'AGO'}"
     )
     sep = "-" * len(header)
     lines = [header, sep]
@@ -166,6 +182,7 @@ def format_table(
         status = str(row.get("status", "?"))[:10]
         start = row.get("start_time")
         ago = _ago(start) if start is not None and pd.notna(start) else "?"
+        duration = _duration(start, row.get("end_time"))
         metric_name_cell = f" {metric_name:<10}" if show_metric_name else ""
         fold_cell = ""
         is_child = False
@@ -198,7 +215,7 @@ def format_table(
 
         lines.append(
             f"{row_id:<8} {row_name:<26}{fold_cell} {competition:<20} {target:<8}"
-            f" {metric:>8}{metric_name_cell} {status:<10}{ray_cell} {ago}"
+            f" {metric:>8}{metric_name_cell} {status:<10}{ray_cell} {duration:<9} {ago}"
         )
 
     return lines
@@ -351,6 +368,9 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
                         "experiment_id": pr.info.experiment_id,
                         "status": pr.info.status,
                         "start_time": pd.Timestamp(pr.info.start_time, unit="ms", tz="UTC"),
+                        "end_time": (
+                            pd.Timestamp(pr.info.end_time, unit="ms", tz="UTC") if pr.info.end_time else pd.NaT
+                        ),
                     }
                     row.update({f"tags.{k}": v for k, v in pr.data.tags.items()})
                     row.update({f"params.{k}": v for k, v in pr.data.params.items()})
@@ -359,7 +379,10 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
                 except Exception as exc:
                     logging.getLogger(__name__).debug("Could not fetch parent run %s: %s", pid, exc)
             if parent_rows:
-                runs = pd.concat([runs, pd.DataFrame(parent_rows)], ignore_index=True)
+                # Rebuild from records (not concat) so child/parent rows with different
+                # column sets merge in one construction — concat of mismatched frames
+                # warns about all-NA-column dtype handling.
+                runs = pd.DataFrame(runs.to_dict("records") + parent_rows)
 
     runs = _derive_parent_statuses(runs)
 

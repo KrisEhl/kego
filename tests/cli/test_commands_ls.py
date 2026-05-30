@@ -246,12 +246,13 @@ def test_format_table_old_run_shows_date_not_hours():
                 "metrics.auc": 0.9,
                 "status": "FINISHED",
                 "start_time": now - datetime.timedelta(days=2),
+                "end_time": now - datetime.timedelta(days=2) + datetime.timedelta(minutes=5),  # ran 5m
             }
         ]
     )
     lines = format_table(runs, primary_metric="auc")
-    assert "48h" not in lines[2]
-    assert "202" in lines[2]  # year prefix e.g. 2026-…
+    assert "202" in lines[2]  # AGO shows a date for >24h-old runs, e.g. 2026-…
+    assert "5m" in lines[2]  # DURATION column shows the real 5m runtime
 
 
 def test_format_table_empty():
@@ -490,3 +491,25 @@ def test_ls_no_ray_column_by_default(mlflow_db, capsys):
     _ls(_make_ls_args(), [])
     out = capsys.readouterr().out
     assert "RAY" not in out
+
+
+def test_format_table_duration_shows_run_wall_clock():
+    """DURATION = how long the run took (end-start), distinct from AGO (age since start)."""
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    runs = pd.DataFrame(
+        [
+            {
+                "tags.kego_id": "abc123",
+                "tags.mlflow.runName": "slow-run",
+                "tags.kego_target": "cluster",
+                "metrics.auc": 0.9,
+                "status": "FINISHED",
+                "start_time": now - datetime.timedelta(hours=2),  # started 2h ago
+                "end_time": now - datetime.timedelta(minutes=15),  # ran 1h45m
+            }
+        ]
+    )
+    lines = format_table(runs, primary_metric="auc")
+    assert "DURATION" in lines[0]
+    assert "1h45m" in lines[2]  # ran 1h45m — slowness is obvious
+    assert lines[2].rstrip().endswith("2h")  # AGO = age since start (2h), separate column
