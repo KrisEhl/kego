@@ -22,6 +22,50 @@ _SKIP_METRICS = {"epoch", "loss", "train_loss", "val_loss", "lr", "learning_rate
 _STATUSES = ["running", "finished", "failed", "killed"]
 
 
+def _local_resources() -> str:
+    """One-line CPU/MEM summary for the local machine."""
+    try:
+        import psutil
+
+        cpu = psutil.cpu_percent(interval=0.1)
+        mem = psutil.virtual_memory()
+        return f"CPU {cpu:.0f}%  MEM {mem.used / 1e9:.0f}/{mem.total / 1e9:.0f} GB"
+    except Exception:
+        return "unavailable"
+
+
+def _cluster_resources(ray_address: str) -> str:
+    """One-line GPU/CPU summary fetched from the Ray dashboard."""
+    import json
+    import urllib.request
+
+    url = ray_address.rstrip("/") + "/nodes?view=summary"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as resp:  # noqa: S310
+            data = json.loads(resp.read())
+    except Exception:
+        return "offline"
+
+    parts: list[str] = []
+    for node in data.get("data", {}).get("summary", []):
+        host = node.get("hostname", node.get("ip", "?"))
+        gpus = node.get("gpus", [])
+        if gpus:
+            gpu_strs = []
+            for g in gpus:
+                name = g.get("name", "GPU").replace("NVIDIA GeForce ", "")
+                util = g.get("utilizationGpu", "?")
+                used = g.get("memoryUsed", 0) / 1024
+                total = g.get("memoryTotal", 0) / 1024
+                gpu_strs.append(f"{name} {util}% {used:.0f}/{total:.0f} GB")
+            parts.append(f"{host}: {' · '.join(gpu_strs)}")
+        else:
+            cpu = node.get("cpu", "?")
+            parts.append(f"{host}: CPU {cpu}%")
+
+    return "  |  ".join(parts) if parts else "no nodes"
+
+
 def _parse_since(value: str) -> int:
     """Parse a duration string to a UTC millisecond cutoff timestamp.
 
@@ -226,7 +270,14 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
     if config.competition:
         primary_metric = config.competition.primary_metric
 
-    for line in format_table(runs, primary_metric, exp_names, args.show_metric_name):
+    table_lines = format_table(runs, primary_metric, exp_names, args.show_metric_name)
+    for line in table_lines:
         print(line)
+
+    sep_width = len(table_lines[0]) if table_lines else 80
+    print("-" * sep_width)
+    local = _local_resources()
+    cluster = _cluster_resources(config.cluster.ray_address)
+    print(f"  local  {local}  │  cluster  {cluster}")
 
     return 0
