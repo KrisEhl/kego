@@ -9,6 +9,7 @@ os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
 def main() -> None:
     from kego.cli.commands import cancel as cancel_cmd
     from kego.cli.commands import cluster as cluster_cmd
+    from kego.cli.commands import gc as gc_cmd
     from kego.cli.commands import kernel_list as kernel_list_cmd
     from kego.cli.commands import kernel_status as kernel_status_cmd
     from kego.cli.commands import logs as logs_cmd
@@ -23,6 +24,7 @@ def main() -> None:
 
     run_cmd.add_parser(subparsers)
     ls_cmd.add_parser(subparsers)
+    gc_cmd.add_parser(subparsers)
     cluster_cmd.add_parser(subparsers)
     logs_cmd.add_parser(subparsers)
     cancel_cmd.add_parser(subparsers)
