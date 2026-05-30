@@ -51,6 +51,32 @@ def test_run_and_ls(tmp_path: Path, repo_root: Path) -> None:
     assert "0.9123" in ls_result.stdout
 
 
+def test_run_tags_run_with_git_sha(tmp_path: Path, repo_root: Path) -> None:
+    """Each run records the commit it ran from, so a stale-code node is detectable."""
+    import subprocess
+
+    import mlflow
+
+    mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
+    env = _base_env(repo_root, mlflow_uri)
+
+    script = tmp_path / "train.py"
+    script.write_text("print('KEGO_METRIC x 1.0')\n")
+
+    result = _run_kego(["run", str(script), "--name", "sha-test"], env=env, cwd=repo_root)
+    assert result.returncode == 0, result.stderr
+
+    expected_sha = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"],  # noqa: S607
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    mlflow.set_tracking_uri(mlflow_uri)
+    runs = mlflow.search_runs(experiment_names=["sha-test"])
+    assert runs["tags.git_sha"].iloc[0] == expected_sha
+
+
 def test_run_debug_excluded_from_ls(tmp_path: Path, repo_root: Path) -> None:
     """Debug runs are excluded from kego ls by default."""
     mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"

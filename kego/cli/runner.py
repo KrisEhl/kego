@@ -27,6 +27,25 @@ _METRIC_RE = re.compile(r"^KEGO_METRIC\s+(\S+)\s+(\S+)\s*$")
 _PARAM_RE = re.compile(r"^KEGO_PARAM\s+(\S+)\s+(.+?)\s*$")
 
 
+def _git_sha() -> str:
+    """Short commit SHA of the checkout this process runs from. Empty if unavailable.
+
+    Logged as a tag so a stale node (e.g. an un-synced Ray worker running old code)
+    is visible in kego ls — folds of one experiment that disagree on git_sha ran
+    different code.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def parse_kego_lines(
     lines: list[str],
 ) -> tuple[dict[str, float], dict[str, str]]:
@@ -79,6 +98,10 @@ def run(argv: list[str]) -> int:
                 mlflow.log_params(cli_params)
             # Expose run ID so the subprocess can log artifacts (e.g. figures) to this run.
             os.environ["KEGO_MLFLOW_RUN_ID"] = active_run.info.run_id
+
+        # Tag the run with the commit it actually ran from — catches stale-code nodes.
+        if sha := _git_sha():
+            mlflow.set_tag("git_sha", sha)
 
     cmd = [sys.executable, *list(argv)]
     process = subprocess.Popen(  # noqa: S603

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 try:
@@ -18,6 +18,9 @@ class ClusterConfig:
     data_path: str = "/home/kristian/projects/kego/data"
     ssh_host: str = ""
     mlflow_dir: str = "~/mlflow"
+    # Worker node SSH hosts. kego run git-pulls these too, so folds scheduled on a
+    # worker never run stale code. Empty = head-only sync (drift risk on multi-node).
+    worker_hosts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -106,6 +109,7 @@ def load_config(
         data_path=c.get("data_path", "/home/kristian/projects/kego/data"),
         ssh_host=c.get("ssh_host", ""),
         mlflow_dir=c.get("mlflow_dir", "~/mlflow"),
+        worker_hosts=list(c.get("worker_hosts", [])),
     )
 
     competition = None

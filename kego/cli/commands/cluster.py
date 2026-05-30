@@ -55,15 +55,25 @@ def _ssh_run(ssh_host: str, cmd: str, detached: bool = False) -> int:
 
 
 def sync_repo(config: cfg_module.KegoConfig) -> int:
-    """Git pull on the cluster head node. Returns 0 on success."""
+    """Git pull on every cluster node (head + workers). Returns 0 if all succeed.
+
+    Pulling workers too is essential: Ray schedules folds onto any node, so a worker
+    left un-synced runs stale code while the head reports 'Already up to date'.
+    """
     if not config.cluster.ssh_host:
         print("Warning: ssh_host not set in kego.toml [cluster] — skipping repo sync")
         return 0
-    print(f"Syncing repo on {config.cluster.ssh_host}...", flush=True)
-    return _ssh_run(
-        config.cluster.ssh_host,
-        f"cd {config.cluster.repo_path} && git checkout -- uv.lock && git pull",
-    )
+    pull = f"cd {config.cluster.repo_path} && git checkout -- uv.lock && git pull"
+    hosts = [config.cluster.ssh_host, *config.cluster.worker_hosts]
+    rc = 0
+    for host in hosts:
+        print(f"Syncing repo on {host}...", flush=True)
+        if (host_rc := _ssh_run(host, pull)) != 0:
+            print(f"  Warning: sync failed on {host} (rc={host_rc}) — it may run stale code")
+            rc = host_rc
+    if not config.cluster.worker_hosts:
+        print("  Note: no worker_hosts in kego.toml [cluster] — only head synced (drift risk if multi-node)")
+    return rc
 
 
 def _start(config: cfg_module.KegoConfig) -> int:

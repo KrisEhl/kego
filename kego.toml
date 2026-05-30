@@ -5,3 +5,6 @@ repo_path = "~/projects/kego"
 uv_project_dir = "~/projects/kego/competitions/playground"
 data_path = "/home/kristian/projects/kego/data"
 ssh_host = "kristian@omarchyd"
+# Worker node SSH hosts — kego run git-pulls these too so folds on a worker never
+# run stale code. Fill in your worker's host (e.g. "kristian@worker"). Empty = head-only.
+worker_hosts = []
