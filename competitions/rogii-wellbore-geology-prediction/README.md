@@ -44,6 +44,7 @@ Evaluate OOF RMSE on **post-PS rows only**. Done — `post_ps_rmse` now logged a
 Add to `train_rogii.py`:
 - [x] `tvt_anchor` — TVT at PS (constant per well)
 - [x] `delta_md_from_ps` — distance from PS anchor in MD
+- [~] Predict deviation `TVT - tvt_anchor` instead of absolute TVT
 - [ ] GR sliding-window correlation score against typewell at each TVT candidate
 
 ### Track 3 — GR↔typewell sliding window correlation (main signal)

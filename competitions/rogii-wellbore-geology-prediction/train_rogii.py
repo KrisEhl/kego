@@ -211,10 +211,11 @@ def run_cv(
     df: pd.DataFrame,
     cfg: dict[str, Any],
     args: argparse.Namespace,
+    target: str = TARGET,
 ) -> tuple[np.ndarray, list[Any]]:
     """Group k-fold CV grouped by well. Returns (oof_preds, trained models)."""
     X = df[FEATURE_COLS].reset_index(drop=True)  # DataFrame preserves feature names for LightGBM
-    y = df[TARGET].to_numpy(dtype=np.float64)
+    y = df[target].to_numpy(dtype=np.float64)
     groups = df["well_id"].to_numpy()
 
     gkf = GroupKFold(n_splits=args.folds)
@@ -267,7 +268,7 @@ def run_cv(
 # ── Test prediction ────────────────────────────────────────────────────────────
 
 
-def predict_test(models: list[Any]) -> pd.DataFrame:
+def predict_test(models: list[Any], deviation: bool = False) -> pd.DataFrame:
     """Ensemble predictions on test wells, returning submission-format DataFrame.
 
     Submission format: id={well_id}_{row_idx}, tvt=predicted_TVT
@@ -276,7 +277,10 @@ def predict_test(models: list[Any]) -> pd.DataFrame:
     df_test = load_dataset(TEST_DIR)
     df_test = engineer_features(df_test)
     X_test = df_test[FEATURE_COLS]
-    df_test["tvt"] = np.mean([m.predict(X_test) for m in models], axis=0)
+    preds = np.mean([m.predict(X_test) for m in models], axis=0)
+    if deviation:
+        preds = preds + df_test["tvt_anchor"].to_numpy()
+    df_test["tvt"] = preds
 
     # Keep only post-PS rows (TVT_input is NaN = evaluation zone)
     post_ps = df_test[df_test["TVT_input"].isna()].copy()
@@ -362,6 +366,13 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--debug", action="store_true", help="Fast smoke test: 20 wells, 50 trees")
+    parser.add_argument(
+        "--deviation",
+        action="store_true",
+        default=True,
+        help="Train on TVT - tvt_anchor (deviation from PS) instead of absolute TVT",
+    )
+    parser.add_argument("--no-deviation", dest="deviation", action="store_false")
     args = parser.parse_args()
 
     cfg = MODEL_CONFIGS[args.model]
@@ -369,6 +380,7 @@ def main() -> None:
     print(f"KEGO_PARAM model {args.model}", flush=True)
     print(f"KEGO_PARAM folds {args.folds}", flush=True)
     print(f"KEGO_PARAM seed {args.seed}", flush=True)
+    print(f"KEGO_PARAM deviation {args.deviation}", flush=True)
     print(f"KEGO_PARAM debug {args.debug}", flush=True)
 
     max_wells = 20 if args.debug else None
@@ -376,22 +388,32 @@ def main() -> None:
     df_train = engineer_features(df_train)
     df_train = df_train.dropna(subset=[TARGET])
 
+    # Deviation mode: train on TVT - tvt_anchor; model learns ±15 ft drift, not absolute 11k+ ft
+    train_target = TARGET
+    if args.deviation:
+        df_train["tvt_dev"] = df_train[TARGET] - df_train["tvt_anchor"]
+        train_target = "tvt_dev"
+
     print(
-        f"Loaded {len(df_train):,} rows from {df_train['well_id'].nunique()} wells",
+        f"Loaded {len(df_train):,} rows from {df_train['well_id'].nunique()} wells"
+        f"  target={'tvt_dev (deviation)' if args.deviation else 'TVT (absolute)'}",
         flush=True,
     )
 
-    oof_preds, models = run_cv(df_train, cfg, args)
+    oof_preds, models = run_cv(df_train, cfg, args, target=train_target)
 
-    mask = ~np.isnan(oof_preds)
-    oof_rmse = float(np.sqrt(mean_squared_error(df_train[TARGET].to_numpy()[mask], oof_preds[mask])))
-    oof_r2 = float(r2_score(df_train[TARGET].to_numpy()[mask], oof_preds[mask]))
+    # Convert deviation predictions back to absolute TVT for metric computation
+    anchor = df_train["tvt_anchor"].to_numpy()
+    oof_abs = oof_preds + anchor if args.deviation else oof_preds
 
-    # Post-PS only — the competition metric (rows where TVT_input is NaN)
+    mask = ~np.isnan(oof_abs)
+    tvt_true = df_train[TARGET].to_numpy()
+    oof_rmse = float(np.sqrt(mean_squared_error(tvt_true[mask], oof_abs[mask])))
+    oof_r2 = float(r2_score(tvt_true[mask], oof_abs[mask]))
+
+    # Post-PS only — the competition metric
     post_ps_mask = mask & df_train["TVT_input"].isna().to_numpy()
-    post_ps_rmse = float(
-        np.sqrt(mean_squared_error(df_train[TARGET].to_numpy()[post_ps_mask], oof_preds[post_ps_mask]))
-    )
+    post_ps_rmse = float(np.sqrt(mean_squared_error(tvt_true[post_ps_mask], oof_abs[post_ps_mask])))
 
     print(f"OOF      RMSE={oof_rmse:.4f}  R²={oof_r2:.4f}", flush=True)
     print(f"Post-PS  RMSE={post_ps_rmse:.4f}", flush=True)
@@ -401,16 +423,16 @@ def main() -> None:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     oof_out = df_train[["well_id", "MD", TARGET]].copy()
-    oof_out["oof_pred"] = oof_preds
+    oof_out["oof_pred"] = oof_abs
     oof_out.to_csv(OUTPUT_DIR / "oof_predictions.csv", index=False)
 
     # Test predictions only when all folds are present (not single-fold fan-out)
     if args.fold is None:
-        test_out = predict_test(models)
+        test_out = predict_test(models, deviation=args.deviation)
         test_out.to_csv(OUTPUT_DIR / "submission.csv", index=False)
         print(f"Saved test predictions: {len(test_out):,} rows", flush=True)
 
-    log_figures(df_train, oof_preds, models)
+    log_figures(df_train, oof_abs, models)
 
 
 if __name__ == "__main__":
