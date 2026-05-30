@@ -60,6 +60,7 @@ def _submit_http(
     runtime_env: dict,
     num_gpus: float,
     num_cpus: float,
+    resources: dict | None = None,
 ) -> str:
     """Submit a Ray job via the HTTP API. Returns the submission ID."""
     # Ray address is http://host:8265 — jobs API lives at /api/jobs/
@@ -72,6 +73,8 @@ def _submit_http(
         "entrypoint_num_gpus": num_gpus,
         "entrypoint_num_cpus": num_cpus,
     }
+    if resources:
+        body["entrypoint_resources"] = resources
 
     data = json.dumps(body).encode()
     req = urllib.request.Request(  # noqa: S310
@@ -109,13 +112,16 @@ def submit_fold(
     mlflow_run_id: str | None = None,
     num_gpus: float = 0.5,
     num_cpus: float = 1,
+    heavy_gpu: bool = False,
 ) -> str:
     """Submit one fold as a Ray job. Returns the Ray submission ID."""
     cluster_script = _cluster_script_path(script, config)
     runtime_env = _build_runtime_env(config, experiment_name, run_name, experiment_id, cli_params, mlflow_run_id)
     args_str = " ".join(script_args)
     entrypoint = f"cd {config.cluster.uv_project_dir} && uv run python -m kego.cli.runner {cluster_script} {args_str}"
-    return _submit_http(config, entrypoint, runtime_env, num_gpus, num_cpus)
+    # heavy_gpu=1 pins the job to a 3090 (≥20 GB VRAM custom resource on the cluster)
+    resources = {"heavy_gpu": 1} if heavy_gpu else None
+    return _submit_http(config, entrypoint, runtime_env, num_gpus, num_cpus, resources)
 
 
 def submit(
@@ -130,6 +136,7 @@ def submit(
     mlflow_run_ids: dict[int, str] | None = None,
     num_gpus: float = 0.5,
     num_cpus: float = 1,
+    heavy_gpu: bool = False,
 ) -> list[str]:
     """Submit one Ray job per fold. Returns list of Ray submission IDs."""
     job_ids: list[str] = []
@@ -148,6 +155,7 @@ def submit(
             mlflow_run_id=run_id,
             num_gpus=num_gpus,
             num_cpus=num_cpus,
+            heavy_gpu=heavy_gpu,
         )
         print(f"  fold {fold}: {job_id}", flush=True)
         job_ids.append(job_id)

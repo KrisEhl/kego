@@ -94,8 +94,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
             "  # Smoke-test on cluster with 1 GPU\n"
             "  uv run kego run competitions/birdclef-2026/training/train_cnn.py --target cluster --debug --gpu 1\n"
             "\n"
-            "  # Heavy GPU job (≥20 GB VRAM) — request 1 full GPU\n"
-            "  uv run kego run competitions/birdclef-2026/training/train_cnn.py --target cluster --gpu 1 --cpu 2\n"
+            "  # Pin to a 3090 (≥20 GB VRAM) — one job per card, uses both 3090s in parallel\n"
+            "  uv run kego run competitions/birdclef-2026/training/train_cnn.py --target cluster --folds 0,1 --heavy-gpu\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -139,6 +139,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         default=1,
         metavar="N",
         help="CPUs per fold requested from Ray (default: 1)",
+    )
+    p.add_argument(
+        "--heavy-gpu",
+        action="store_true",
+        dest="heavy_gpu",
+        help=(
+            "Pin job to a 3090 (≥20 GB VRAM). Sets --gpu 1 and requests the "
+            "'heavy_gpu' custom Ray resource. Submit --folds 0,1 to use both 3090s in parallel."
+        ),
     )
     p.set_defaults(func=_run)
 
@@ -238,8 +247,9 @@ def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
             experiment_id=experiment_id,
             cli_params=cli_params,
             mlflow_run_ids=mlflow_run_ids,
-            num_gpus=args.gpu,
+            num_gpus=1 if args.heavy_gpu else args.gpu,
             num_cpus=args.cpu,
+            heavy_gpu=args.heavy_gpu,
         )
 
         # Tag each pre-created MLflow run with its Ray submission ID for kego logs.
