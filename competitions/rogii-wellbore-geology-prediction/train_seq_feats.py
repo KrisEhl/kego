@@ -77,9 +77,24 @@ def _xgb(seed: int, debug: bool, device: str):
     )
 
 
-def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva):
-    """Fit one model family on a fold. All handle NaN natively. Returns fitted model."""
+def _log_curve(train_hist, val_hist, fold_num, every=25):
+    """Log per-round train/val RMSE so the boosting learning curve (and any overfit
+    gap) is visible in the MLflow UI. Namespaced per fold so curves don't collide."""
+    n = len(val_hist)
+    for i in list(range(0, n, every)) + [n - 1]:
+        log_metric_live(f"train_rmse_f{fold_num}", float(train_hist[i]), step=i)
+        log_metric_live(f"val_rmse_f{fold_num}", float(val_hist[i]), step=i)
+
+
+def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0):
+    """Fit one model family on a fold. All handle NaN natively. Returns fitted model.
+
+    Logs a train+val RMSE learning curve per fold. Train is evaluated on a 100k
+    subsample so the extra eval doesn't slow the fit; val (full) drives early stopping.
+    """
     n = 50 if debug else 3000
+    rng = np.random.default_rng(seed)
+    si = rng.choice(len(Xtr), size=min(100_000, len(Xtr)), replace=False)
     if model_name == "catboost":
         from catboost import CatBoostRegressor
 
@@ -96,10 +111,14 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva):
             verbose=False,
         )
         m.fit(Xtr, ytr, eval_set=(Xva, yva), use_best_model=True)
+        res = m.get_evals_result()
+        _log_curve(res["learn"]["RMSE"], res["validation"]["RMSE"], fold_num)
         return m
-    # default: xgboost
+    # default: xgboost — eval train(subsample) + val(full); early stopping uses val (last entry)
     m = _xgb(seed, debug, device)
-    m.fit(Xtr, ytr, eval_set=[(Xva, yva)], verbose=False)
+    m.fit(Xtr, ytr, eval_set=[(Xtr[si], ytr[si]), (Xva, yva)], verbose=False)
+    res = m.evals_result_
+    _log_curve(res["validation_0"]["rmse"], res["validation_1"]["rmse"], fold_num)
     return m
 
 
@@ -162,7 +181,7 @@ def main() -> None:
     oof = np.full(len(df), np.nan)
     models = []
     for fold_num, (tr, va) in enumerated:
-        model = _fit_one(args.model, args.seed, args.debug, device, X[tr], y[tr], X[va], y[va])
+        model = _fit_one(args.model, args.seed, args.debug, device, X[tr], y[tr], X[va], y[va], fold_num=fold_num)
         oof[va] = model.predict(X[va])
         fold_rmse = float(np.sqrt(mean_squared_error(y[va], oof[va])))  # drift RMSE == TVT RMSE
         print(f"Fold {fold_num}  post_ps_rmse={fold_rmse:.4f}", flush=True)
