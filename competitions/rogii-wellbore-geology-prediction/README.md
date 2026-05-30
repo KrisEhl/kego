@@ -181,4 +181,16 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | v16-slopes | + v4 slope features (217 cols) on top of divergence | 10.76 ft (DEAD END) | Folds 10.08/10.96/10.50/11.46 — **every fold worse than v15** (+0.28 OOF). Per-well scalar slopes degrade GroupKFold generalization (model keys off per-well constants that don't transfer to held-out wells). **Reverted.** v15 (divergence, 10.48) remains best. |
 | v17-catboost-div | CatBoost GPU on v15's **212 divergence features** | 10.57 ft | Divergence helped catboost too (v14 198-feat=10.81 → 10.57). Strong diverse ensemble member (xgb 10.48 / cb 10.57). |
 | v18-ensemble | **NNLS blend XGB+CB** on 212 divergence features (NNLS w: xgb 0.40 / cb 0.67) | 10.44 ft | Blend < both members (xgb 10.63 / cb 10.53 *this run*). **⚠️ INSTABILITY FOUND**: v18's xgb OOF=10.63 but v15's (same config/seed/features) =10.48 — **~0.15 OOF swing run-to-run** (fold 1: 10.28 vs 10.86). GPU xgb + early-stopping is not reproducible. **Small CV deltas (divergence +0.14, ensemble +0.04) are within this noise band — NOT cleanly confirmed.** LB is the only trustworthy signal. |
-| v19-seed7 | v18 ensemble re-run with seed 7 (measure CV noise floor) | TBD | Direct stability check: if OOF ≈ v18's 10.44, pipeline stable + ladder trustworthy; if ±0.15, deltas are noise. |
+| v19-seed7 | v18 ensemble seed 7 | KILLED | Cluster powered off (10h maintenance) before finish. Noise measured locally instead (v20). |
+| v20-local-xgb | xgb seed 42, 212 divergence feat, **CPU/local** (offline sqlite) | 10.77 ft | Build 390s (Mac CPU faster than cluster) + cached. 3rd same-config data point. |
+
+## ⚠️ CV NOISE FINDING (2026-05-30) — fine-grained deltas are NOT trustworthy
+
+Same xgb config (seed 42, 212 divergence feat), **three runs: 10.48 (v15 GPU) / 10.63 (v18 GPU) / 10.77 (v20 CPU)** — a **0.29 OOF spread** (GPU early-stopping nondeterminism + CPU/GPU backend differences). Noise concentrated in folds 1 & 3 (10.28–10.86, 11.21–11.91).
+
+**Consequences — all recent fine deltas are within noise, NOT confirmed:**
+- divergence "+0.14" (v13c 10.62 sits INSIDE the divergence range 10.48–10.77) → **not a real win**
+- slopes "+0.28 worse" → vs the divergence *mean* (~10.6) it's ~+0.15 → within noise, not clearly a dead end
+- ensemble "+0.04" → noise
+
+**Only the coarse result is real**: ported estimator suite ~10.6 vs 15.4 constant-ish plateau (>4 ft, far above noise). **Methodology fix**: use **multi-seed averaging** (mean over ≥5 seeds) for any feature/model A/B; single-run deltas < ~0.3 are meaningless. LB is the only single-shot trustworthy signal.
