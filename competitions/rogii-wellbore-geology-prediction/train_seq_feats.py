@@ -159,6 +159,11 @@ def main() -> None:
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--model", default="xgboost", choices=["xgboost", "catboost", "ensemble"])
+    p.add_argument(
+        "--no-divergence",
+        action="store_true",
+        help="Drop div_* columns (A/B the v4 divergence features on the same cached build).",
+    )
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -191,6 +196,9 @@ def main() -> None:
     log_metric_live("progress_pct", 40)
 
     feat_cols = [c for c in df.columns if c not in NON_FEATURES]
+    if args.no_divergence:
+        feat_cols = [c for c in feat_cols if not c.startswith("div_")]
+        print(f"KEGO_PARAM no_divergence 1  ({len(feat_cols)} cols)", flush=True)
     # Vectorised inf/-inf -> nan ONCE on the float32 array. pandas .replace() over
     # 3.78M x 198 (~750M cells) is single-threaded and was the low-CPU bottleneck.
     X = df[feat_cols].to_numpy(np.float32)
