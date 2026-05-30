@@ -121,6 +121,51 @@ def test_ls_competition_filter_scopes_to_experiment(mlflow_db, capsys):
     assert "play-run" not in out
 
 
+def test_ls_competition_filter_uses_competition_primary_metric(mlflow_db, tmp_path, monkeypatch, capsys):
+    root = tmp_path / "repo"
+    comp_dir = root / "competitions" / "metric-comp"
+    comp_dir.mkdir(parents=True)
+    (root / ".git").mkdir()
+    (root / "kego.toml").write_text(
+        """
+[cluster]
+ray_address = "http://192.168.1.1:8265"
+mlflow_uri = "http://192.168.1.1:5000"
+"""
+    )
+    (comp_dir / "kego.toml").write_text(
+        """
+[competition]
+slug = "metric-comp"
+kaggle_user = "aldisued"
+enable_gpu = false
+submit_file = "submission.csv"
+pattern = "script"
+inference_notebook = "train.py"
+checkpoint_dir = "outputs"
+primary_metric = "post_ps_rmse"
+"""
+    )
+    monkeypatch.chdir(root)
+
+    exp = mlflow.set_experiment("metric-comp")
+    with mlflow.start_run(experiment_id=exp.experiment_id, run_name="metric-run"):
+        mlflow.set_tag("kego_id", secrets.token_hex(3))
+        mlflow.set_tag("kego_target", "cluster")
+        mlflow.set_tag("kego_debug", "false")
+        mlflow.set_tag("kego_primary_metric", "oof_rmse")
+        mlflow.log_metric("oof_rmse", 99.0)
+        mlflow.log_metric("post_ps_rmse", 1.25)
+
+    rc = _ls(_make_ls_args(competition="metric-comp", show_metric_name=True), [])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "metric-run" in out
+    assert "1.2500" in out
+    assert "post_ps_rmse" in out
+    assert "99.0000" not in out
+
+
 def test_ls_competition_not_found_returns_zero_with_message(mlflow_db, capsys):
     rc = _ls(_make_ls_args(competition="nonexistent-comp"), [])
     out = capsys.readouterr().out
@@ -347,3 +392,58 @@ def test_ls_filter_fetches_parent_when_only_children_match(mlflow_db, capsys):
     # Parent must be injected so children render with context
     assert "parent-run" in out
     assert "└─" in out
+
+
+def test_ls_parent_status_is_derived_from_children(mlflow_db, capsys):
+    """A pre-created FINISHED parent displays RUNNING while any child is still running."""
+    import secrets
+
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient()
+    exp = mlflow.set_experiment("test-exp")
+
+    parent = client.create_run(
+        exp.experiment_id,
+        run_name="parent-run",
+        tags={
+            "kego_id": secrets.token_hex(3),
+            "kego_target": "cluster",
+            "kego_debug": "false",
+            "kego_is_parent": "true",
+            "kego_fold_count": "2",
+        },
+    )
+    client.set_terminated(parent.info.run_id, status="FINISHED")
+
+    running_child = client.create_run(
+        exp.experiment_id,
+        run_name="parent-run fold=0",
+        tags={
+            "kego_id": secrets.token_hex(3),
+            "kego_target": "cluster",
+            "kego_debug": "false",
+            "mlflow.parentRunId": parent.info.run_id,
+        },
+    )
+    client.log_param(running_child.info.run_id, "fold", "0")
+
+    finished_child = client.create_run(
+        exp.experiment_id,
+        run_name="parent-run fold=1",
+        tags={
+            "kego_id": secrets.token_hex(3),
+            "kego_target": "cluster",
+            "kego_debug": "false",
+            "mlflow.parentRunId": parent.info.run_id,
+        },
+    )
+    client.log_param(finished_child.info.run_id, "fold", "1")
+    client.set_terminated(finished_child.info.run_id, status="FINISHED")
+
+    _ls(_make_ls_args(), [])
+    out = capsys.readouterr().out
+    parent_rows = [
+        line for line in out.splitlines() if "parent-run" in line and "RUNNING" in line and "fold=0" not in line
+    ]
+    assert parent_rows, "parent run row should show RUNNING status"

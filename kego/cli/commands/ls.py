@@ -20,6 +20,7 @@ def _ago(start: datetime.datetime) -> str:
 
 _SKIP_METRICS = {"epoch", "loss", "train_loss", "val_loss", "lr", "learning_rate"}
 _STATUSES = ["running", "finished", "failed", "killed"]
+_CHILD_STATUS_PRIORITY = ["RUNNING", "SCHEDULED", "FAILED", "KILLED", "FINISHED"]
 
 
 def _local_resources() -> str:
@@ -92,16 +93,41 @@ def _resolve_metric(runs: pd.DataFrame, primary_metric: str) -> str:
     return primary_metric
 
 
-def _metric_str(row: pd.Series, fallback_metric: str) -> str:
+def _metric_str(row: pd.Series, fallback_metric: str, prefer_fallback: bool = False) -> str:
     """Return formatted metric value for a single run."""
     import pandas as pd
 
-    # Prefer per-run kego_primary_metric tag, fall back to table-level resolved metric
-    metric_name = str(row.get("tags.kego_primary_metric") or fallback_metric)
+    # Unscoped views can mix competitions, so keep per-run tags there. A scoped
+    # competition view uses the current competition config to handle corrected metrics.
+    metric_name = fallback_metric if prefer_fallback else str(row.get("tags.kego_primary_metric") or fallback_metric)
     if not metric_name:
         metric_name = fallback_metric
     val = row.get(f"metrics.{metric_name}")
     return f"{val:.4f}" if val is not None and pd.notna(val) else "—"
+
+
+def _derive_parent_statuses(runs: pd.DataFrame) -> pd.DataFrame:
+    """Set displayed parent status from child run statuses."""
+    import pandas as pd
+
+    required = {"run_id", "status", "tags.kego_is_parent", "tags.mlflow.parentRunId"}
+    if runs.empty or not required.issubset(runs.columns):
+        return runs
+
+    runs = runs.copy()
+    for parent_id, children in runs.groupby("tags.mlflow.parentRunId", dropna=True):
+        if not parent_id or pd.isna(parent_id):
+            continue
+        statuses = {str(status).upper() for status in children["status"].dropna()}
+        if not statuses:
+            continue
+        derived = next((status for status in _CHILD_STATUS_PRIORITY if status in statuses), None)
+        if derived is None:
+            continue
+        parent_mask = (runs["run_id"] == parent_id) & (runs["tags.kego_is_parent"].fillna("") == "true")
+        runs.loc[parent_mask, "status"] = derived
+
+    return runs
 
 
 def format_table(
@@ -110,6 +136,7 @@ def format_table(
     exp_names: dict[str, str] | None = None,
     show_metric_name: bool = False,
     show_fold: bool = False,
+    prefer_primary_metric: bool = False,
 ) -> list[str]:
     """Format experiment runs into a table. Returns list of lines."""
     import pandas as pd
@@ -134,8 +161,10 @@ def format_table(
         mlflow_exp_id = str(row.get("experiment_id", ""))
         competition = (exp_names or {}).get(mlflow_exp_id, "?")[:20]
         target = str(row.get("tags.kego_target", "local"))[:8]
-        metric_name = str(row.get("tags.kego_primary_metric") or fallback_metric)
-        metric = _metric_str(row, fallback_metric)
+        metric_name = (
+            fallback_metric if prefer_primary_metric else str(row.get("tags.kego_primary_metric") or fallback_metric)
+        )
+        metric = _metric_str(row, fallback_metric, prefer_fallback=prefer_primary_metric)
         status = str(row.get("status", "?"))[:10]
         start = row.get("start_time")
         ago = _ago(start) if start is not None and pd.notna(start) else "?"
@@ -231,7 +260,9 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
     logging.getLogger("mlflow").setLevel(logging.WARNING)
     logging.getLogger("alembic").setLevel(logging.WARNING)
 
-    config = cfg_module.load_config()
+    repo_root = cfg_module.find_repo_root()
+    competition_dir = cfg_module.find_competition_dir_by_slug(args.competition, repo_root) if args.competition else None
+    config = cfg_module.load_config(repo_root=repo_root, competition_dir=competition_dir)
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI") or config.cluster.mlflow_uri
     mlflow.set_tracking_uri(tracking_uri)
 
@@ -320,6 +351,8 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
             if parent_rows:
                 runs = pd.concat([runs, pd.DataFrame(parent_rows)], ignore_index=True)
 
+    runs = _derive_parent_statuses(runs)
+
     # Re-sort so each parent row appears immediately before its children.
     # Groups are ordered by parent start_time DESC; within a group parent comes first.
     if "tags.kego_is_parent" in runs.columns and "tags.mlflow.parentRunId" in runs.columns:
@@ -357,6 +390,7 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
         exp_names,
         args.show_metric_name,
         show_fold=has_nested,
+        prefer_primary_metric=bool(args.competition and config.competition),
     )
     for line in table_lines:
         print(line)

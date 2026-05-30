@@ -2,7 +2,10 @@
 
 **Task**: Predict TVT (True Vertical Thickness) in the post-PS zone of ~200 horizontal wells from GR logs and a typewell reference.
 **Metric**: RMSE (ft) on post-PS rows. Lower is better.
-**Deadline**: 30 July 2026
+**Deadline**: 5 August 2026
+
+Metric verified 2026-05-30 from Kaggle competition assets: `AI_wellbore_geology_prediction_task_en.pptx`
+states prediction quality is RMSE over `dTVT = manualTVT - predictedTVT` for each predicted point.
 
 ## Problem summary
 
@@ -38,7 +41,7 @@ Each horizontal well is drilled vertically then curves to horizontal. At the **P
 ## Plan
 
 ### [x] Track 1 — Fix CV metric (immediate)
-Evaluate OOF RMSE on **post-PS rows only**. Done — `post_ps_rmse` now logged as primary metric.
+Evaluate OOF RMSE on **post-PS rows only**. Done — `post_ps_rmse` now logged as primary metric and configured as `primary_metric` in `kego.toml`.
 
 ### [~] Track 2 — Feature improvements (fast)
 Add to `train_rogii.py`:
@@ -72,6 +75,10 @@ This is NORMALISED cross-correlation — scale-invariant, handles lateral GR var
 **Priority 2 — Formation spatial KNN with bias calibration**
 TVT ≈ -Z + formation_depth(X,Y) + bias_well
 KNN from training wells' formation surfaces; bias_well calibrated from anchor zone.
+Current implementation note: direct `EGFDU` features are excluded from model inputs because
+`EGFDU` exists in train horizontals but not test horizontals; any formation KNN must be
+fit fold-aware from training wells only. A first fold-aware sampled surface is implemented
+behind `--formation-knn`, but debug CV was much worse, so it is off by default.
 
 **Priority 3 — Beam search (Viterbi HMM)**
 Forward-Viterbi on typewell GR emissions, 4 variants (loose/medium/tight sigma pairs).
@@ -96,6 +103,9 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py \
 
 # Debug smoke test
 uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --debug
+
+# Experimental fold-aware formation KNN
+uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --formation-knn
 ```
 
 ## Dead ends
@@ -115,6 +125,7 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | Tabular GBM on GR matching features | ~15.96 ft | GBM can't exploit sequential GR structure — stuck at constant baseline |
 | tvt_anchor + delta_md_from_ps features | 16.95 ft post-PS | Model predicting absolute TVT — drifts from anchor |
 | Tabular GBM on GR matching features | ~15.96 ft | GBM can't exploit sequential GR structure — stuck at constant baseline |
+| Fold-aware sampled formation KNN | 71.79 ft debug CV | Spatial `TVT + Z` surface does not generalise on the 20-well smoke sample; gated behind `--formation-knn` |
 
 ## Results log
 
@@ -132,3 +143,6 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | seq-v4 | + input masking 50% + d128/8L | **15.54 ft** | consistently below constant — masking forces GR learning |
 | seq-v5 | mask=0.9 + denoising aux loss | 16.42 ft | too aggressive — loses pre-PS TVT context |
 | seq-v6 | mask=1.0 + denoising aux loss | 15.65 ft | full blind — fold 1 best (14.58) but fold 0/2 hurt |
+| v5-invalid | + NCC + direct EGFDU formation features | 1.14 ft child-fold mean | invalid CV — `EGFDU` is train-only for horizontal wells and unavailable in test |
+| debug | NCC default, no formation KNN | 30.99 ft | 20-well smoke only; confirms no train-only `EGFDU` inputs |
+| debug | + `--formation-knn` fold-aware sampled surface | 71.79 ft | 20-well smoke only; worse, keep disabled |

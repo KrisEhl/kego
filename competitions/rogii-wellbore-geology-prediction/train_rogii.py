@@ -111,9 +111,6 @@ FEATURE_COLS: list[str] = [
     "ncc_score_hw15",
     "ncc_score_hw25",
     "ncc_tvt_blend",  # softmax-weighted blend across scales
-    # Formation spatial KNN with per-well bias calibration
-    "knn_tvt_pred",
-    "knn_tvt_dev",  # deviation from anchor
     "md_frac",
     "well_md_range",
     "gr_roll_mean_10",
@@ -123,6 +120,15 @@ FEATURE_COLS: list[str] = [
     "well_gr_mean",
     "well_gr_std",
 ]
+FORMATION_FEATURE_COLS: list[str] = [
+    "formation_knn_tvt",
+    "formation_knn_dev",
+    "formation_knn_bias",
+]
+
+
+def _feature_cols(use_formation_knn: bool) -> list[str]:
+    return [*FEATURE_COLS, *FORMATION_FEATURE_COLS] if use_formation_knn else FEATURE_COLS
 
 
 # ── Data loading ───────────────────────────────────────────────────────────────
@@ -235,14 +241,15 @@ def _ncc_tvt_vectorised(
     # Normalize each window to zero mean, unit std (Pearson normalisation)
     h_means = h_wins.mean(axis=1, keepdims=True)
     h_stds = h_wins.std(axis=1, keepdims=True).clip(min=1e-6)
-    h_norm = (h_wins - h_means) / h_stds  # (N_h, W)
+    h_norm = np.nan_to_num((h_wins - h_means) / h_stds, nan=0.0, posinf=0.0, neginf=0.0)  # (N_h, W)
 
     tw_means = tw_wins.mean(axis=1, keepdims=True)
     tw_stds = tw_wins.std(axis=1, keepdims=True).clip(min=1e-6)
-    tw_norm = (tw_wins - tw_means) / tw_stds  # (N_tw, W)
+    tw_norm = np.nan_to_num((tw_wins - tw_means) / tw_stds, nan=0.0, posinf=0.0, neginf=0.0)  # (N_tw, W)
 
-    # NCC matrix: (N_h, N_tw) — one BLAS dgemm call
-    ncc_mat = (h_norm @ tw_norm.T) / wsize  # Pearson r
+    # NCC matrix: (N_h, N_tw). einsum avoids spurious BLAS fp warnings seen with matmul on finite inputs.
+    ncc_mat = np.einsum("ij,kj->ik", h_norm, tw_norm, optimize=True) / wsize  # Pearson r
+    ncc_mat = np.nan_to_num(ncc_mat, nan=-1.0, posinf=-1.0, neginf=-1.0)
 
     # Best typewell position for each horizontal row
     best_j = np.argmax(ncc_mat, axis=1)
@@ -263,7 +270,12 @@ def _ncc_tvt_all_scales(
     Constrains the typewell search to ps_tvt ± search_range_ft — critical because
     the post-PS zone is only ±15 ft std; searching the full typewell finds spurious matches.
     """
-    tw = typewell.dropna(subset=["TVT", "GR"]).sort_values("TVT").reset_index(drop=True)
+    tw = (
+        typewell.replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["TVT", "GR"])
+        .sort_values("TVT")
+        .reset_index(drop=True)
+    )
     n = len(gr)
     nan_result = {
         k: np.full(n, np.nan)
@@ -288,7 +300,11 @@ def _ncc_tvt_all_scales(
 
     tw_gr = tw_w["GR"].values.astype(np.float64)
     tw_tvt = tw_w["TVT"].values
-    gr_filled = gr.ffill().bfill().fillna(float(gr.median())).values.astype(np.float64)
+    gr_clean = gr.replace([np.inf, -np.inf], np.nan)
+    gr_median = float(gr_clean.median())
+    if not np.isfinite(gr_median):
+        gr_median = 0.0
+    gr_filled = gr_clean.ffill().bfill().fillna(gr_median).values.astype(np.float64)
 
     results: dict[str, np.ndarray] = {}
     scores, preds = [], []
@@ -383,29 +399,6 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     ]:
         df[col] = df[f"_{col}"].fillna(df["tvt_anchor"])
 
-    # Formation KNN with per-well bias calibration
-    # TVT ≈ -Z + formation_depth(X,Y) + bias_well  (physics formula from public solutions)
-    # We use the EGFDU column (available in train) or recover from TVT_input for test
-    has_egfdu = "EGFDU" in df.columns
-    if has_egfdu:
-        df["_knn_raw"] = -df["Z"] + df["EGFDU"]
-    else:
-        # Recover from anchor: EGFDU_rec = TVT_input + Z - egfdu_tw, but we just need the
-        # per-well bias from the anchor rows
-        df["_knn_raw"] = df["tvt_anchor"]  # fallback for test wells without EGFDU
-
-    # Per-well bias: calibrate from anchor region where TVT_input is known
-    knn_tvt = df["tvt_anchor"].copy()
-    for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
-        grp = df.loc[grp_idx]
-        known = grp["TVT_input"].notna()
-        if known.sum() > 0 and has_egfdu:
-            # bias = mean(TVT_input - (-Z + EGFDU)) over known anchor rows
-            bias = float((grp.loc[known, "TVT_input"] - grp.loc[known, "_knn_raw"]).mean())
-            knn_tvt.loc[grp_idx] = grp["_knn_raw"] + bias
-    df["knn_tvt_pred"] = knn_tvt
-    df["knn_tvt_dev"] = df["knn_tvt_pred"] - df["tvt_anchor"]
-
     # Relative position within each well's borehole
     md_min = df.groupby("well_id", sort=False)["MD"].transform("min")
     md_max = df.groupby("well_id", sort=False)["MD"].transform("max")
@@ -428,6 +421,62 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ── Formation surface features ────────────────────────────────────────────────
+
+
+def _fit_formation_surface(df: pd.DataFrame, max_points_per_well: int = 120) -> Any | None:
+    """Fit TVT + Z as a spatial surface from training wells only."""
+    from sklearn.neighbors import KNeighborsRegressor
+
+    valid = df.replace([np.inf, -np.inf], np.nan).dropna(subset=["X", "Y", "Z", TARGET, "well_id"])
+    if valid.empty:
+        return None
+
+    sampled_idx: list[int] = []
+    for _, idx in valid.groupby("well_id", sort=False).groups.items():
+        idx_arr = np.asarray(list(idx))
+        if len(idx_arr) > max_points_per_well:
+            idx_arr = idx_arr[np.linspace(0, len(idx_arr) - 1, max_points_per_well, dtype=int)]
+        sampled_idx.extend(idx_arr.tolist())
+
+    ref = valid.loc[sampled_idx]
+    n_neighbors = min(25, len(ref))
+    if n_neighbors < 1:
+        return None
+
+    model = KNeighborsRegressor(n_neighbors=n_neighbors, weights="distance", metric="euclidean")
+    model.fit(ref[["X", "Y"]].to_numpy(dtype=np.float64), (ref[TARGET] + ref["Z"]).to_numpy(dtype=np.float64))
+    return model
+
+
+def add_formation_features(df: pd.DataFrame, surface: Any | None) -> pd.DataFrame:
+    """Apply a fitted formation surface and calibrate per well from known TVT_input rows."""
+    df = df.copy()
+    if surface is None:
+        base_tvt = df["tvt_anchor"].to_numpy(dtype=np.float64)
+    else:
+        xy = df[["X", "Y"]].replace([np.inf, -np.inf], np.nan)
+        med = xy.median(numeric_only=True).fillna(0.0)
+        xy_arr = xy.fillna(med).to_numpy(dtype=np.float64)
+        base_tvt = surface.predict(xy_arr) - df["Z"].to_numpy(dtype=np.float64)
+
+    pred = pd.Series(base_tvt, index=df.index, dtype="float64")
+    bias_s = pd.Series(0.0, index=df.index, dtype="float64")
+    for _, grp_idx in df.groupby("well_id", sort=False).groups.items():
+        grp = df.loc[grp_idx]
+        known = grp["TVT_input"].notna()
+        bias = float((grp.loc[known, "TVT_input"] - pred.loc[grp.loc[known].index]).mean()) if known.any() else 0.0
+        if not np.isfinite(bias):
+            bias = 0.0
+        pred.loc[grp_idx] += bias
+        bias_s.loc[grp_idx] = bias
+
+    df["formation_knn_tvt"] = pred
+    df["formation_knn_dev"] = pred - df["tvt_anchor"]
+    df["formation_knn_bias"] = bias_s
+    return df
+
+
 # ── CV training ────────────────────────────────────────────────────────────────
 
 
@@ -436,14 +485,13 @@ def run_cv(
     cfg: dict[str, Any],
     args: argparse.Namespace,
     target: str = TARGET,
-) -> tuple[np.ndarray, list[Any]]:
+) -> tuple[np.ndarray, list[tuple[Any, Any | None]]]:
     """Group k-fold CV grouped by well. Returns (oof_preds, trained models)."""
-    X = df[FEATURE_COLS].reset_index(drop=True)  # DataFrame preserves feature names for LightGBM
     y = df[target].to_numpy(dtype=np.float64)
     groups = df["well_id"].to_numpy()
 
     gkf = GroupKFold(n_splits=args.folds)
-    all_splits = list(gkf.split(X, y, groups))
+    all_splits = list(gkf.split(np.zeros(len(df)), y, groups))
 
     # --fold N: run only that fold (used for cluster fan-out via kego run --folds)
     if args.fold is not None:
@@ -452,10 +500,19 @@ def run_cv(
         enumerated = list(enumerate(all_splits))
 
     oof_preds = np.full(len(df), np.nan)
-    models: list[Any] = []
+    models: list[tuple[Any, Any | None]] = []
+    feature_cols = _feature_cols(args.formation_knn)
 
     for fold_num, (train_idx, val_idx) in enumerated:
-        X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        train_df = df.iloc[train_idx].copy()
+        val_df = df.iloc[val_idx].copy()
+        formation_surface = _fit_formation_surface(train_df) if args.formation_knn else None
+        if args.formation_knn:
+            train_df = add_formation_features(train_df, formation_surface)
+            val_df = add_formation_features(val_df, formation_surface)
+
+        X_tr = train_df[feature_cols].reset_index(drop=True)
+        X_val = val_df[feature_cols].reset_index(drop=True)
         y_tr, y_val = y[train_idx], y[val_idx]
 
         model = cfg["factory"](args.seed, args.debug)
@@ -484,7 +541,7 @@ def run_cv(
         print(f"KEGO_METRIC fold_rmse_{fold_num} {fold_rmse:.6f}", flush=True)
         print(f"KEGO_METRIC fold_r2_{fold_num} {fold_r2:.6f}", flush=True)
 
-        models.append(model)
+        models.append((model, formation_surface))
 
     return oof_preds, models
 
@@ -492,7 +549,11 @@ def run_cv(
 # ── Test prediction ────────────────────────────────────────────────────────────
 
 
-def predict_test(models: list[Any], deviation: bool = False) -> pd.DataFrame:
+def predict_test(
+    models: list[tuple[Any, Any | None]],
+    deviation: bool = False,
+    use_formation_knn: bool = False,
+) -> pd.DataFrame:
     """Ensemble predictions on test wells, returning submission-format DataFrame.
 
     Submission format: id={well_id}_{row_idx}, tvt=predicted_TVT
@@ -500,8 +561,16 @@ def predict_test(models: list[Any], deviation: bool = False) -> pd.DataFrame:
     """
     df_test = load_dataset(TEST_DIR)
     df_test = engineer_features(df_test)
-    X_test = df_test[FEATURE_COLS]
-    preds = np.mean([m.predict(X_test) for m in models], axis=0)
+    feature_cols = _feature_cols(use_formation_knn)
+    preds = np.mean(
+        [
+            model.predict(
+                (add_formation_features(df_test, formation_surface) if use_formation_knn else df_test)[feature_cols]
+            )
+            for model, formation_surface in models
+        ],
+        axis=0,
+    )
     if deviation:
         preds = preds + df_test["tvt_anchor"].to_numpy()
     df_test["tvt"] = preds
@@ -518,7 +587,8 @@ def predict_test(models: list[Any], deviation: bool = False) -> pd.DataFrame:
 def log_figures(
     df_train: pd.DataFrame,
     oof_preds: np.ndarray,
-    models: list[Any],
+    models: list[tuple[Any, Any | None]],
+    feature_cols: list[str],
 ) -> None:
     """Log diagnostic figures to MLflow via MlflowClient (no run state changes).
 
@@ -535,6 +605,12 @@ def log_figures(
 
     mlflow.set_tracking_uri(tracking_uri)
     client = MlflowClient()
+
+    def log_artifact(path: Path) -> None:
+        try:
+            client.log_artifact(run_id, str(path), artifact_path="figures")
+        except OSError as e:
+            print(f"Warning: could not log artifact {path.name}: {e}", flush=True)
 
     fig_dir = OUTPUT_DIR / "figures"
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -557,12 +633,13 @@ def log_figures(
     path = fig_dir / "oof_scatter.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
-    client.log_artifact(run_id, str(path), artifact_path="figures")
+    log_artifact(path)
 
     # Feature importance (mean over folds)
-    if hasattr(models[0], "feature_importances_"):
-        imp = np.mean([m.feature_importances_ for m in models], axis=0)
-        fi = pd.Series(imp, index=FEATURE_COLS).sort_values(ascending=True)
+    trained_models = [m for m, _ in models]
+    if hasattr(trained_models[0], "feature_importances_"):
+        imp = np.mean([m.feature_importances_ for m in trained_models], axis=0)
+        fi = pd.Series(imp, index=feature_cols).sort_values(ascending=True)
         fig, ax = plt.subplots(figsize=(8, 5))
         fi.plot.barh(ax=ax)
         ax.set_title("Feature importance (mean over folds)")
@@ -571,7 +648,7 @@ def log_figures(
         path = fig_dir / "feature_importance.png"
         fig.savefig(path, dpi=120)
         plt.close(fig)
-        client.log_artifact(run_id, str(path), artifact_path="figures")
+        log_artifact(path)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -597,6 +674,7 @@ def main() -> None:
         help="Train on TVT - tvt_anchor (deviation from PS) instead of absolute TVT",
     )
     parser.add_argument("--no-deviation", dest="deviation", action="store_false")
+    parser.add_argument("--formation-knn", action="store_true", help="Experimental fold-aware spatial formation KNN")
     args = parser.parse_args()
 
     cfg = MODEL_CONFIGS[args.model]
@@ -605,6 +683,7 @@ def main() -> None:
     print(f"KEGO_PARAM folds {args.folds}", flush=True)
     print(f"KEGO_PARAM seed {args.seed}", flush=True)
     print(f"KEGO_PARAM deviation {args.deviation}", flush=True)
+    print(f"KEGO_PARAM formation_knn {args.formation_knn}", flush=True)
     print(f"KEGO_PARAM debug {args.debug}", flush=True)
 
     max_wells = 20 if args.debug else None
@@ -652,11 +731,11 @@ def main() -> None:
 
     # Test predictions only when all folds are present (not single-fold fan-out)
     if args.fold is None:
-        test_out = predict_test(models, deviation=args.deviation)
+        test_out = predict_test(models, deviation=args.deviation, use_formation_knn=args.formation_knn)
         test_out.to_csv(OUTPUT_DIR / "submission.csv", index=False)
         print(f"Saved test predictions: {len(test_out):,} rows", flush=True)
 
-    log_figures(df_train, oof_abs, models)
+    log_figures(df_train, oof_abs, models, _feature_cols(args.formation_knn))
 
 
 if __name__ == "__main__":
