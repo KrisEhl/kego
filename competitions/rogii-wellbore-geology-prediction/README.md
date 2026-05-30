@@ -146,3 +146,4 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | v5-invalid | + NCC + direct EGFDU formation features | 1.14 ft child-fold mean | invalid CV — `EGFDU` is train-only for horizontal wells and unavailable in test |
 | debug | NCC default, no formation KNN | 30.99 ft | 20-well smoke only; confirms no train-only `EGFDU` inputs |
 | debug | + `--formation-knn` fold-aware sampled surface | 71.79 ft | 20-well smoke only; worse, keep disabled |
+| v6-ncc | NCC (hw=8,15,25) + existing features, 4-fold | 15.94 ft | NCC alone doesn't help — typewell GR flat in ±15 ft post-PS zone; need beam search for sequential smoothness |

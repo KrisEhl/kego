@@ -114,14 +114,25 @@ FEATURE_COLS: list[str] = [
     "typewell_pattern_tvt_nn",
     "prePS_tvt_nn",
     "prePS_tvt_dev",
-    # Multi-scale Pearson NCC: primary signal from public solutions (r=0.9993 with TVT)
+    # Multi-scale Pearson NCC (typewell GR only — valid for test wells)
     "ncc_tvt_hw8",
     "ncc_tvt_hw15",
     "ncc_tvt_hw25",
     "ncc_score_hw8",
     "ncc_score_hw15",
     "ncc_score_hw25",
-    "ncc_tvt_blend",  # softmax-weighted blend across scales
+    "ncc_tvt_blend",
+    # Anchor-zone statistics (from XGB Starter public notebook — cv=15.01 ft)
+    "known_tvt_std",
+    "known_tvt_range",
+    "known_gr_mean",
+    "known_gr_std",
+    # Slope features: TVT rate of change near PS (geological dip)
+    "slope_tvt_md",
+    "baseline_tvt_slope",
+    # GR residual vs typewell at PS anchor TVT
+    "tw_gr_at_ps_tvt",
+    "gr_minus_tw_at_ps",
     "md_frac",
     "well_md_range",
     "gr_roll_mean_10",
@@ -335,6 +346,92 @@ def _ncc_tvt_all_scales(
     return results
 
 
+def _beam_search_tvt(
+    gr_filled: np.ndarray,
+    tw_gr: np.ndarray,
+    tw_tvt: np.ndarray,
+    ps_tvt: float,
+    ps_row: int = 0,
+    sigma_emission: float = 20.0,
+    max_step_ft: float = 2.0,
+    search_range_ft: float = 150.0,
+    gr_valid: np.ndarray | None = None,
+) -> np.ndarray:
+    """Vectorised forward HMM for TVT trajectory prediction.
+
+    V[j] = best accumulated log-prob of reaching grid position j at current step.
+    Greedy decode: tvt_pred[i] = tvt_grid[argmax V] after incorporating emission i.
+    Uses scipy maximum_filter1d for O(N_grid) transition step per row.
+
+    Returns tvt_pred of shape (N_h,); all rows initialised to ps_tvt.
+    """
+    from scipy.ndimage import maximum_filter1d
+
+    n_h = len(gr_filled)
+    mask = (tw_tvt >= ps_tvt - search_range_ft) & (tw_tvt <= ps_tvt + search_range_ft)
+    tvt_grid = tw_tvt[mask]
+    gr_grid = tw_gr[mask]
+    n_grid = len(tvt_grid)
+    if n_grid < 3:
+        return np.full(n_h, ps_tvt)
+
+    dt = float(np.median(np.diff(tvt_grid))) if n_grid > 1 else 0.5
+    max_step = max(1, int(round(max_step_ft / dt)))
+
+    # Initialise: start at ps_tvt position with log-prob 0
+    start_idx = int(np.argmin(np.abs(tvt_grid - ps_tvt)))
+    V = np.full(n_grid, -1e9)
+    V[start_idx] = 0.0
+
+    tvt_pred = np.full(n_h, ps_tvt)
+
+    valid = gr_valid if gr_valid is not None else np.ones(n_h, dtype=bool)
+
+    # Run over ALL rows — pre-PS GR calibrates the beam so it enters the post-PS
+    # zone already aligned at the correct typewell position (key from public solutions)
+    for i in range(n_h):
+        V = maximum_filter1d(V, size=2 * max_step + 1, mode="constant", cval=-1e9)
+        if valid[i]:
+            diff = gr_filled[i] - gr_grid
+            V = V - 0.5 * (diff / sigma_emission) ** 2
+        if i >= ps_row:  # only record post-PS predictions
+            tvt_pred[i] = tvt_grid[int(np.argmax(V))]
+
+    return tvt_pred
+
+
+def _beam_search_all_sigmas(
+    gr: pd.Series,
+    typewell: pd.DataFrame,
+    ps_tvt: float,
+    ps_row: int = 0,
+) -> dict[str, np.ndarray]:
+    """Run beam search with 3 sigma variants and return TVT predictions."""
+    tw = typewell.dropna(subset=["TVT", "GR"]).sort_values("TVT").reset_index(drop=True)
+    n = len(gr)
+    if tw.empty:
+        return {
+            k: np.full(n, ps_tvt) for k in ["beam_tvt_loose", "beam_tvt_medium", "beam_tvt_tight", "beam_tvt_blend"]
+        }
+
+    # Keep original NaN mask — only emit when actual GR data exists
+    gr_values = gr.values.astype(np.float64)
+    gr_valid = ~np.isnan(gr_values)
+    gr_filled = np.where(gr_valid, gr_values, 0.0)  # 0 placeholder for missing (emission skipped)
+    tw_gr = tw["GR"].values.astype(np.float64)
+    tw_tvt = tw["TVT"].values
+
+    results = {}
+    for name, sigma in [("loose", 50.0), ("medium", 20.0), ("tight", 10.0)]:
+        results[f"beam_tvt_{name}"] = _beam_search_tvt(
+            gr_filled, tw_gr, tw_tvt, ps_tvt, ps_row=ps_row, sigma_emission=sigma, gr_valid=gr_valid
+        )
+    results["beam_tvt_blend"] = np.mean(
+        [results["beam_tvt_loose"], results["beam_tvt_medium"], results["beam_tvt_tight"]], axis=0
+    )
+    return results
+
+
 def load_dataset(directory: Path, max_wells: int | None = None) -> pd.DataFrame:
     """Load and concatenate all horizontal wells from directory."""
     well_ids = _list_well_ids(directory)
@@ -352,13 +449,19 @@ def load_dataset(directory: Path, max_wells: int | None = None) -> pd.DataFrame:
         h["_typewell_pattern_tvt_nn"] = _typewell_pattern_tvt_nn(h["GR"], t)
         h["_prePS_tvt_nn"] = _prePS_tvt_nn(h["GR"], h["TVT_input"])
 
-        # Multi-scale NCC — constrained to ±150 ft around PS anchor
+        # Multi-scale NCC and beam search — constrained to ±150 ft around PS anchor
         ps = int(h["TVT_input"].notna().sum())
         ps_tvt = float(h.iloc[ps - 1]["TVT_input"]) if ps > 0 else 0.0
         ncc = _ncc_tvt_all_scales(h["GR"], t, ps_tvt=ps_tvt)
         for k, v in ncc.items():
             h[f"_{k}"] = v
-
+        # Typewell GR at ps_tvt for GR-residual feature
+        tw_s = t.dropna(subset=["TVT", "GR"]).sort_values("TVT")
+        if not tw_s.empty and ps > 0:
+            idx = int(np.argmin(np.abs(tw_s["TVT"].values - ps_tvt)))
+            h["_tw_gr_at_ps"] = float(tw_s["GR"].values[idx])
+        else:
+            h["_tw_gr_at_ps"] = np.nan
         frames.append(h)
 
     return pd.concat(frames, ignore_index=True)
@@ -409,6 +512,42 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         "ncc_tvt_blend",
     ]:
         df[col] = df[f"_{col}"].fillna(df["tvt_anchor"])
+
+    # Anchor-zone statistics (pre-PS TVT + GR summary — from XGB Starter notebook)
+    for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
+        grp = df.loc[grp_idx]
+        known = grp["TVT_input"].notna()
+        if known.any():
+            tvt_k = grp.loc[known, "TVT_input"]
+            gr_k = grp.loc[known, "GR"].ffill().bfill().fillna(0)
+            df.loc[grp_idx, "known_tvt_std"] = float(tvt_k.std()) if len(tvt_k) > 1 else 0.0
+            df.loc[grp_idx, "known_tvt_range"] = float(tvt_k.max() - tvt_k.min())
+            df.loc[grp_idx, "known_gr_mean"] = float(gr_k.mean())
+            df.loc[grp_idx, "known_gr_std"] = float(gr_k.std()) if len(gr_k) > 1 else 0.0
+            # Slope: fit TVT vs MD on last 200 pre-PS rows
+            tail = grp.loc[known].tail(200)
+            if len(tail) >= 2:
+                md_c = tail["MD"].values - tail["MD"].values[-1]
+                tvt_c = tail["TVT_input"].values
+                denom = np.dot(md_c, md_c)
+                slope = float(np.dot(md_c, tvt_c) / denom) if denom > 0 else 0.0
+            else:
+                slope = 0.0
+            df.loc[grp_idx, "slope_tvt_md"] = slope
+            anchor_tvt = float(tvt_k.iloc[-1])
+            anchor_md = float(grp.loc[known, "MD"].iloc[-1])
+            df.loc[grp_idx, "baseline_tvt_slope"] = anchor_tvt + slope * (grp["MD"] - anchor_md)
+        else:
+            for col in ["known_tvt_std", "known_tvt_range", "known_gr_mean", "known_gr_std", "slope_tvt_md"]:
+                df.loc[grp_idx, col] = 0.0
+            df.loc[grp_idx, "baseline_tvt_slope"] = df.loc[grp_idx, "tvt_anchor"]
+
+    # GR residual vs typewell GR at ps_tvt (constant per well, precomputed in load_dataset)
+    df["tw_gr_at_ps_tvt"] = df["_tw_gr_at_ps"].fillna(df.groupby("well_id", sort=False)["GR"].transform("mean"))
+    gr_filled = df["GR"].fillna(
+        df.groupby("well_id", sort=False)["GR"].transform(lambda x: x.rolling(10, min_periods=1, center=True).mean())
+    )
+    df["gr_minus_tw_at_ps"] = gr_filled - df["tw_gr_at_ps_tvt"]
 
     # Relative position within each well's borehole
     md_min = df.groupby("well_id", sort=False)["MD"].transform("min")
