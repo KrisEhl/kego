@@ -34,6 +34,17 @@ from sklearn.model_selection import GroupKFold
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_PROJECT_ROOT))
 
+# Live MLflow logging — visible in UI while the job is running
+_mlflow_run_id = os.environ.get("KEGO_MLFLOW_RUN_ID", "")
+
+
+def log_metric_live(key: str, value: float, step: int | None = None) -> None:
+    if _mlflow_run_id:
+        from mlflow.tracking import MlflowClient
+
+        MlflowClient().log_metric(_mlflow_run_id, key, value, step=step)
+
+
 DATA_DIR = (
     Path(os.environ.get("KEGO_PATH_DATA", _PROJECT_ROOT / "data")) / "rogii" / "rogii-wellbore-geology-prediction"
 )
@@ -540,6 +551,7 @@ def run_cv(
         print(f"Fold {fold_num}  RMSE={fold_rmse:.4f}  R²={fold_r2:.4f}", flush=True)
         print(f"KEGO_METRIC fold_rmse_{fold_num} {fold_rmse:.6f}", flush=True)
         print(f"KEGO_METRIC fold_r2_{fold_num} {fold_r2:.6f}", flush=True)
+        log_metric_live("fold_rmse", fold_rmse, step=fold_num)
 
         models.append((model, formation_surface))
 
@@ -723,6 +735,8 @@ def main() -> None:
     print(f"KEGO_METRIC oof_rmse {oof_rmse:.6f}", flush=True)
     print(f"KEGO_METRIC oof_r2 {oof_r2:.6f}", flush=True)
     print(f"KEGO_METRIC post_ps_rmse {post_ps_rmse:.6f}", flush=True)
+    log_metric_live("oof_rmse", oof_rmse)
+    log_metric_live("post_ps_rmse", post_ps_rmse)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     oof_out = df_train[["well_id", "MD", TARGET]].copy()
