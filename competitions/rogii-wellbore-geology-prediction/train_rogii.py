@@ -80,22 +80,70 @@ def _lgbm_factory(seed: int, debug: bool) -> Any:
     )
 
 
+def _xgb_factory(seed: int, debug: bool) -> Any:
+    from xgboost import XGBRegressor
+
+    return XGBRegressor(
+        n_estimators=50 if debug else 2000,
+        learning_rate=0.03,
+        max_depth=8,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        reg_alpha=0.1,
+        reg_lambda=1.0,
+        early_stopping_rounds=50,
+        random_state=seed,
+        n_jobs=-1,
+        verbosity=0,
+    )
+
+
+def _cat_factory(seed: int, debug: bool) -> Any:
+    from catboost import CatBoostRegressor
+
+    return CatBoostRegressor(
+        iterations=50 if debug else 3000,
+        learning_rate=0.03,
+        depth=8,
+        l2_leaf_reg=3.0,
+        random_seed=seed,
+        early_stopping_rounds=50,
+        verbose=0,
+        allow_writing_files=False,
+    )
+
+
+# kind drives the fit() call (each library has a different early-stopping API)
 MODEL_CONFIGS: dict[str, dict[str, Any]] = {
-    "lightgbm": {
-        "factory": _lgbm_factory,
-        "early_stopping": True,
-        "early_stopping_rounds": 50,
-    },
-    # "xgboost": {
-    #     "factory": _xgb_factory,
-    #     "early_stopping": True,
-    #     "early_stopping_rounds": 50,
-    # },
-    # "ridge": {
-    #     "factory": lambda seed, debug: Ridge(alpha=1.0),
-    #     "early_stopping": False,
-    # },
+    "lightgbm": {"factory": _lgbm_factory, "kind": "lightgbm"},
+    "xgboost": {"factory": _xgb_factory, "kind": "xgboost"},
+    "catboost": {"factory": _cat_factory, "kind": "catboost"},
 }
+
+# --model ensemble trains all three per fold and averages predictions
+ENSEMBLE_MEMBERS = ["lightgbm", "xgboost", "catboost"]
+
+
+def _fit_one(cfg: dict[str, Any], seed: int, debug: bool, X_tr, y_tr, X_val, y_val) -> Any:
+    """Fit a single model, dispatching to each library's early-stopping API."""
+    model = cfg["factory"](seed, debug)
+    kind = cfg["kind"]
+    if kind == "lightgbm":
+        import lightgbm as lgb
+
+        model.fit(
+            X_tr,
+            y_tr,
+            eval_set=[(X_val, y_val)],
+            callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)],
+        )
+    elif kind == "xgboost":
+        model.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
+    elif kind == "catboost":
+        model.fit(X_tr, y_tr, eval_set=(X_val, y_val))
+    else:
+        model.fit(X_tr, y_tr)
+    return model
 
 
 # ── Feature columns ────────────────────────────────────────────────────────────
@@ -665,24 +713,18 @@ def run_cv(
         X_val = val_df[feature_cols].reset_index(drop=True)
         y_tr, y_val = y[train_idx], y[val_idx]
 
-        model = cfg["factory"](args.seed, args.debug)
-
-        if cfg.get("early_stopping"):
-            import lightgbm as lgb
-
-            model.fit(
-                X_tr,
-                y_tr,
-                eval_set=[(X_val, y_val)],
-                callbacks=[
-                    lgb.early_stopping(cfg.get("early_stopping_rounds", 50), verbose=False),
-                    lgb.log_evaluation(0),
-                ],
-            )
+        if args.model == "ensemble":
+            # Train all members, average their val predictions
+            member_models = [
+                _fit_one(MODEL_CONFIGS[name], args.seed, args.debug, X_tr, y_tr, X_val, y_val)
+                for name in ENSEMBLE_MEMBERS
+            ]
+            val_preds = np.mean([m.predict(X_val) for m in member_models], axis=0)
+            fold_model: Any = member_models  # list → ensemble
         else:
-            model.fit(X_tr, y_tr)
+            fold_model = _fit_one(cfg, args.seed, args.debug, X_tr, y_tr, X_val, y_val)
+            val_preds = fold_model.predict(X_val)
 
-        val_preds = model.predict(X_val)
         oof_preds[val_idx] = val_preds
 
         fold_rmse = float(np.sqrt(mean_squared_error(y_val, val_preds)))
@@ -693,7 +735,7 @@ def run_cv(
         log_metric_live("fold_rmse", fold_rmse, step=fold_num)
         log_metric_live("progress_pct", (fold_num + 1) / args.folds * 100, step=fold_num)
 
-        models.append((model, formation_surface))
+        models.append((fold_model, formation_surface))
 
     return oof_preds, models
 
@@ -714,12 +756,20 @@ def predict_test(
     df_test = load_dataset(TEST_DIR)
     df_test = engineer_features(df_test)
     feature_cols = _feature_cols(use_formation_knn)
+
+    def _predict(fold_model: Any, X) -> np.ndarray:
+        # fold_model may be a single estimator or a list (ensemble) — average either way
+        if isinstance(fold_model, list):
+            return np.mean([m.predict(X) for m in fold_model], axis=0)
+        return fold_model.predict(X)
+
     preds = np.mean(
         [
-            model.predict(
-                (add_formation_features(df_test, formation_surface) if use_formation_knn else df_test)[feature_cols]
+            _predict(
+                fold_model,
+                (add_formation_features(df_test, formation_surface) if use_formation_knn else df_test)[feature_cols],
             )
-            for model, formation_surface in models
+            for fold_model, formation_surface in models
         ],
         axis=0,
     )
@@ -787,8 +837,8 @@ def log_figures(
     plt.close(fig)
     log_artifact(path)
 
-    # Feature importance (mean over folds)
-    trained_models = [m for m, _ in models]
+    # Feature importance (mean over folds). For ensemble folds, use the first member.
+    trained_models = [(m[0] if isinstance(m, list) else m) for m, _ in models]
     if hasattr(trained_models[0], "feature_importances_"):
         imp = np.mean([m.feature_importances_ for m in trained_models], axis=0)
         fi = pd.Series(imp, index=feature_cols).sort_values(ascending=True)
@@ -808,7 +858,7 @@ def log_figures(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Rogii wellbore TVT regression")
-    parser.add_argument("--model", default="lightgbm", choices=list(MODEL_CONFIGS))
+    parser.add_argument("--model", default="lightgbm", choices=[*MODEL_CONFIGS, "ensemble"])
     parser.add_argument("--folds", type=int, default=4, metavar="N")
     parser.add_argument(
         "--fold",
@@ -829,7 +879,8 @@ def main() -> None:
     parser.add_argument("--formation-knn", action="store_true", help="Experimental fold-aware spatial formation KNN")
     args = parser.parse_args()
 
-    cfg = MODEL_CONFIGS[args.model]
+    # "ensemble" has no single cfg — run_cv handles member dispatch internally
+    cfg = MODEL_CONFIGS.get(args.model, {})
 
     print(f"KEGO_PARAM model {args.model}", flush=True)
     print(f"KEGO_PARAM folds {args.folds}", flush=True)
