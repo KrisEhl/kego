@@ -1,9 +1,12 @@
-"""kego gc — kill zombie RUNNING runs older than a threshold."""
+"""kego gc — reconcile zombie RUNNING MLflow runs against Ray job state."""
 
 from __future__ import annotations
 
 import argparse
 import datetime
+
+# Ray terminal job status → MLflow run status to set.
+_RAY_TERMINAL = {"SUCCEEDED": "FINISHED", "STOPPED": "KILLED", "FAILED": "FAILED"}
 
 
 def _ms_cutoff(value: str) -> int:
@@ -17,23 +20,39 @@ def _ms_cutoff(value: str) -> int:
     return int(cutoff.timestamp() * 1000)
 
 
+def _ray_job_statuses(ray_address: str) -> dict[str, str]:
+    """Map Ray submission_id → status. Empty dict if Ray is unreachable."""
+    import json
+    import urllib.request
+
+    url = ray_address.rstrip("/") + "/api/jobs/"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310
+            jobs = json.loads(resp.read())
+    except Exception:
+        return {}
+    return {j["submission_id"]: j.get("status", "") for j in jobs if j.get("submission_id")}
+
+
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     p = subparsers.add_parser(
         "gc",
-        help="Kill zombie RUNNING runs older than a threshold",
+        help="Reconcile zombie RUNNING runs against Ray job state",
         description=(
-            "Find all RUNNING MLflow runs older than --older-than and mark them KILLED. "
-            "Useful after a cluster restart leaves runs stuck in RUNNING state."
+            "Fix RUNNING MLflow runs that are actually finished. First reconciles each "
+            "RUNNING run against its Ray job (SUCCEEDED→FINISHED, STOPPED/FAILED→KILLED). "
+            "Then kills any remaining RUNNING run older than --older-than (catches local "
+            "zombies and cluster-restart orphans with no live Ray job)."
         ),
         epilog=(
             "Examples:\n"
-            "  # Kill RUNNING runs older than 1 hour (default)\n"
+            "  # Reconcile against Ray + kill RUNNING runs older than 1h\n"
             "  uv run kego gc\n"
             "\n"
             "  # Preview without making changes\n"
             "  uv run kego gc --dry-run\n"
             "\n"
-            "  # Custom threshold\n"
+            "  # Custom time threshold for the fallback kill\n"
             "  uv run kego gc --older-than 30m\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -43,13 +62,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         default="1h",
         metavar="DURATION",
         dest="older_than",
-        help="Kill RUNNING runs older than this (default: 1h). Format: 30m, 2h, 7d",
+        help="Time-kill RUNNING runs with no terminal Ray job older than this (default: 1h)",
     )
     p.add_argument(
         "--dry-run",
         action="store_true",
         dest="dry_run",
-        help="Show what would be killed without making any changes",
+        help="Show what would change without making any changes",
     )
     p.set_defaults(func=_gc)
 
@@ -82,7 +101,7 @@ def _gc(args: argparse.Namespace, extra_args: list[str]) -> int:
         client = MlflowClient()
         runs = mlflow.search_runs(
             search_all_experiments=True,
-            filter_string=(f"attributes.status = 'RUNNING' AND attributes.start_time < {cutoff_ms}"),
+            filter_string="attributes.status = 'RUNNING'",
             order_by=["start_time ASC"],
         )
     except Exception:
@@ -93,20 +112,43 @@ def _gc(args: argparse.Namespace, extra_args: list[str]) -> int:
         return 1
 
     if runs.empty:
-        print(f"No zombie RUNNING runs older than {args.older_than}.")
+        print("No RUNNING runs to reconcile.")
         return 0
 
-    verb = "Would kill" if args.dry_run else "Killing"
-    print(f"{verb} {len(runs)} zombie run(s) older than {args.older_than}:")
+    ray_status = _ray_job_statuses(config.cluster.ray_address)
+
+    # Decide a new status for each RUNNING run: Ray terminal state wins, else time-kill.
+    actions: list[tuple[str, str, str, str]] = []  # (run_id, name, new_status, reason)
     for _, r in runs.iterrows():
-        name = str(r.get("tags.mlflow.runName", "?"))
+        sub_id = r.get("tags.ray_submission_id")
+        run_id = r["run_id"]
+        name = str(r.get("tags.mlflow.runName", "?"))[:26]
         start = r.get("start_time")
-        ts = start.strftime("%Y-%m-%d %H:%M") if start is not None else "?"
-        print(f"  {r['run_id'][:8]}  {name:<26}  {ts}")
+
+        import pandas as pd
+
+        if sub_id is not None and pd.notna(sub_id) and sub_id in ray_status:
+            mapped = _RAY_TERMINAL.get(ray_status[sub_id])
+            if mapped:
+                actions.append((run_id, name, mapped, f"ray {ray_status[sub_id]}"))
+                continue
+            # Ray says still RUNNING/PENDING — leave it.
+            continue
+        if start is not None and pd.notna(start) and int(start.timestamp() * 1000) < cutoff_ms:
+            actions.append((run_id, name, "KILLED", f"older than {args.older_than}, no live Ray job"))
+
+    if not actions:
+        print("No zombie runs — all RUNNING runs have live Ray jobs and are recent.")
+        return 0
+
+    verb = "Would update" if args.dry_run else "Updating"
+    print(f"{verb} {len(actions)} zombie run(s):")
+    for run_id, name, new_status, reason in actions:
+        print(f"  {run_id[:8]}  {name:<26}  → {new_status:<9} ({reason})")
         if not args.dry_run:
-            client.set_terminated(r["run_id"], status="KILLED")
+            client.set_terminated(run_id, status=new_status)
 
     if args.dry_run:
-        print("\nDry run — no changes made. Remove --dry-run to kill.")
+        print("\nDry run — no changes made. Remove --dry-run to apply.")
 
     return 0
