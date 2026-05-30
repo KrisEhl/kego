@@ -254,7 +254,13 @@ def train_fold(
             for i, w in enumerate(valid):
                 n = len(w["feat"])
                 ps = w["ps"]
-                feat_np[i, :n] = w["feat"]
+                f = w["feat"].copy()
+                # Input masking: randomly zero tvt_dev_known (feat col 6) for 50% of
+                # pre-PS rows so the model can't passthrough known TVT — forces GR learning
+                if args.mask_prob > 0 and ps > 0:
+                    drop = rng.random(ps) < args.mask_prob
+                    f[:ps][drop, 6] = 0.0
+                feat_np[i, :n] = f
                 tgt_np[i, :n] = w["target"]
                 mask_np[i, ps:n] = True  # only post-PS rows contribute to loss
 
@@ -319,11 +325,14 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--d_model", type=int, default=64)
-    parser.add_argument("--n_layers", type=int, default=6)
+    parser.add_argument("--d_model", type=int, default=128)
+    parser.add_argument("--n_layers", type=int, default=8)
     parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--patience", type=int, default=15)
     parser.add_argument("--batch_size", type=int, default=16, help="Wells per GPU batch")
+    parser.add_argument(
+        "--mask_prob", type=float, default=0.5, help="Fraction of pre-PS tvt_dev_known to zero during training"
+    )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
@@ -338,6 +347,7 @@ def main() -> None:
     print(f"KEGO_PARAM dropout {args.dropout}", flush=True)
     print(f"KEGO_PARAM patience {args.patience}", flush=True)
     print(f"KEGO_PARAM batch_size {args.batch_size}", flush=True)
+    print(f"KEGO_PARAM mask_prob {args.mask_prob}", flush=True)
     print(f"KEGO_PARAM debug {args.debug}", flush=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

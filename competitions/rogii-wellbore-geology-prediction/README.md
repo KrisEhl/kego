@@ -50,19 +50,20 @@ Add to `train_rogii.py`:
 ### [x] Track 3 — GR↔typewell sliding window correlation (main signal)
 DEAD END: individual signals (GR, Z, dip) all fail. The post-PS TVT range (±20 ft) is too narrow for typewell GR matching. Pre-PS dip has zero correlation (r=-0.05) with post-PS dip.
 
-### [~] Track 3b — Sequence model (end-to-end trajectory learning)
-For each post-PS point, slide a window of horizontal GR along the typewell GR curve and find the TVT offset with the best cross-correlation. This is domain-correct: it's how geologists "correlate" wells manually. The DWT-based LB 9.25 notebook is doing this with wavelet features.
+### [~] Track 3b — Sequence model (dilated TCN, `train_seq.py`)
+Causal 1D dilated TCN. Features: GR_norm, Z_delta, dX, dY, delta_MD, is_post_ps, tvt_dev_known.
+Full sequences, dynamic padding per batch, loss only on post-PS rows.
 
-Implementation:
-1. For each post-PS row, extract GR window `[i-W, i+W]` (W=25–50 ft)
-2. Slide along typewell GR, compute cross-correlation at each TVT offset
-3. Return the TVT of the best-matching typewell position
-4. This replaces point-wise `typewell_tvt_nn` with sequence-aware matching
+**Diagnosis**: model barely beats constant. Root cause — model uses `tvt_dev_known` as passthrough
+for pre-PS rows without learning from GR. To predict post-PS it just outputs ~0 (the PS anchor value).
 
-### Track 4 — Sequence model on cluster (2× RTX 3090)
-Encode the pre-PS (GR, TVT) sequence → decode post-PS TVT autoregressively using GR as input signal. Train on 773 wells via `kego run --target cluster --folds 0,1,2,3,4`.
+**Next**: input masking — randomly zero `tvt_dev_known` for 50% of pre-PS rows during training,
+forcing the model to learn GR→TVT from the pre-PS data. Also increase capacity (d_model 128, 8 layers).
 
-Candidates: 1D conv, small Transformer, or TCN (Temporal Convolutional Network).
+### Track 4 — Sequence model improvements
+- [~] Input masking: zero tvt_dev_known for random 50% of pre-PS rows (BERT-style)
+- [ ] Auxiliary loss on pre-PS rows (train on pre-PS TVT deviations too)
+- [ ] Larger model: d_model=128, n_layers=8 (wider receptive field ~1000 ft)
 
 ### Track 5 — Ensemble
 Stack Tracks 2–4 with Ridge regression on OOF predictions.
@@ -109,3 +110,6 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | v2 | + tvt_anchor + delta_md_from_ps | 16.95 ft | worse than constant — model predicting absolute TVT not anchored |
 | v3 | + deviation target (TVT - tvt_anchor) | 15.99 ft | matches constant baseline — correct framing |
 | v4 | + typewell pattern NN + prePS self-ref | 15.96 ft | marginal gain — tabular GBM can't exploit GR sequence structure |
+| seq-v1 | TCN 5-fold truncated (500+2000) | 17.33 ft | truncation drops context; model uses tvt_dev_known passthrough |
+| seq-v2 | TCN 5-fold full sequences | 15.86 ft | fold 1: 14.79 ft — below constant |
+| seq-v3 | TCN 3-fold full sequences | **15.86 ft** | fold 1: 14.79 ft — same; model still near constant baseline |
