@@ -657,7 +657,7 @@ def log_figures(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Rogii wellbore TVT regression")
     parser.add_argument("--model", default="lightgbm", choices=list(MODEL_CONFIGS))
-    parser.add_argument("--folds", type=int, default=5, metavar="N")
+    parser.add_argument("--folds", type=int, default=4, metavar="N")
     parser.add_argument(
         "--fold",
         type=int,
