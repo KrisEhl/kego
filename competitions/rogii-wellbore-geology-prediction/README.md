@@ -44,7 +44,7 @@ Evaluate OOF RMSE on **post-PS rows only**. Done — `post_ps_rmse` now logged a
 Add to `train_rogii.py`:
 - [x] `tvt_anchor` — TVT at PS (constant per well)
 - [x] `delta_md_from_ps` — distance from PS anchor in MD
-- [~] Predict deviation `TVT - tvt_anchor` instead of absolute TVT
+- [x] Predict deviation `TVT - tvt_anchor` instead of absolute TVT
 - [ ] GR sliding-window correlation score against typewell at each TVT candidate
 
 ### Track 3 — GR↔typewell sliding window correlation (main signal)
@@ -92,4 +92,5 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | — | constant baseline | 15.9 ft | predict TVT_at_PS |
 | — | 5-NN deviation | 13.8 ft | spatial proximity only |
 | v1 | LightGBM 5-fold | TBD (all-rows only) | baseline, submission format fixed |
-| v2 | + tvt_anchor + delta_md_from_ps | 16.95 ft | worse than constant (15.9) — model not yet exploiting anchor correctly |
+| v2 | + tvt_anchor + delta_md_from_ps | 16.95 ft | worse than constant — model predicting absolute TVT not anchored |
+| v3 | + deviation target (TVT - tvt_anchor) | **15.99 ft** | matches constant baseline — correct framing, GR signal needed next |
