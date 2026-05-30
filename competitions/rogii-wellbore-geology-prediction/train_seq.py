@@ -30,6 +30,18 @@ from sklearn.model_selection import GroupKFold
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_PROJECT_ROOT))
 
+# Live MLflow logging — injected by kego runner for both local and cluster targets
+_mlflow_run_id = os.environ.get("KEGO_MLFLOW_RUN_ID", "")
+
+
+def _log_live(key: str, value: float, step: int) -> None:
+    """Log a metric to MLflow mid-run (visible in UI during training)."""
+    if _mlflow_run_id:
+        from mlflow.tracking import MlflowClient
+
+        MlflowClient().log_metric(_mlflow_run_id, key, value, step=step)
+
+
 DATA_DIR = (
     Path(os.environ.get("KEGO_PATH_DATA", _PROJECT_ROOT / "data")) / "rogii" / "rogii-wellbore-geology-prediction"
 )
@@ -180,6 +192,7 @@ def train_fold(
     val_wells: list[dict],
     args: argparse.Namespace,
     device: torch.device,
+    fold_num: int = 0,
 ) -> tuple[nn.Module, float]:
     """Train one fold, return (model, best_val_rmse)."""
     model = DilatedTCN(n_feat=N_FEAT, d=args.d_model, n_layers=args.n_layers, dropout=args.dropout).to(device)
@@ -231,11 +244,13 @@ def train_fold(
                     val_trues.extend((w["target"][ps:] + w["ps_tvt"]).tolist())
 
             val_rmse = float(np.sqrt(mean_squared_error(val_trues, val_preds)))
+            train_loss_avg = train_loss / max(n_samples, 1)
             print(
-                f"  epoch {epoch + 1:3d}  train_loss={train_loss / max(n_samples, 1):.4f}"
-                f"  val_post_ps_rmse={val_rmse:.4f}",
+                f"  epoch {epoch + 1:3d}  train_loss={train_loss_avg:.4f}  val_post_ps_rmse={val_rmse:.4f}",
                 flush=True,
             )
+            _log_live(f"fold{fold_num}_train_loss", train_loss_avg, step=epoch + 1)
+            _log_live(f"fold{fold_num}_val_rmse", val_rmse, step=epoch + 1)
 
             if val_rmse < best_val:
                 best_val = val_rmse
@@ -269,14 +284,20 @@ def main() -> None:
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}", flush=True)
-
+    # Log all params immediately — before any computation
     print(f"KEGO_PARAM folds {args.folds}", flush=True)
+    print(f"KEGO_PARAM fold {args.fold}", flush=True)
+    print(f"KEGO_PARAM seed {args.seed}", flush=True)
+    print(f"KEGO_PARAM epochs {args.epochs}", flush=True)
     print(f"KEGO_PARAM d_model {args.d_model}", flush=True)
     print(f"KEGO_PARAM n_layers {args.n_layers}", flush=True)
-    print(f"KEGO_PARAM epochs {args.epochs}", flush=True)
-    print(f"KEGO_PARAM seed {args.seed}", flush=True)
+    print(f"KEGO_PARAM lr {args.lr}", flush=True)
+    print(f"KEGO_PARAM dropout {args.dropout}", flush=True)
+    print(f"KEGO_PARAM patience {args.patience}", flush=True)
+    print(f"KEGO_PARAM debug {args.debug}", flush=True)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}", flush=True)
 
     print("Loading training wells...", flush=True)
     all_wells = load_well_tensors(TRAIN_DIR, debug=args.debug)
@@ -300,7 +321,7 @@ def main() -> None:
         val_wells = [all_wells[i] for i in val_idx]
         print(f"\nFold {fold_num}  train={len(train_wells)}  val={len(val_wells)}", flush=True)
 
-        model, val_rmse = train_fold(train_wells, val_wells, args, device)
+        model, val_rmse = train_fold(train_wells, val_wells, args, device, fold_num=fold_num)
         fold_models.append(model)
 
         print(f"KEGO_METRIC fold_post_ps_rmse_{fold_num} {val_rmse:.6f}", flush=True)
