@@ -185,7 +185,6 @@ FEATURE_COLS: list[str] = [
     "slope_tvt_md_recent",
     "slope_tvt_md_all",
     "baseline_tvt_slope",
-    "baseline_tvt_recent",
     # Euclidean displacement from PS anchor
     "xy_dist_from_ps",
     "xyz_dist_from_ps",
@@ -193,10 +192,7 @@ FEATURE_COLS: list[str] = [
     "tw_gr_at_ps_tvt",
     "gr_minus_tw_at_ps",
     "gr_minus_last_known",
-    "gr_diff_1",
-    "gr_diff_10",
     "md_frac",
-    "row_frac",
     "well_md_range",
     "gr_roll_mean_10",
     "gr_roll_std_10",
@@ -626,7 +622,6 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
             df.loc[grp_idx, "slope_tvt_md_recent"] = slope_50
             df.loc[grp_idx, "slope_tvt_md_all"] = slope_all
             df.loc[grp_idx, "baseline_tvt_slope"] = anchor_tvt + slope_200 * (grp["MD"] - anchor_md)
-            df.loc[grp_idx, "baseline_tvt_recent"] = anchor_tvt + slope_50 * (grp["MD"] - anchor_md)
 
             # Euclidean displacement from PS anchor (geological dip is spatial, not MD-based)
             df.loc[grp_idx, "xy_dist_from_ps"] = np.sqrt((grp["X"] - ax) ** 2 + (grp["Y"] - ay) ** 2)
@@ -653,7 +648,6 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
             ]:
                 df.loc[grp_idx, col] = 0.0
             df.loc[grp_idx, "baseline_tvt_slope"] = df.loc[grp_idx, "tvt_anchor"]
-            df.loc[grp_idx, "baseline_tvt_recent"] = df.loc[grp_idx, "tvt_anchor"]
 
     # GR residual vs typewell GR at ps_tvt (constant per well, precomputed in load_dataset)
     df["tw_gr_at_ps_tvt"] = df["_tw_gr_at_ps"].fillna(df.groupby("well_id", sort=False)["GR"].transform("mean"))
@@ -681,22 +675,12 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["well_gr_mean"] = df.groupby("well_id", sort=False)["GR"].transform("mean")
     df["well_gr_std"] = df.groupby("well_id", sort=False)["GR"].transform("std").fillna(0)
 
-    # GR differences (vectorised, per well) — local GR gradient
-    grp_gr = df.groupby("well_id", sort=False)["GR"]
-    df["gr_diff_1"] = grp_gr.diff(1).fillna(0)
-    df["gr_diff_10"] = grp_gr.diff(10).fillna(0)
-
     # Wider rolling window (150) — captures coarser GR trend than 10/50
     df["gr_roll_mean_150"] = df.groupby("well_id", sort=False)["GR"].transform(
         lambda x: x.rolling(150, min_periods=1, center=True).mean()
     )
     df["gr_roll_std_150"] = df.groupby("well_id", sort=False)["GR"].transform(
         lambda x: x.rolling(150, min_periods=1, center=True).std().fillna(0)
-    )
-
-    # Row-fractional position within the well (0=start, 1=end)
-    df["row_frac"] = df.groupby("well_id", sort=False).cumcount() / (
-        df.groupby("well_id", sort=False)["MD"].transform("count") - 1 + 1e-9
     )
 
     # Slim the dataframe: drop dead intermediate columns and downcast features to float32.
