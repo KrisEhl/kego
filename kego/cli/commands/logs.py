@@ -109,6 +109,8 @@ def _logs(args: argparse.Namespace, extra_args: list[str]) -> int:
         print(f"No runs found matching ID: {args.id}")
         return 1
 
+    runs = [r for r in runs if r.data.tags.get("kego_is_parent") != "true"]
+
     if args.fold is not None:
         runs = [r for r in runs if r.data.params.get("fold") == str(args.fold)]
         if not runs:

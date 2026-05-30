@@ -66,6 +66,7 @@ def _pre_create_runs(
                     parent_run_id,
                     params=[Param(k, str(v)) for k, v in cli_params.items()],
                 )
+            client.set_terminated(parent_run_id, status="FINISHED")
 
         for fold in folds:
             fold_params = {**cli_params, "fold": str(fold)}

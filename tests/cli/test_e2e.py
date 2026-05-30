@@ -227,6 +227,55 @@ def test_run_multifold_creates_parent_and_children(tmp_path: Path) -> None:
         mlflow.set_tracking_uri("")
 
 
+def test_run_singlefold_creates_no_parent(tmp_path: Path) -> None:
+    """Single-fold _pre_create_runs creates one run with no parent wrapper."""
+    import os
+
+    import mlflow
+    from mlflow.tracking import MlflowClient
+
+    from kego.cli.commands.run import _pre_create_runs
+    from kego.cli.config import ClusterConfig, CompetitionConfig, KegoConfig
+
+    mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
+    os.environ["MLFLOW_TRACKING_URI"] = mlflow_uri
+
+    try:
+        config = KegoConfig(
+            cluster=ClusterConfig(ray_address="http://x:8265", mlflow_uri=mlflow_uri),
+            competition=CompetitionConfig(
+                slug="test-comp",
+                kaggle_user="u",
+                enable_gpu=False,
+                submit_file="s.csv",
+                pattern="script",
+                inference_notebook="t.py",
+                checkpoint_dir="out",
+                primary_metric="rmse",
+            ),
+            repo_root=tmp_path,
+            competition_dir=None,
+        )
+
+        mlflow.set_tracking_uri(mlflow_uri)
+        mlflow.set_experiment("test-comp")
+
+        fold_run_ids = _pre_create_runs(config, "test-comp", "my-run", "abc123", {}, [0])
+
+        client = MlflowClient()
+        exp_id = mlflow.get_experiment_by_name("test-comp").experiment_id
+        all_runs = client.search_runs(experiment_ids=[exp_id])
+
+        assert len(all_runs) == 1
+        run = all_runs[0]
+        assert run.data.tags.get("kego_is_parent") != "true"
+        assert "mlflow.parentRunId" not in run.data.tags
+        assert fold_run_ids == {0: run.info.run_id}
+    finally:
+        os.environ.pop("MLFLOW_TRACKING_URI", None)
+        mlflow.set_tracking_uri("")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
