@@ -174,20 +174,36 @@ FEATURE_COLS: list[str] = [
     # Anchor-zone statistics (from XGB Starter public notebook — cv=15.01 ft)
     "known_tvt_std",
     "known_tvt_range",
+    "known_tvt_min",
+    "known_tvt_max",
+    "known_tvt_mean",
     "known_gr_mean",
     "known_gr_std",
-    # Slope features: TVT rate of change near PS (geological dip)
+    "last_known_gr",
+    # Slope features: TVT rate of change near PS (geological dip) at multiple scales
     "slope_tvt_md",
+    "slope_tvt_md_recent",
+    "slope_tvt_md_all",
     "baseline_tvt_slope",
-    # GR residual vs typewell at PS anchor TVT
+    "baseline_tvt_recent",
+    # Euclidean displacement from PS anchor
+    "xy_dist_from_ps",
+    "xyz_dist_from_ps",
+    # GR residual vs typewell at PS anchor TVT + vs last known GR
     "tw_gr_at_ps_tvt",
     "gr_minus_tw_at_ps",
+    "gr_minus_last_known",
+    "gr_diff_1",
+    "gr_diff_10",
     "md_frac",
+    "row_frac",
     "well_md_range",
     "gr_roll_mean_10",
     "gr_roll_std_10",
     "gr_roll_mean_50",
     "gr_roll_std_50",
+    "gr_roll_mean_150",
+    "gr_roll_std_150",
     "well_gr_mean",
     "well_gr_std",
 ]
@@ -571,6 +587,14 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     ]:
         df[col] = df[f"_{col}"].fillna(df["tvt_anchor"])
 
+    def _slope(md: np.ndarray, tvt: np.ndarray) -> float:
+        """Least-squares slope of TVT vs MD (centred), 0 if degenerate."""
+        if len(md) < 2:
+            return 0.0
+        md_c = md - md[-1]
+        denom = float(np.dot(md_c, md_c))
+        return float(np.dot(md_c, tvt) / denom) if denom > 0 else 0.0
+
     # Anchor-zone statistics (pre-PS TVT + GR summary — from XGB Starter notebook)
     for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
         grp = df.loc[grp_idx]
@@ -580,25 +604,56 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
             gr_k = grp.loc[known, "GR"].ffill().bfill().fillna(0)
             df.loc[grp_idx, "known_tvt_std"] = float(tvt_k.std()) if len(tvt_k) > 1 else 0.0
             df.loc[grp_idx, "known_tvt_range"] = float(tvt_k.max() - tvt_k.min())
+            df.loc[grp_idx, "known_tvt_min"] = float(tvt_k.min())
+            df.loc[grp_idx, "known_tvt_max"] = float(tvt_k.max())
+            df.loc[grp_idx, "known_tvt_mean"] = float(tvt_k.mean())
             df.loc[grp_idx, "known_gr_mean"] = float(gr_k.mean())
             df.loc[grp_idx, "known_gr_std"] = float(gr_k.std()) if len(gr_k) > 1 else 0.0
-            # Slope: fit TVT vs MD on last 200 pre-PS rows
-            tail = grp.loc[known].tail(200)
-            if len(tail) >= 2:
-                md_c = tail["MD"].values - tail["MD"].values[-1]
-                tvt_c = tail["TVT_input"].values
-                denom = np.dot(md_c, md_c)
-                slope = float(np.dot(md_c, tvt_c) / denom) if denom > 0 else 0.0
-            else:
-                slope = 0.0
-            df.loc[grp_idx, "slope_tvt_md"] = slope
+            df.loc[grp_idx, "last_known_gr"] = float(gr_k.iloc[-1])
+
             anchor_tvt = float(tvt_k.iloc[-1])
             anchor_md = float(grp.loc[known, "MD"].iloc[-1])
-            df.loc[grp_idx, "baseline_tvt_slope"] = anchor_tvt + slope * (grp["MD"] - anchor_md)
+            ax = float(grp.loc[known, "X"].iloc[-1])
+            ay = float(grp.loc[known, "Y"].iloc[-1])
+            az = float(grp.loc[known, "Z"].iloc[-1])
+
+            # Multi-scale slopes (recent-50, recent-200, all pre-PS) — geological dip at scales
+            k = grp.loc[known]
+            slope_50 = _slope(k["MD"].values[-50:], k["TVT_input"].values[-50:])
+            slope_200 = _slope(k["MD"].values[-200:], k["TVT_input"].values[-200:])
+            slope_all = _slope(k["MD"].values, k["TVT_input"].values)
+            df.loc[grp_idx, "slope_tvt_md"] = slope_200
+            df.loc[grp_idx, "slope_tvt_md_recent"] = slope_50
+            df.loc[grp_idx, "slope_tvt_md_all"] = slope_all
+            df.loc[grp_idx, "baseline_tvt_slope"] = anchor_tvt + slope_200 * (grp["MD"] - anchor_md)
+            df.loc[grp_idx, "baseline_tvt_recent"] = anchor_tvt + slope_50 * (grp["MD"] - anchor_md)
+
+            # Euclidean displacement from PS anchor (geological dip is spatial, not MD-based)
+            df.loc[grp_idx, "xy_dist_from_ps"] = np.sqrt((grp["X"] - ax) ** 2 + (grp["Y"] - ay) ** 2)
+            df.loc[grp_idx, "xyz_dist_from_ps"] = np.sqrt(
+                (grp["X"] - ax) ** 2 + (grp["Y"] - ay) ** 2 + (grp["Z"] - az) ** 2
+            )
+            df.loc[grp_idx, "gr_minus_last_known"] = grp["GR"] - float(gr_k.iloc[-1])
         else:
-            for col in ["known_tvt_std", "known_tvt_range", "known_gr_mean", "known_gr_std", "slope_tvt_md"]:
+            for col in [
+                "known_tvt_std",
+                "known_tvt_range",
+                "known_tvt_min",
+                "known_tvt_max",
+                "known_tvt_mean",
+                "known_gr_mean",
+                "known_gr_std",
+                "last_known_gr",
+                "slope_tvt_md",
+                "slope_tvt_md_recent",
+                "slope_tvt_md_all",
+                "xy_dist_from_ps",
+                "xyz_dist_from_ps",
+                "gr_minus_last_known",
+            ]:
                 df.loc[grp_idx, col] = 0.0
             df.loc[grp_idx, "baseline_tvt_slope"] = df.loc[grp_idx, "tvt_anchor"]
+            df.loc[grp_idx, "baseline_tvt_recent"] = df.loc[grp_idx, "tvt_anchor"]
 
     # GR residual vs typewell GR at ps_tvt (constant per well, precomputed in load_dataset)
     df["tw_gr_at_ps_tvt"] = df["_tw_gr_at_ps"].fillna(df.groupby("well_id", sort=False)["GR"].transform("mean"))
@@ -625,6 +680,24 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # Well-level GR aggregates
     df["well_gr_mean"] = df.groupby("well_id", sort=False)["GR"].transform("mean")
     df["well_gr_std"] = df.groupby("well_id", sort=False)["GR"].transform("std").fillna(0)
+
+    # GR differences (vectorised, per well) — local GR gradient
+    grp_gr = df.groupby("well_id", sort=False)["GR"]
+    df["gr_diff_1"] = grp_gr.diff(1).fillna(0)
+    df["gr_diff_10"] = grp_gr.diff(10).fillna(0)
+
+    # Wider rolling window (150) — captures coarser GR trend than 10/50
+    df["gr_roll_mean_150"] = df.groupby("well_id", sort=False)["GR"].transform(
+        lambda x: x.rolling(150, min_periods=1, center=True).mean()
+    )
+    df["gr_roll_std_150"] = df.groupby("well_id", sort=False)["GR"].transform(
+        lambda x: x.rolling(150, min_periods=1, center=True).std().fillna(0)
+    )
+
+    # Row-fractional position within the well (0=start, 1=end)
+    df["row_frac"] = df.groupby("well_id", sort=False).cumcount() / (
+        df.groupby("well_id", sort=False)["MD"].transform("count") - 1 + 1e-9
+    )
 
     # Slim the dataframe: drop dead intermediate columns and downcast features to float32.
     # Keeps per-fold memory low so 4 parallel cluster folds don't swap (~525→~210 B/row).
