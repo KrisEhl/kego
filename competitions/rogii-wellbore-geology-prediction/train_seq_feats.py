@@ -68,6 +68,11 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--folds", type=int, default=4)
     p.add_argument("--fold", type=int, default=None)
+    p.add_argument(
+        "--all-folds",
+        action="store_true",
+        help="Run all folds + OOF + test in ONE job (build once). Overrides --fold (cluster default injects --fold 0).",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--model", default="xgboost")
     p.add_argument("--debug", action="store_true")
@@ -104,9 +109,11 @@ def main() -> None:
     y = df["target"].to_numpy(np.float64)  # drift = TVT - last_known_tvt
     groups = df["well"].to_numpy()
 
+    # --all-folds overrides the cluster-injected --fold 0 so one job builds once + runs all folds.
+    run_all = args.all_folds or args.fold is None
     gkf = GroupKFold(n_splits=args.folds)
     splits = list(gkf.split(X, y, groups))
-    enumerated = [(args.fold, splits[args.fold])] if args.fold is not None else list(enumerate(splits))
+    enumerated = list(enumerate(splits)) if run_all else [(args.fold, splits[args.fold])]
 
     oof = np.full(len(df), np.nan)
     models = []
@@ -121,7 +128,7 @@ def main() -> None:
         log_metric_live("progress_pct", 40 + 50 * (fold_num + 1) / args.folds)
         models.append(model)
 
-    if args.fold is None:
+    if run_all:
         mask = ~np.isnan(oof)
         post_ps_rmse = float(np.sqrt(mean_squared_error(y[mask], oof[mask])))
         print(f"OOF post-PS RMSE = {post_ps_rmse:.4f} ft", flush=True)
