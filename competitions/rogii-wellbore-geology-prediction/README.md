@@ -37,14 +37,14 @@ Each horizontal well is drilled vertically then curves to horizontal. At the **P
 
 ## Plan
 
-### [~] Track 1 — Fix CV metric (immediate)
-Evaluate OOF RMSE on **post-PS rows only**. Current metric includes easy before-PS rows and overstates performance.
+### [x] Track 1 — Fix CV metric (immediate)
+Evaluate OOF RMSE on **post-PS rows only**. Done — `post_ps_rmse` now logged as primary metric.
 
 ### [~] Track 2 — Feature improvements (fast)
 Add to `train_rogii.py`:
-- `tvt_anchor` — TVT at PS (constant per well, strongest predictor for post-PS)
-- `delta_md_from_ps` — distance from PS anchor in MD
-- GR sliding-window correlation score against typewell at each TVT candidate
+- [x] `tvt_anchor` — TVT at PS (constant per well)
+- [x] `delta_md_from_ps` — distance from PS anchor in MD
+- [ ] GR sliding-window correlation score against typewell at each TVT candidate
 
 ### Track 3 — GR↔typewell sliding window correlation (main signal)
 For each post-PS point, slide a window of horizontal GR along the typewell GR curve and find the TVT offset with the best cross-correlation. This is domain-correct: it's how geologists "correlate" wells manually. The DWT-based LB 9.25 notebook is doing this with wavelet features.
@@ -82,6 +82,7 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | Approach | Result | Why it failed |
 |---|---|---|
 | 5-NN spatial deviation | 13.8 ft (worse than constant) | TVT deviations don't correlate spatially even at 400 ft |
+| tvt_anchor + delta_md_from_ps features | 16.95 ft post-PS | LightGBM doesn't exploit the anchor — constant prediction (just predicting tvt_anchor) would score 15.9 ft |
 
 ## Results log
 
@@ -89,4 +90,5 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 |---|---|---|---|
 | — | constant baseline | 15.9 ft | predict TVT_at_PS |
 | — | 5-NN deviation | 13.8 ft | spatial proximity only |
-| v1 | LightGBM 5-fold | ~18 ft (all rows) | baseline, submission format fixed |
+| v1 | LightGBM 5-fold | TBD (all-rows only) | baseline, submission format fixed |
+| v2 | + tvt_anchor + delta_md_from_ps | 16.95 ft | worse than constant (15.9) — model not yet exploiting anchor correctly |
