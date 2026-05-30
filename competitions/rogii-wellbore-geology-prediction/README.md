@@ -112,4 +112,5 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | v4 | + typewell pattern NN + prePS self-ref | 15.96 ft | marginal gain — tabular GBM can't exploit GR sequence structure |
 | seq-v1 | TCN 5-fold truncated (500+2000) | 17.33 ft | truncation drops context; model uses tvt_dev_known passthrough |
 | seq-v2 | TCN 5-fold full sequences | 15.86 ft | fold 1: 14.79 ft — below constant |
-| seq-v3 | TCN 3-fold full sequences | **15.86 ft** | fold 1: 14.79 ft — same; model still near constant baseline |
+| seq-v3 | TCN 3-fold full sequences | 15.86 ft | fold 1: 14.79 ft — same; model still near constant baseline |
+| seq-v4 | + input masking 50% + d128/8L | **15.54 ft** | consistently below constant — masking forces GR learning |
