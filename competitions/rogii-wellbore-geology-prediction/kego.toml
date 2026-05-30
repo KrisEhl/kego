@@ -7,3 +7,6 @@ pattern = "script"
 inference_notebook = "train_rogii.py"
 checkpoint_dir = "outputs"
 primary_metric = "oof_rmse"
+
+[cluster]
+uv_project_dir = "~/projects/kego/competitions/rogii-wellbore-geology-prediction"
