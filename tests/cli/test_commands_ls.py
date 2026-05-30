@@ -23,6 +23,7 @@ def _make_ls_args(**overrides) -> argparse.Namespace:
         limit=50,
         show_all=False,
         show_metric_name=False,
+        show_children=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -253,3 +254,94 @@ def test_format_table_multi_competition():
     # neither value appears in the wrong row
     assert "0.9538" not in birdclef_row
     assert "0.9120" not in playground_row
+
+
+def test_ls_hides_child_runs_by_default(mlflow_db, capsys):
+    """Child runs (mlflow.parentRunId set) are hidden unless --children is passed."""
+    import secrets
+
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient()
+    exp = mlflow.set_experiment("test-exp")
+
+    parent = client.create_run(
+        exp.experiment_id,
+        run_name="parent-run",
+        tags={
+            "kego_id": secrets.token_hex(3),
+            "kego_target": "cluster",
+            "kego_debug": "false",
+            "kego_is_parent": "true",
+            "kego_fold_count": "2",
+        },
+    )
+    client.set_terminated(parent.info.run_id, status="FINISHED")
+
+    for fold in range(2):
+        child = client.create_run(
+            exp.experiment_id,
+            run_name=f"parent-run fold={fold}",
+            tags={
+                "kego_id": secrets.token_hex(3),
+                "kego_target": "cluster",
+                "kego_debug": "false",
+                "mlflow.parentRunId": parent.info.run_id,
+            },
+        )
+        client.log_param(child.info.run_id, "fold", str(fold))
+        client.set_terminated(child.info.run_id, status="FINISHED")
+
+    _ls(_make_ls_args(), [])
+    out = capsys.readouterr().out
+    assert "parent-run" in out
+    # Child rows must not appear
+    assert "fold=0" not in out
+    assert "fold=1" not in out
+
+
+def test_ls_children_flag_shows_fold_rows(mlflow_db, capsys):
+    """--children shows child fold runs with a FOLD column."""
+    import secrets
+
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient()
+    exp = mlflow.set_experiment("test-exp")
+
+    parent = client.create_run(
+        exp.experiment_id,
+        run_name="parent-run",
+        tags={
+            "kego_id": secrets.token_hex(3),
+            "kego_target": "cluster",
+            "kego_debug": "false",
+            "kego_is_parent": "true",
+            "kego_fold_count": "2",
+        },
+    )
+    client.set_terminated(parent.info.run_id, status="FINISHED")
+
+    for fold in range(2):
+        child = client.create_run(
+            exp.experiment_id,
+            run_name=f"parent-run fold={fold}",
+            tags={
+                "kego_id": secrets.token_hex(3),
+                "kego_target": "cluster",
+                "kego_debug": "false",
+                "mlflow.parentRunId": parent.info.run_id,
+            },
+        )
+        client.log_param(child.info.run_id, "fold", str(fold))
+        client.set_terminated(child.info.run_id, status="FINISHED")
+
+    _ls(_make_ls_args(show_children=True), [])
+    out = capsys.readouterr().out
+    # FOLD column header present
+    assert "FOLD" in out
+    # Parent shows fold count
+    assert "2×" in out  # noqa: RUF001
+    # Children show fold numbers
+    assert "f0" in out
+    assert "f1" in out

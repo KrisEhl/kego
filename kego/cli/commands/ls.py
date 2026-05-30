@@ -109,8 +109,11 @@ def format_table(
     primary_metric: str,
     exp_names: dict[str, str] | None = None,
     show_metric_name: bool = False,
+    show_fold: bool = False,
 ) -> list[str]:
     """Format experiment runs into a table. Returns list of lines."""
+    import math
+
     import pandas as pd
 
     if runs.empty:
@@ -118,9 +121,10 @@ def format_table(
 
     fallback_metric = _resolve_metric(runs, primary_metric)
 
+    fold_col = f" {'FOLD':<6}" if show_fold else ""
     metric_name_col = f" {'METRIC_NAME':<10}" if show_metric_name else ""
     header = (
-        f"{'ID':<8} {'NAME':<26} {'COMPETITION':<20} {'TARGET':<8}"
+        f"{'ID':<8} {'NAME':<26}{fold_col} {'COMPETITION':<20} {'TARGET':<8}"
         f" {'METRIC':>8}{metric_name_col} {'STATUS':<10} {'AGO'}"
     )
     sep = "-" * len(header)
@@ -138,8 +142,21 @@ def format_table(
         start = row.get("start_time")
         ago = _ago(start) if start is not None and pd.notna(start) else "?"
         metric_name_cell = f" {metric_name:<10}" if show_metric_name else ""
+        fold_cell = ""
+        if show_fold:
+            parent_run_id = row.get("tags.mlflow.parentRunId", "")
+            fold_count = row.get("tags.kego_fold_count", "")
+            fold_param = row.get("params.fold", "")
+            if parent_run_id and not (isinstance(parent_run_id, float) and math.isnan(parent_run_id)):
+                fold_val = f"f{fold_param}" if fold_param else "?"
+            elif fold_count and not (isinstance(fold_count, float) and math.isnan(fold_count)):
+                fold_val = f"{fold_count}×"  # noqa: RUF001
+            else:
+                fold_val = "-"
+            fold_cell = f" {fold_val:<6}"
         lines.append(
-            f"{exp_id:<8} {name:<26} {competition:<20} {target:<8} {metric:>8}{metric_name_cell} {status:<10} {ago}"
+            f"{exp_id:<8} {name:<26}{fold_cell} {competition:<20} {target:<8}"
+            f" {metric:>8}{metric_name_cell} {status:<10} {ago}"
         )
 
     return lines
@@ -188,6 +205,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         action="store_true",
         dest="show_metric_name",
         help="Show metric name column",
+    )
+    p.add_argument(
+        "--children",
+        action="store_true",
+        dest="show_children",
+        help="Show child fold runs (hidden by default; use with multi-fold --folds submissions)",
     )
     p.set_defaults(func=_ls)
 
@@ -266,11 +289,21 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
     if not args.show_all and "tags.kego_debug" in runs.columns:
         runs = runs[runs["tags.kego_debug"] != "true"]
 
+    # Hide child fold runs unless --children is requested
+    if not args.show_children and "tags.mlflow.parentRunId" in runs.columns:
+        runs = runs[runs["tags.mlflow.parentRunId"].isna() | (runs["tags.mlflow.parentRunId"] == "")]
+
     primary_metric = "metric"
     if config.competition:
         primary_metric = config.competition.primary_metric
 
-    table_lines = format_table(runs, primary_metric, exp_names, args.show_metric_name)
+    table_lines = format_table(
+        runs,
+        primary_metric,
+        exp_names,
+        args.show_metric_name,
+        show_fold=args.show_children,
+    )
     for line in table_lines:
         print(line)
 
