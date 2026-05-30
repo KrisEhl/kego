@@ -9,6 +9,7 @@ dependencies = [
     "torch>=2.0",
     "xgboost>=2.0",
     "catboost>=1.2",
+    "numba>=0.59",
 ]
 
 [tool.uv.sources]
