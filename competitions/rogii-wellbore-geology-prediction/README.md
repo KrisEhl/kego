@@ -126,6 +126,11 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | tvt_anchor + delta_md_from_ps features | 16.95 ft post-PS | Model predicting absolute TVT — drifts from anchor |
 | Tabular GBM on GR matching features | ~15.96 ft | GBM can't exploit sequential GR structure — stuck at constant baseline |
 | Fold-aware sampled formation KNN | 71.79 ft debug CV | Spatial `TVT + Z` surface does not generalise on the 20-well smoke sample; gated behind `--formation-knn` |
+| Beam search / Viterbi HMM (sigma 10–50, step 0.5–2 ft) | 32–48 ft on 25 wells | Greedy/hard-window decode follows GR noise; sigma has no effect with hard max-pool transition; worse than constant on all wells |
+| NCC as direct predictor (±10/20/40/80/150 ft search) | 13.4 ft best (±10), worse on 17/25 wells | **KEY: GR does not disambiguate TVT within the ±15 ft reservoir band.** Public "r=0.9993" is a global-range artifact (pre-PS TVT spans 100s of ft on the curve). NCC kept as a weak GBM feature only, not a predictor. |
+| Savitzky-Golay smoothing of OOF preds (win 11–51) | −0.02 ft | Error is slow drift, not high-frequency noise — nothing to smooth |
+
+**Strategic conclusion (2026-05-30)**: Individual GR/geometric signals (NCC, beam, formation, dip) are ALL weak at the post-PS scale — the well steers within a thin reservoir where GR can't pin absolute TVT. Constant (~15.9 ft) is a very strong baseline. Public top solutions reach 8.9 ft via a large multi-feature 3-model ensemble (XGB+CatBoost+HGB, NNLS blend) where many individually-weak signals collectively reduce variance — NOT via any single strong feature. Path forward: replicate the ensemble + breadth of simple features, not chase one magic signal.
 
 ## Results log
 
