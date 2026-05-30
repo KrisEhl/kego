@@ -19,6 +19,7 @@ def _make_ls_args(**overrides) -> argparse.Namespace:
         status=None,
         target=None,
         competition=None,
+        since=None,
         limit=50,
         show_all=False,
         show_metric_name=False,
@@ -43,13 +44,34 @@ def _create_run(
     target: str = "cluster",
     status: str = "FINISHED",
     experiment: str = "test-exp",
+    hours_ago: float = 0,
 ) -> None:
-    mlflow.set_experiment(experiment)
-    mlflow.start_run(
-        run_name=name,
-        tags={"kego_id": secrets.token_hex(3), "kego_target": target, "kego_debug": "false"},
-    )
-    mlflow.end_run(status=status)
+    from mlflow.tracking import MlflowClient
+
+    exp = mlflow.set_experiment(experiment)
+    if hours_ago:
+        # Back-date the run using the low-level client so --since can be tested.
+        import datetime as dt
+
+        start_ms = int((dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(hours=hours_ago)).timestamp() * 1000)
+        client = MlflowClient()
+        run = client.create_run(
+            experiment_id=exp.experiment_id,
+            run_name=name,
+            start_time=start_ms,
+            tags={
+                "kego_id": secrets.token_hex(3),
+                "kego_target": target,
+                "kego_debug": "false",
+            },
+        )
+        client.set_terminated(run.info.run_id, status=status)
+    else:
+        mlflow.start_run(
+            run_name=name,
+            tags={"kego_id": secrets.token_hex(3), "kego_target": target, "kego_debug": "false"},
+        )
+        mlflow.end_run(status=status)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +137,24 @@ def test_ls_limit_caps_number_of_runs_shown(mlflow_db, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert sum(name in out for name in names) <= 2
+
+
+def test_ls_since_filter_excludes_older_runs(mlflow_db, capsys):
+    _create_run("recent-run", hours_ago=0)
+    _create_run("old-run", hours_ago=3)
+
+    rc = _ls(_make_ls_args(since="1h"), [])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "recent-run" in out
+    assert "old-run" not in out
+
+
+def test_ls_since_invalid_format_returns_error(mlflow_db, capsys):
+    rc = _ls(_make_ls_args(since="2weeks"), [])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "Invalid" in out
 
 
 def test_format_table_basic():

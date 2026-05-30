@@ -22,6 +22,20 @@ _SKIP_METRICS = {"epoch", "loss", "train_loss", "val_loss", "lr", "learning_rate
 _STATUSES = ["running", "finished", "failed", "killed"]
 
 
+def _parse_since(value: str) -> int:
+    """Parse a duration string to a UTC millisecond cutoff timestamp.
+
+    Accepted formats: 30m, 2h, 7d
+    """
+    units = {"m": "minutes", "h": "hours", "d": "days"}
+    unit = value[-1]
+    if unit not in units or not value[:-1].isdigit():
+        raise argparse.ArgumentTypeError(f"Invalid --since value '{value}'. Use e.g. 30m, 2h, 7d.")
+    delta = datetime.timedelta(**{units[unit]: int(value[:-1])})
+    cutoff = datetime.datetime.now(tz=datetime.timezone.utc) - delta
+    return int(cutoff.timestamp() * 1000)
+
+
 def _resolve_metric(runs: pd.DataFrame, primary_metric: str) -> str:
     """Return primary_metric if it has data, otherwise the first non-bookkeeping metric."""
     preferred = f"metrics.{primary_metric}"
@@ -108,6 +122,11 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         help="Filter by competition slug (e.g. birdclef-2026)",
     )
     p.add_argument(
+        "--since",
+        metavar="DURATION",
+        help="Only show runs started within this window, e.g. 30m, 2h, 7d",
+    )
+    p.add_argument(
         "--limit",
         type=int,
         default=50,
@@ -153,6 +172,12 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
         filter_parts.append(f"attributes.status = '{args.status.upper()}'")
     if args.target:
         filter_parts.append(f"tags.kego_target = '{args.target}'")
+    if args.since:
+        try:
+            filter_parts.append(f"attributes.start_time > {_parse_since(args.since)}")
+        except argparse.ArgumentTypeError as e:
+            print(str(e))
+            return 1
 
     filter_string = " AND ".join(filter_parts) if filter_parts else ""
 
