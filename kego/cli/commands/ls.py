@@ -141,19 +141,30 @@ def format_table(
         ago = _ago(start) if start is not None and pd.notna(start) else "?"
         metric_name_cell = f" {metric_name:<10}" if show_metric_name else ""
         fold_cell = ""
+        is_child = False
         if show_fold:
             parent_run_id = row.get("tags.mlflow.parentRunId", "")
             fold_count = row.get("tags.kego_fold_count", "")
             fold_param = row.get("params.fold", "")
-            if pd.notna(parent_run_id) and parent_run_id:
+            is_child = pd.notna(parent_run_id) and bool(parent_run_id)
+            if is_child:
                 fold_val = f"f{fold_param}" if (pd.notna(fold_param) and fold_param) else "?"
             elif pd.notna(fold_count) and fold_count:
                 fold_val = f"{fold_count}×"  # noqa: RUF001
             else:
                 fold_val = "-"
             fold_cell = f" {fold_val:<6}"
+
+        # Indent child rows: blank the ID and prefix the name with └─
+        if is_child:
+            row_id = " " * 6
+            row_name = ("└─ " + str(row.get("tags.mlflow.runName", "?"))[:23])[:26]
+        else:
+            row_id = exp_id
+            row_name = name
+
         lines.append(
-            f"{exp_id:<8} {name:<26}{fold_cell} {competition:<20} {target:<8}"
+            f"{row_id:<8} {row_name:<26}{fold_cell} {competition:<20} {target:<8}"
             f" {metric:>8}{metric_name_cell} {status:<10} {ago}"
         )
 

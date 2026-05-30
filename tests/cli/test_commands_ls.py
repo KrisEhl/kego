@@ -293,7 +293,7 @@ def _setup_parent_child_runs(mlflow_db: str, fold_count: int = 2) -> None:
 
 
 def test_ls_shows_nested_runs_with_fold_column(mlflow_db, capsys):
-    """Parent and child fold runs both appear; FOLD column is auto-added."""
+    """Parent and child fold runs both appear; FOLD column is auto-added; children indented."""
     _setup_parent_child_runs(mlflow_db)
     _ls(_make_ls_args(), [])
     out = capsys.readouterr().out
@@ -302,3 +302,4 @@ def test_ls_shows_nested_runs_with_fold_column(mlflow_db, capsys):
     assert "2×" in out  # noqa: RUF001
     assert "f0" in out
     assert "f1" in out
+    assert "└─" in out  # child rows are visually indented
