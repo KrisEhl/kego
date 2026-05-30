@@ -153,4 +153,5 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | debug | + `--formation-knn` fold-aware sampled surface | 71.79 ft | 20-well smoke only; worse, keep disabled |
 | v6-ncc | NCC (hw=8,15,25) + existing features, 4-fold | 15.94 ft | NCC alone doesn't help — typewell GR flat in ±15 ft post-PS zone |
 | v7-anchor-slope | + anchor stats + slope + GR-residual, ALL-rows training | ~16.4 ft (fold 3; killed) | **Reference divergence found**: trained on all rows like v2-v6. Public XGB Starter trains post-PS-only → 15.01 ft. Killed early once root cause identified. |
-| v8-postPS | v7 features, **post-PS-only training** | running | matches XGB Starter setup; debug 19.5 vs 27.2 all-rows |
+| v8-postPS | INVALID — cluster ran stale code | 16.37 ft (=v7) | cluster auto-pull failed (stuck 5 commits behind at 80e50e3); post-PS filter never applied. Killed + resubmitted as v8b. |
+| v8b-postPS | v7 features, **post-PS-only training** | running | cluster confirmed at correct commit; debug 19.5 vs 27.2 all-rows |
