@@ -146,6 +146,7 @@ def load_dataset(directory: Path, max_wells: int | None = None) -> pd.DataFrame:
         h = pd.read_csv(directory / f"{wid}__horizontal_well.csv")
         t = pd.read_csv(directory / f"{wid}__typewell.csv")
         h["well_id"] = wid
+        h["_row_idx"] = np.arange(len(h))  # original 0-based row index within each well's CSV
         h["_typewell_tvt_nn"] = _typewell_tvt_nn(h["GR"], t)
         frames.append(h)
 
@@ -256,13 +257,20 @@ def run_cv(
 
 
 def predict_test(models: list[Any]) -> pd.DataFrame:
-    """Ensemble predictions on all test wells."""
+    """Ensemble predictions on test wells, returning submission-format DataFrame.
+
+    Submission format: id={well_id}_{row_idx}, tvt=predicted_TVT
+    Only post-PS rows are scored (where TVT_input is NaN in the test file).
+    """
     df_test = load_dataset(TEST_DIR)
     df_test = engineer_features(df_test)
     X_test = df_test[FEATURE_COLS]
-    preds = np.mean([m.predict(X_test) for m in models], axis=0)
-    df_test["TVT_predicted"] = preds
-    return df_test[["well_id", "MD", "TVT_predicted"]]
+    df_test["tvt"] = np.mean([m.predict(X_test) for m in models], axis=0)
+
+    # Keep only post-PS rows (TVT_input is NaN = evaluation zone)
+    post_ps = df_test[df_test["TVT_input"].isna()].copy()
+    post_ps["id"] = post_ps["well_id"] + "_" + post_ps["_row_idx"].astype(str)
+    return post_ps[["id", "tvt"]]
 
 
 # ── Figure logging ─────────────────────────────────────────────────────────────
