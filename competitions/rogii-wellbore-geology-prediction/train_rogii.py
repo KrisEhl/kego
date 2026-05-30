@@ -97,6 +97,8 @@ FEATURE_COLS: list[str] = [
     "GR",
     "tvt_input_interp",
     "tvt_input_is_known",
+    "tvt_anchor",
+    "delta_md_from_ps",
     "typewell_tvt_nn",
     "md_frac",
     "well_md_range",
@@ -170,6 +172,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Typewell-derived TVT prior
     df["typewell_tvt_nn"] = df["_typewell_tvt_nn"]
+
+    # PS anchor features: TVT at the last known point, and MD distance from it
+    for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
+        grp = df.loc[grp_idx]
+        known = grp["TVT_input"].notna()
+        anchor_tvt = grp.loc[known, "TVT_input"].iloc[-1] if known.any() else 0.0
+        anchor_md = grp.loc[known, "MD"].iloc[-1] if known.any() else grp["MD"].iloc[0]
+        df.loc[grp_idx, "tvt_anchor"] = anchor_tvt
+        df.loc[grp_idx, "delta_md_from_ps"] = grp["MD"] - anchor_md
 
     # Relative position within each well's borehole
     md_min = df.groupby("well_id", sort=False)["MD"].transform("min")
@@ -376,9 +387,17 @@ def main() -> None:
     oof_rmse = float(np.sqrt(mean_squared_error(df_train[TARGET].to_numpy()[mask], oof_preds[mask])))
     oof_r2 = float(r2_score(df_train[TARGET].to_numpy()[mask], oof_preds[mask]))
 
-    print(f"OOF  RMSE={oof_rmse:.4f}  R²={oof_r2:.4f}", flush=True)
+    # Post-PS only — the competition metric (rows where TVT_input is NaN)
+    post_ps_mask = mask & df_train["TVT_input"].isna().to_numpy()
+    post_ps_rmse = float(
+        np.sqrt(mean_squared_error(df_train[TARGET].to_numpy()[post_ps_mask], oof_preds[post_ps_mask]))
+    )
+
+    print(f"OOF      RMSE={oof_rmse:.4f}  R²={oof_r2:.4f}", flush=True)
+    print(f"Post-PS  RMSE={post_ps_rmse:.4f}", flush=True)
     print(f"KEGO_METRIC oof_rmse {oof_rmse:.6f}", flush=True)
     print(f"KEGO_METRIC oof_r2 {oof_r2:.6f}", flush=True)
+    print(f"KEGO_METRIC post_ps_rmse {post_ps_rmse:.6f}", flush=True)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     oof_out = df_train[["well_id", "MD", TARGET]].copy()

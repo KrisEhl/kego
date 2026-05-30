@@ -37,10 +37,10 @@ Each horizontal well is drilled vertically then curves to horizontal. At the **P
 
 ## Plan
 
-### Track 1 — Fix CV metric (immediate)
+### [~] Track 1 — Fix CV metric (immediate)
 Evaluate OOF RMSE on **post-PS rows only**. Current metric includes easy before-PS rows and overstates performance.
 
-### Track 2 — Feature improvements (fast)
+### [~] Track 2 — Feature improvements (fast)
 Add to `train_rogii.py`:
 - `tvt_anchor` — TVT at PS (constant per well, strongest predictor for post-PS)
 - `delta_md_from_ps` — distance from PS anchor in MD
@@ -76,6 +76,12 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py \
 # Debug smoke test
 uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --debug
 ```
+
+## Dead ends
+
+| Approach | Result | Why it failed |
+|---|---|---|
+| 5-NN spatial deviation | 13.8 ft (worse than constant) | TVT deviations don't correlate spatially even at 400 ft |
 
 ## Results log
 
