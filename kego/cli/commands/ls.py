@@ -17,6 +17,7 @@ def _ago(start: datetime.datetime) -> str:
 
 
 _SKIP_METRICS = {"epoch", "loss", "train_loss", "val_loss", "lr", "learning_rate"}
+_STATUSES = ["running", "finished", "failed", "killed"]
 
 
 def _resolve_metric(runs: pd.DataFrame, primary_metric: str) -> str:
@@ -86,7 +87,31 @@ def format_table(
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     p = subparsers.add_parser("ls", help="List and compare experiments")
-    p.add_argument("--name", help="Filter by experiment name")
+    p.add_argument("--name", metavar="SUBSTR", help="Filter by run name prefix")
+    p.add_argument(
+        "--status",
+        choices=_STATUSES,
+        metavar="STATUS",
+        help=f"Filter by run status: {', '.join(_STATUSES)}",
+    )
+    p.add_argument(
+        "--target",
+        choices=["local", "cluster"],
+        metavar="TARGET",
+        help="Filter by compute target: local, cluster",
+    )
+    p.add_argument(
+        "--competition",
+        metavar="SLUG",
+        help="Filter by competition slug (e.g. birdclef-2026)",
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        metavar="N",
+        help="Max runs to show (default: 50)",
+    )
     p.add_argument(
         "--all",
         action="store_true",
@@ -122,6 +147,10 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
     filter_parts: list[str] = []
     if args.name:
         filter_parts.append(f"tags.`mlflow.runName` LIKE '{args.name}%'")
+    if args.status:
+        filter_parts.append(f"attributes.status = '{args.status.upper()}'")
+    if args.target:
+        filter_parts.append(f"tags.kego_target = '{args.target}'")
 
     filter_string = " AND ".join(filter_parts) if filter_parts else ""
 
@@ -129,15 +158,31 @@ def _ls(args: argparse.Namespace, extra_args: list[str]) -> int:
         from mlflow.tracking import MlflowClient
 
         client = MlflowClient()
-        experiments = client.search_experiments()
-        exp_names = {e.experiment_id: e.name for e in experiments}
 
-        runs = mlflow.search_runs(
-            search_all_experiments=True,
-            filter_string=filter_string,
-            order_by=["start_time DESC"],
-            max_results=50,
-        )
+        # Scope experiment lookup when --competition is given to avoid fetching all
+        if args.competition:
+            scoped = client.search_experiments(filter_string=f"name = '{args.competition}'")
+            if not scoped:
+                print(f"No experiments found for competition: {args.competition}")
+                return 0
+            exp_names = {e.experiment_id: e.name for e in scoped}
+            experiment_ids: list[str] | None = list(exp_names)
+        else:
+            all_exps = client.search_experiments()
+            exp_names = {e.experiment_id: e.name for e in all_exps}
+            experiment_ids = None
+
+        search_kwargs: dict = {
+            "filter_string": filter_string,
+            "order_by": ["start_time DESC"],
+            "max_results": args.limit,
+        }
+        if experiment_ids is not None:
+            search_kwargs["experiment_ids"] = experiment_ids
+        else:
+            search_kwargs["search_all_experiments"] = True
+
+        runs = mlflow.search_runs(**search_kwargs)
     except Exception:
         print(
             f"Cannot reach MLflow at {tracking_uri} — is the cluster online?\n"
