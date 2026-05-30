@@ -255,14 +255,16 @@ def train_fold(
                 n = len(w["feat"])
                 ps = w["ps"]
                 f = w["feat"].copy()
-                # Input masking: randomly zero tvt_dev_known (feat col 6) for 50% of
-                # pre-PS rows so the model can't passthrough known TVT — forces GR learning
+                # Input masking: randomly zero tvt_dev_known (feat col 6) for pre-PS rows.
+                # Masked rows also contribute to the loss (denoising objective) — gives 2-3×
+                # more training signal and forces the model to learn GR→TVT.
                 if args.mask_prob > 0 and ps > 0:
                     drop = rng.random(ps) < args.mask_prob
                     f[:ps][drop, 6] = 0.0
+                    mask_np[i, :ps] = drop  # masked pre-PS rows → loss target
                 feat_np[i, :n] = f
                 tgt_np[i, :n] = w["target"]
-                mask_np[i, ps:n] = True  # only post-PS rows contribute to loss
+                mask_np[i, ps:n] = True  # post-PS always in loss
 
             feat_t = torch.from_numpy(feat_np).to(device)
             tgt_t = torch.from_numpy(tgt_np).to(device)
