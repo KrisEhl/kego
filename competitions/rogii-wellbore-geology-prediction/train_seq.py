@@ -120,19 +120,48 @@ def _get_egfdu_tw(h: pd.DataFrame, t: pd.DataFrame) -> float:
     return float(r["TVT"]) + float(r["Z"]) - float(r["EGFDU"])
 
 
+_CACHE_DIR = Path(__file__).parent / "outputs" / "cache"
+
+
+def _load_from_cache(wid: str, split: str) -> dict[str, Any] | None:
+    path = _CACHE_DIR / split / f"{wid}.npz"
+    if not path.exists():
+        return None
+    d = np.load(path, allow_pickle=False)
+    return {
+        "well_id": wid,
+        "feat": d["feat"],
+        "target": d["target"] if "target" in d else None,
+        "ps": int(d["ps"]),
+        "ps_tvt": float(d["ps_tvt"]),
+        "row_idx": d["row_idx"],
+        "tvt_input_is_nan": d["tvt_input_is_nan"],
+    }
+
+
 def load_well_tensors(
     directory: Path,
     well_ids: list[str] | None = None,
     debug: bool = False,
 ) -> list[dict[str, Any]]:
-    """Load wells as per-well feature/target dicts."""
+    """Load wells — from .npz cache if available, otherwise parse CSV on-the-fly."""
     ids = well_ids or _list_well_ids(directory)
     if debug:
         rng = np.random.default_rng(42)
         ids = list(rng.choice(ids, size=min(30, len(ids)), replace=False))
 
+    split = "train" if "train" in str(directory) else "test"
     wells = []
+    cache_hits = 0
+
     for wid in ids:
+        cached = _load_from_cache(wid, split)
+        if cached is not None:
+            wells.append(cached)
+            cache_hits += 1
+            continue
+
+        # Fallback: parse CSV and compute on-the-fly
         h = pd.read_csv(directory / f"{wid}__horizontal_well.csv")
         ps = int(h["TVT_input"].notna().sum())
         if ps == 0 or ps >= len(h):
@@ -143,11 +172,8 @@ def load_well_tensors(
         ps_x = float(h.iloc[ps - 1]["X"])
         ps_y = float(h.iloc[ps - 1]["Y"])
 
-        # GR normalisation per-well
         gr = h["GR"].ffill().bfill().fillna(h["GR"].median())
-        gr_med = float(gr.median())
-        gr_std = float(gr.std()) + 1e-6
-        gr_norm = ((gr - gr_med) / gr_std).values
+        gr_norm = ((gr - float(gr.median())) / (float(gr.std()) + 1e-6)).values
 
         n = len(h)
         feat = np.zeros((n, N_FEAT), dtype=np.float32)
@@ -158,29 +184,28 @@ def load_well_tensors(
         feat[:, 4] = h["MD"].diff().fillna(1.0).values
         feat[:, 5] = np.where(np.arange(n) >= ps, 1.0, 0.0)
 
-        # tvt_dev_known: TVT deviation from anchor, masked to 0 post-PS
         if "TVT" in h.columns:
             tvt_dev = h["TVT"].values - ps_tvt
         else:
             tvt_dev = np.where(h["TVT_input"].notna(), h["TVT_input"].values - ps_tvt, 0.0)
         feat[:, 6] = np.where(np.arange(n) < ps, tvt_dev, 0.0)
 
-        # Target: TVT deviation for all rows (train only)
-        target = None
-        if "TVT" in h.columns:
-            target = (h["TVT"].values - ps_tvt).astype(np.float32)
+        target = (h["TVT"].values - ps_tvt).astype(np.float32) if "TVT" in h.columns else None
 
         wells.append(
             {
                 "well_id": wid,
-                "feat": feat,  # (N, N_FEAT)
-                "target": target,  # (N,) or None
+                "feat": feat,
+                "target": target,
                 "ps": ps,
                 "ps_tvt": ps_tvt,
                 "row_idx": np.arange(n, dtype=np.int64),
                 "tvt_input_is_nan": h["TVT_input"].isna().values,
             }
         )
+
+    if cache_hits:
+        print(f"  Loaded {cache_hits}/{len(ids)} wells from .npz cache", flush=True)
     return wells
 
 
@@ -210,17 +235,48 @@ def train_fold(
         train_loss = 0.0
         n_samples = 0
 
-        for idx in train_order:
-            w = train_wells[idx]
-            if w["target"] is None:
-                continue
-            feat = torch.from_numpy(w["feat"]).unsqueeze(0).to(device)  # (1, T, F)
-            target = torch.from_numpy(w["target"]).unsqueeze(0).to(device)  # (1, T)
-            ps = w["ps"]
+        # Mini-batch: truncate each well to fixed length, stack into one GPU call
+        # pre-PS: last PRE_LEN rows; post-PS: first POST_LEN rows → total SEQ_LEN
+        PRE_LEN, POST_LEN = 500, 2000
 
-            pred = model(feat)  # (1, T)
-            # Loss only on post-PS rows (the prediction zone)
-            loss = F.mse_loss(pred[:, ps:], target[:, ps:])
+        for batch_start in range(0, len(train_order), args.batch_size):
+            batch_idx = train_order[batch_start : batch_start + args.batch_size]
+            feats, targets, post_starts = [], [], []
+
+            for idx in batch_idx:
+                w = train_wells[idx]
+                if w["target"] is None:
+                    continue
+                ps = w["ps"]
+                # Take last PRE_LEN pre-PS rows + first POST_LEN post-PS rows
+                pre_rows = w["feat"][max(0, ps - PRE_LEN) : ps]
+                post_rows = w["feat"][ps : ps + POST_LEN]
+                pre_tgt = w["target"][max(0, ps - PRE_LEN) : ps]
+                post_tgt = w["target"][ps : ps + POST_LEN]
+
+                # Pad to fixed length if well is shorter
+                pad_pre = PRE_LEN - len(pre_rows)
+                pad_post = POST_LEN - len(post_rows)
+                if pad_pre > 0:
+                    pre_rows = np.concatenate([np.zeros((pad_pre, N_FEAT), dtype=np.float32), pre_rows])
+                    pre_tgt = np.concatenate([np.zeros(pad_pre, dtype=np.float32), pre_tgt])
+                if pad_post > 0:
+                    post_rows = np.concatenate([post_rows, np.zeros((pad_post, N_FEAT), dtype=np.float32)])
+                    post_tgt = np.concatenate([post_tgt, np.zeros(pad_post, dtype=np.float32)])
+
+                feats.append(np.concatenate([pre_rows, post_rows]))
+                targets.append(np.concatenate([pre_tgt, post_tgt]))
+                post_starts.append(PRE_LEN)
+
+            if not feats:
+                continue
+
+            feat_t = torch.from_numpy(np.stack(feats)).to(device)  # (B, SEQ_LEN, F)
+            tgt_t = torch.from_numpy(np.stack(targets)).to(device)  # (B, SEQ_LEN)
+            ps_idx = post_starts[0]  # same for all (PRE_LEN)
+
+            pred = model(feat_t)
+            loss = F.mse_loss(pred[:, ps_idx:], tgt_t[:, ps_idx:])
             opt.zero_grad()
             loss.backward()
             opt.step()
@@ -281,6 +337,7 @@ def main() -> None:
     parser.add_argument("--n_layers", type=int, default=6)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=16, help="Wells per GPU batch")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
@@ -294,6 +351,7 @@ def main() -> None:
     print(f"KEGO_PARAM lr {args.lr}", flush=True)
     print(f"KEGO_PARAM dropout {args.dropout}", flush=True)
     print(f"KEGO_PARAM patience {args.patience}", flush=True)
+    print(f"KEGO_PARAM batch_size {args.batch_size}", flush=True)
     print(f"KEGO_PARAM debug {args.debug}", flush=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
