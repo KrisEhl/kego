@@ -34,6 +34,7 @@ model_data/
 # cache
 __pycache__/
 *.egg-info/
+.coverage
 
 *.log
 outputs/
@@ -48,3 +49,4 @@ catboost_info/
 
 quantum_docs.md
 .worktrees/
+competitions/rogii-wellbore-geology-prediction/inference_kernel.py

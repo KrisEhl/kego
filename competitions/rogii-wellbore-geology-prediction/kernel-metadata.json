@@ -1,0 +1,17 @@
+{
+  "id": "aldisued/rogii-wellbore-seqfeats-inference",
+  "title": "Rogii Wellbore SeqFeats Inference",
+  "code_file": "inference_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "dataset_sources": [],
+  "competition_sources": [
+    "rogii-wellbore-geology-prediction"
+  ],
+  "kernel_sources": [],
+  "model_sources": []
+}

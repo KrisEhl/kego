@@ -4,7 +4,7 @@ kaggle_user = "aldisued"
 enable_gpu = false
 submit_file = "outputs/submission.csv"
 pattern = "script"
-inference_notebook = "train_rogii.py"
+inference_notebook = "inference_kernel.py"
 checkpoint_dir = "outputs"
 primary_metric = "post_ps_rmse"
 
