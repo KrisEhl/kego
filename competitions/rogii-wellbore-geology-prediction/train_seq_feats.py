@@ -45,7 +45,18 @@ OUTPUT_DIR = Path(__file__).parent / "outputs"
 NON_FEATURES = {"well", "id", "target"}
 
 
-def _xgb(seed: int, debug: bool):
+def _detect_device() -> str:
+    """cuda if a GPU is allocated/visible (Ray --gpu), else cpu. Auto-fallback keeps
+    local runs working."""
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+def _xgb(seed: int, debug: bool, device: str):
     from xgboost import XGBRegressor
 
     return XGBRegressor(
@@ -58,6 +69,8 @@ def _xgb(seed: int, debug: bool):
         reg_lambda=1.0,
         min_child_weight=5,
         early_stopping_rounds=80,
+        tree_method="hist",
+        device=device,  # "cuda" → fit on a 3090; "cpu" fallback
         random_state=seed,
         n_jobs=-1,
         verbosity=0,
@@ -78,9 +91,11 @@ def main() -> None:
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
+    device = _detect_device()
     print(f"KEGO_PARAM model {args.model}", flush=True)
     print(f"KEGO_PARAM folds {args.folds}", flush=True)
     print(f"KEGO_PARAM seed {args.seed}", flush=True)
+    print(f"KEGO_PARAM device {device}", flush=True)
     print("KEGO_PARAM features seq_estimators", flush=True)
 
     rf._warmup_numba()
@@ -105,7 +120,10 @@ def main() -> None:
     log_metric_live("progress_pct", 40)
 
     feat_cols = [c for c in df.columns if c not in NON_FEATURES]
-    X = df[feat_cols].astype(np.float32).replace([np.inf, -np.inf], np.nan)
+    # Vectorised inf/-inf -> nan ONCE on the float32 array. pandas .replace() over
+    # 3.78M x 198 (~750M cells) is single-threaded and was the low-CPU bottleneck.
+    X = df[feat_cols].to_numpy(np.float32)
+    X[~np.isfinite(X)] = np.nan  # ~isfinite is True for +/-inf and nan; setting nan->nan is a no-op
     y = df["target"].to_numpy(np.float64)  # drift = TVT - last_known_tvt
     groups = df["well"].to_numpy()
 
@@ -118,9 +136,9 @@ def main() -> None:
     oof = np.full(len(df), np.nan)
     models = []
     for fold_num, (tr, va) in enumerated:
-        model = _xgb(args.seed, args.debug)
-        model.fit(X.iloc[tr], y[tr], eval_set=[(X.iloc[va], y[va])], verbose=False)
-        oof[va] = model.predict(X.iloc[va])
+        model = _xgb(args.seed, args.debug, device)
+        model.fit(X[tr], y[tr], eval_set=[(X[va], y[va])], verbose=False)
+        oof[va] = model.predict(X[va])
         fold_rmse = float(np.sqrt(mean_squared_error(y[va], oof[va])))  # drift RMSE == TVT RMSE
         print(f"Fold {fold_num}  post_ps_rmse={fold_rmse:.4f}", flush=True)
         print(f"KEGO_METRIC fold_rmse_{fold_num} {fold_rmse:.6f}", flush=True)
@@ -141,7 +159,8 @@ def main() -> None:
         if test_paths:
             df_te = rf.build_dataset(test_paths, is_train=False, FI=FI, DI=DI, n_jobs=4)
             if len(df_te):
-                Xte = df_te[feat_cols].astype(np.float32).replace([np.inf, -np.inf], np.nan)
+                Xte = df_te[feat_cols].to_numpy(np.float32)
+                Xte[~np.isfinite(Xte)] = np.nan
                 drift = np.mean([m.predict(Xte) for m in models], axis=0)
                 sub = pd.DataFrame({"id": df_te["id"], "tvt": df_te["last_known_tvt"].to_numpy() + drift})
                 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
