@@ -876,6 +876,13 @@ def main() -> None:
         help="Train on TVT - tvt_anchor (deviation from PS) instead of absolute TVT",
     )
     parser.add_argument("--no-deviation", dest="deviation", action="store_false")
+    parser.add_argument(
+        "--train-post-ps-only",
+        action="store_true",
+        default=True,
+        help="Train only on post-PS rows (matches public XGB Starter). Default on.",
+    )
+    parser.add_argument("--train-all-rows", dest="train_post_ps_only", action="store_false")
     parser.add_argument("--formation-knn", action="store_true", help="Experimental fold-aware spatial formation KNN")
     args = parser.parse_args()
 
@@ -883,6 +890,7 @@ def main() -> None:
     cfg = MODEL_CONFIGS.get(args.model, {})
 
     print(f"KEGO_PARAM model {args.model}", flush=True)
+    print(f"KEGO_PARAM train_post_ps_only {args.train_post_ps_only}", flush=True)
     print(f"KEGO_PARAM folds {args.folds}", flush=True)
     print(f"KEGO_PARAM seed {args.seed}", flush=True)
     print(f"KEGO_PARAM deviation {args.deviation}", flush=True)
@@ -891,8 +899,16 @@ def main() -> None:
 
     max_wells = 20 if args.debug else None
     df_train = load_dataset(TRAIN_DIR, max_wells=max_wells)
-    df_train = engineer_features(df_train)
+    df_train = engineer_features(df_train)  # full-well context (rolling, slopes) before any filtering
     df_train = df_train.dropna(subset=[TARGET])
+
+    # Train only on the post-PS zone (matches public XGB Starter @ 15.01 ft). Pre-PS rows have
+    # huge deviations from the well descending to PS depth — training on them wastes model
+    # capacity on dynamics irrelevant to the flat post-PS prediction task.
+    if args.train_post_ps_only:
+        n_before = len(df_train)
+        df_train = df_train[df_train["TVT_input"].isna()].copy()
+        print(f"Filtered to post-PS rows: {len(df_train):,} / {n_before:,}", flush=True)
 
     # Deviation mode: train on TVT - tvt_anchor; model learns ±15 ft drift, not absolute 11k+ ft
     train_target = TARGET
