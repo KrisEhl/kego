@@ -37,6 +37,7 @@ Each horizontal well is drilled vertically then curves to horizontal. At the **P
 - **Test**: ~200 hidden wells (placeholder: 3 wells locally)
 - **Coverage**: ~34 × 25 mile field
 - **Submission**: `{well_id}_{row_idx}, tvt` for post-PS rows only
+- **⚠️ CODE COMPETITION** (confirmed 2026-05-30): direct CSV upload via `kaggle competitions submit` returns **400 / "No submissions found"** — LB scores require a re-run Kaggle **script kernel** (`pattern=script`, `enable_gpu=false`). Use `kego push <id>` (models→dataset) + `kego submit <id>` (push inference kernel). Test data IS fully provided locally (~200 wells, 14,151 post-PS rows; our `outputs/submission_seq_feats.csv` matches `sample_submission.csv` id-set exactly), but the LB still needs the kernel path. **kego.toml `inference_notebook`/`submit_file` still point at the OLD `train_rogii.py` pipeline — must be updated to the v13c seqfeats pipeline before submitting.** No LB anchor yet.
 
 ## Plan
 
