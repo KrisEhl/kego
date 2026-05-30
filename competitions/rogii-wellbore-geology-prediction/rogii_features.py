@@ -886,6 +886,29 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
     return result
 
 
+# v4 Phase-1: estimator divergence. Each estimator predicts a drift (TVT - last_tvt);
+# their pairwise disagreement + spread is a strong uncertainty/correction signal (the
+# reference's R10 "+v4 features"). Computed post-build on existing drift columns — pure
+# arithmetic, no new deps. Adapted to OUR column names (ref used tvt_form_full/GR_ncc_delta/...).
+DRIFT_COLS = ["form_mean_d", "sc_ens_d", "beam_med_d", "pf_ancc_delta", "tvt_dense_d"]
+
+
+def add_divergence_features(df):
+    from itertools import combinations
+
+    cols = [c for c in DRIFT_COLS if c in df.columns]
+    if len(cols) < 2:
+        return df
+    for a, b in combinations(cols, 2):
+        df[f"div_{a}__{b}"] = (df[a].to_numpy(np.float32) - df[b].to_numpy(np.float32)).astype(np.float32)
+    m = df[cols].to_numpy(np.float32)
+    df["div_range"] = (np.nanmax(m, axis=1) - np.nanmin(m, axis=1)).astype(np.float32)
+    df["div_std"] = np.nanstd(m, axis=1).astype(np.float32)
+    df["div_max"] = np.nanmax(m, axis=1).astype(np.float32)
+    df["div_min"] = np.nanmin(m, axis=1).astype(np.float32)
+    return df
+
+
 def build_dataset(paths, is_train, FI, DI, n_jobs=4):
     args = [
         (str(p), str(p.parent / f"{p.stem.replace('__horizontal_well', '')}__typewell.csv"), is_train)
@@ -896,4 +919,7 @@ def build_dataset(paths, is_train, FI, DI, n_jobs=4):
         delayed(build_well)(hp, tp, it, FI, DI) for hp, tp, it in args
     )
     parts = [r for r in res if r is not None]
-    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+    df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+    if len(df):
+        df = add_divergence_features(df)
+    return df
