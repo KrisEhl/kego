@@ -77,6 +77,32 @@ def _xgb(seed: int, debug: bool, device: str):
     )
 
 
+def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva):
+    """Fit one model family on a fold. All handle NaN natively. Returns fitted model."""
+    n = 50 if debug else 3000
+    if model_name == "catboost":
+        from catboost import CatBoostRegressor
+
+        m = CatBoostRegressor(
+            iterations=n,
+            learning_rate=0.03,
+            depth=7,
+            l2_leaf_reg=3.0,
+            loss_function="RMSE",
+            od_type="Iter",
+            od_wait=80,
+            task_type="GPU" if device == "cuda" else "CPU",
+            random_seed=seed,
+            verbose=False,
+        )
+        m.fit(Xtr, ytr, eval_set=(Xva, yva), use_best_model=True)
+        return m
+    # default: xgboost
+    m = _xgb(seed, debug, device)
+    m.fit(Xtr, ytr, eval_set=[(Xva, yva)], verbose=False)
+    return m
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--folds", type=int, default=4)
@@ -87,7 +113,7 @@ def main() -> None:
         help="Run all folds + OOF + test in ONE job (build once). Overrides --fold (cluster default injects --fold 0).",
     )
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--model", default="xgboost")
+    p.add_argument("--model", default="xgboost", choices=["xgboost", "catboost"])
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -136,8 +162,7 @@ def main() -> None:
     oof = np.full(len(df), np.nan)
     models = []
     for fold_num, (tr, va) in enumerated:
-        model = _xgb(args.seed, args.debug, device)
-        model.fit(X[tr], y[tr], eval_set=[(X[va], y[va])], verbose=False)
+        model = _fit_one(args.model, args.seed, args.debug, device, X[tr], y[tr], X[va], y[va])
         oof[va] = model.predict(X[va])
         fold_rmse = float(np.sqrt(mean_squared_error(y[va], oof[va])))  # drift RMSE == TVT RMSE
         print(f"Fold {fold_num}  post_ps_rmse={fold_rmse:.4f}", flush=True)
