@@ -707,6 +707,11 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
     slp_all = robust_slope(kmd, ktvt)
     slp_50 = robust_slope(kmd[-50:], ktvt[-50:])
     slp_z = robust_slope(kz, ktvt)
+    # v4 slope features: anchor-tail TVT/MD slopes over short windows + accelerations
+    # (ref R10 "+v4"). Capture how the TVT trajectory was bending right before PS.
+    slp_k10 = robust_slope(kmd[-10:], ktvt[-10:])
+    slp_k25 = robust_slope(kmd[-25:], ktvt[-25:])
+    slp_k100 = robust_slope(kmd[-100:], ktvt[-100:])
 
     swid = wid if is_train else None
     xy_ev = ev[["X", "Y"]].to_numpy(np.float64)
@@ -795,6 +800,11 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
         "well": wid,
         "id": [f"{wid}_{i}" for i in ev.index],
         "last_known_tvt": sc(last_tvt),
+        "anchor_slope_k10": sc(float(slp_k10)),
+        "anchor_slope_k25": sc(float(slp_k25)),
+        "anchor_slope_k100": sc(float(slp_k100)),
+        "slope_accel_10_50": sc(float(slp_k10 - slp_50)),
+        "slope_accel_25_100": sc(float(slp_k25 - slp_k100)),
         "pf_ancc": pf_use,
         "pf_ancc_std": std_use,
         "pf_ancc_delta": (pf_use - last_tvt).astype(np.float32),
