@@ -19,6 +19,7 @@ import argparse
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -488,7 +489,16 @@ def load_dataset(directory: Path, max_wells: int | None = None) -> pd.DataFrame:
         well_ids = list(rng.choice(well_ids, size=min(max_wells, len(well_ids)), replace=False))
 
     frames: list[pd.DataFrame] = []
-    for wid in well_ids:
+    n_wells = len(well_ids)
+    t_start = time.time()
+    for i, wid in enumerate(well_ids):
+        # Progress through the feature-build phase (otherwise invisible — looks "stuck")
+        if i and (i % 100 == 0):
+            elapsed = time.time() - t_start
+            eta = elapsed / i * (n_wells - i)
+            pct = 100 * i / n_wells
+            print(f"  load_dataset {i}/{n_wells} ({pct:.0f}%)  {elapsed:.0f}s  ETA {eta:.0f}s", flush=True)
+            log_metric_live("load_pct", pct)
         h = pd.read_csv(directory / f"{wid}__horizontal_well.csv")
         t = pd.read_csv(directory / f"{wid}__typewell.csv")
         h["well_id"] = wid
@@ -615,6 +625,24 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # Well-level GR aggregates
     df["well_gr_mean"] = df.groupby("well_id", sort=False)["GR"].transform("mean")
     df["well_gr_std"] = df.groupby("well_id", sort=False)["GR"].transform("std").fillna(0)
+
+    # Slim the dataframe: drop dead intermediate columns and downcast features to float32.
+    # Keeps per-fold memory low so 4 parallel cluster folds don't swap (~525→~210 B/row).
+    keep = (
+        set(FEATURE_COLS)
+        | set(FORMATION_FEATURE_COLS)
+        | {
+            "well_id",
+            "_row_idx",
+            TARGET,
+            "TVT_input",
+            "tvt_anchor",
+        }
+    )
+    drop_cols = [c for c in df.columns if c.startswith("_") and c != "_row_idx" and c not in keep]
+    df = df.drop(columns=drop_cols)
+    f32_cols = [c for c in df.columns if c in FEATURE_COLS or c in FORMATION_FEATURE_COLS]
+    df[f32_cols] = df[f32_cols].astype(np.float32)
 
     return df
 
