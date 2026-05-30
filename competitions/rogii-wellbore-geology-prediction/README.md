@@ -45,7 +45,7 @@ Add to `train_rogii.py`:
 - [x] `tvt_anchor` — TVT at PS (constant per well)
 - [x] `delta_md_from_ps` — distance from PS anchor in MD
 - [x] Predict deviation `TVT - tvt_anchor` instead of absolute TVT
-- [ ] GR sliding-window correlation score against typewell at each TVT candidate
+- [x] GR pattern matching (4D KNN) against typewell + pre-PS self-reference
 
 ### Track 3 — GR↔typewell sliding window correlation (main signal)
 For each post-PS point, slide a window of horizontal GR along the typewell GR curve and find the TVT offset with the best cross-correlation. This is domain-correct: it's how geologists "correlate" wells manually. The DWT-based LB 9.25 notebook is doing this with wavelet features.
@@ -83,7 +83,8 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | Approach | Result | Why it failed |
 |---|---|---|
 | 5-NN spatial deviation | 13.8 ft (worse than constant) | TVT deviations don't correlate spatially even at 400 ft |
-| tvt_anchor + delta_md_from_ps features | 16.95 ft post-PS | LightGBM doesn't exploit the anchor — constant prediction (just predicting tvt_anchor) would score 15.9 ft |
+| tvt_anchor + delta_md_from_ps features | 16.95 ft post-PS | Model predicting absolute TVT — drifts from anchor |
+| Tabular GBM on GR matching features | ~15.96 ft | GBM can't exploit sequential GR structure — stuck at constant baseline |
 
 ## Results log
 
@@ -93,4 +94,5 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | — | 5-NN deviation | 13.8 ft | spatial proximity only |
 | v1 | LightGBM 5-fold | TBD (all-rows only) | baseline, submission format fixed |
 | v2 | + tvt_anchor + delta_md_from_ps | 16.95 ft | worse than constant — model predicting absolute TVT not anchored |
-| v3 | + deviation target (TVT - tvt_anchor) | **15.99 ft** | matches constant baseline — correct framing, GR signal needed next |
+| v3 | + deviation target (TVT - tvt_anchor) | 15.99 ft | matches constant baseline — correct framing |
+| v4 | + typewell pattern NN + prePS self-ref | 15.96 ft | marginal gain — tabular GBM can't exploit GR sequence structure |
