@@ -36,6 +36,11 @@ def main() -> None:
     kernel_status_cmd.add_parser(subparsers)
 
     args, extra = parser.parse_known_args()
+    # Only `kego run` forwards extra args (to the training script). For every other
+    # command, leftover args are a typo (e.g. `--since` mistyped) — error instead of
+    # silently ignoring them and running unfiltered.
+    if extra and not getattr(args, "accepts_extra", False):
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
     sys.exit(args.func(args, extra) or 0)
 
 

@@ -133,6 +133,16 @@ def test_ls_offline_mlflow_fails_fast(tmp_path: Path, repo_root: Path) -> None:
     assert "Cannot reach MLflow at http://127.0.0.1:19999" in ls_result.stdout
 
 
+def test_ls_rejects_typoed_flag(tmp_path: Path, repo_root: Path) -> None:
+    """A mistyped flag (----since) must error, not silently run unfiltered."""
+    mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
+    env = _base_env(repo_root, mlflow_uri)
+
+    result = _run_kego(["ls", "----since", "30m"], env=env, cwd=repo_root)
+    assert result.returncode != 0
+    assert "unrecognized arguments" in result.stderr
+
+
 # ---------------------------------------------------------------------------
 # kego logs
 # ---------------------------------------------------------------------------

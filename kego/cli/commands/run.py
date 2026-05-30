@@ -179,7 +179,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
             "'heavy_gpu' custom Ray resource. Submit --folds 0,1 to use both 3090s in parallel."
         ),
     )
-    p.set_defaults(func=_run)
+    # `run` forwards unrecognised args to the training script — other commands must not.
+    p.set_defaults(func=_run, accepts_extra=True)
 
 
 def _run(args: argparse.Namespace, extra_args: list[str]) -> int:
