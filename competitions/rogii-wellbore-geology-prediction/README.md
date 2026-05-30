@@ -47,7 +47,10 @@ Add to `train_rogii.py`:
 - [x] Predict deviation `TVT - tvt_anchor` instead of absolute TVT
 - [x] GR pattern matching (4D KNN) against typewell + pre-PS self-reference
 
-### Track 3 — GR↔typewell sliding window correlation (main signal)
+### [x] Track 3 — GR↔typewell sliding window correlation (main signal)
+DEAD END: individual signals (GR, Z, dip) all fail. The post-PS TVT range (±20 ft) is too narrow for typewell GR matching. Pre-PS dip has zero correlation (r=-0.05) with post-PS dip.
+
+### [~] Track 3b — Sequence model (end-to-end trajectory learning)
 For each post-PS point, slide a window of horizontal GR along the typewell GR curve and find the TVT offset with the best cross-correlation. This is domain-correct: it's how geologists "correlate" wells manually. The DWT-based LB 9.25 notebook is doing this with wavelet features.
 
 Implementation:
@@ -82,7 +85,17 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 
 | Approach | Result | Why it failed |
 |---|---|---|
-| 5-NN spatial deviation | 13.8 ft (worse than constant) | TVT deviations don't correlate spatially even at 400 ft |
+| 5-NN spatial deviation | 13.8 ft (worse) | TVT deviations don't correlate spatially even at 400 ft |
+| GR cross-correlation (full typewell) | 138 ft | Searches wrong TVT range without constraint |
+| GR cross-correlation (constrained ±150 ft) | 71 ft | Horizontal GR and typewell GR waveforms don't match (corr=0.41, lateral heterogeneity) |
+| GR calibrated typewell NN | 324 ft | Post-PS TVT range is ±20 ft — GR flat in typewell across that range, inversion impossible |
+| EGFDU spatial interpolation from training wells | 30-65 ft | Different typewells have 644 ft std in egfdu_tw — values not comparable across wells |
+| EGFDU XY-dip extrapolation from pre-PS | 27-45 ft | Pre-PS dip (curved section) doesn't match post-PS horizontal dip |
+| Post-PS dip interpolation from training wells | 31 ft mean, catastrophic outliers | Dip varies ±0.18 ft/ft across field — interpolation fails for far wells |
+| corr(pre-PS dip, post-PS dip) | r = -0.05 | Pre-PS dip has ZERO predictive power for post-PS dip |
+| dTVT vs dGR correlation | r ≈ 0.0 | GR changes don't predict TVT changes at 1-ft scale |
+| dTVT vs dZ correlation | r = -0.20 | Z only explains 4% of TVT variance (+0.4% improvement over constant) |
+| Tabular GBM on GR matching features | ~15.96 ft | GBM can't exploit sequential GR structure — stuck at constant baseline |
 | tvt_anchor + delta_md_from_ps features | 16.95 ft post-PS | Model predicting absolute TVT — drifts from anchor |
 | Tabular GBM on GR matching features | ~15.96 ft | GBM can't exploit sequential GR structure — stuck at constant baseline |
 
