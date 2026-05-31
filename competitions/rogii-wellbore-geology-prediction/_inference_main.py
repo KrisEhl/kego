@@ -23,6 +23,25 @@ from sklearn.model_selection import GroupKFold as _GroupKFold
 from xgboost import XGBRegressor as _XGBRegressor
 
 _NON_FEATURES = {"well", "id", "target"}
+# v25 kinematic/dip cols — dropped (neutral; keep kernel at the 195-feat LB-10.105 config).
+_KIN_COLS = {
+    "incl_deg",
+    "azi_deg",
+    "dls",
+    "build_rate",
+    "cos_incl",
+    "sin_incl",
+    "tvt_dip_full_d",
+    "tvt_dip_late_d",
+    "azi_delta",
+    "apparent_dip_dir",
+    "b_dip_full",
+    "b_dip_late",
+    "b_dip_early",
+    "b_dip_slope",
+    "plane_dip_x",
+    "plane_dip_y",
+}
 _DEBUG = _os.environ.get("ROGII_KERNEL_DEBUG") == "1"
 
 # Post-processing: PF-blend only. d = drift*(1-w) + pf*w, w=0.10.
@@ -57,9 +76,11 @@ def _find_data_dir() -> _Path:
 
 def _xy(df: "_pd.DataFrame"):
     # Drop div_* (divergence) features: the LB-10.538 anchor was trained WITHOUT them
-    # and a 5-seed A/B found them neutral. Dropping here makes the PF-blend the ONLY
-    # change vs that anchor, so the resulting LB delta is cleanly attributable.
-    feat = [c for c in df.columns if c not in _NON_FEATURES and not c.startswith("div_")]
+    # and a 5-seed A/B found them neutral. Also drop the v25 kinematic/dip cols (also
+    # neutral, mean Δ +0.015). Keeps the model == the 195-feat config that scored LB 10.105
+    # (depth7 + pf_ancc blend w=0.10) — the current banked best. (depth6 explored, audit-FAILed
+    # the submission as sub-LB-noise; not applied. See README "Strategy after the 10.105 audit".)
+    feat = [c for c in df.columns if c not in _NON_FEATURES and not c.startswith("div_") and c not in _KIN_COLS]
     X = df[feat].to_numpy(_np.float32)
     X[~_np.isfinite(X)] = _np.nan
     return feat, X
@@ -96,7 +117,7 @@ def _main() -> None:
         m = _XGBRegressor(
             n_estimators=n_est,
             learning_rate=0.03,
-            max_depth=7,
+            max_depth=7,  # depth6 (-0.047 OOF) NOT submitted: audit FAIL — sub-LB-noise + OOF inverted + only 3-seed
             subsample=0.8,
             colsample_bytree=0.7,
             reg_alpha=0.1,
