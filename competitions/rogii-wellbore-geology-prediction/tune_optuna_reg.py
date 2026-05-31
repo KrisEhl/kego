@@ -74,9 +74,14 @@ def _device() -> str:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser()
+    # allow_abbrev=False so kego's injected `--fold 0` does NOT prefix-match `--folds` (that set
+    # folds=0 -> GroupKFold n_splits=0 crash). `--fold`/`--all-folds` are absorbed + ignored
+    # (Optuna runs all folds internally per trial; there is no fold-parallelism here).
+    p = argparse.ArgumentParser(allow_abbrev=False)
     p.add_argument("--n-trials", type=int, default=30)
     p.add_argument("--folds", type=int, default=4)
+    p.add_argument("--fold", type=int, default=None, help="Ignored (kego cluster injects --fold 0).")
+    p.add_argument("--all-folds", action="store_true", help="Ignored.")
     p.add_argument("--depth", type=int, default=6)
     p.add_argument("--seed", type=int, default=42, help="TPE sampler seed")
     p.add_argument("--storage", default="", help="Optuna JournalStorage path for multi-worker (empty = in-memory)")
