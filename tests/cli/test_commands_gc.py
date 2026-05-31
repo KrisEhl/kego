@@ -14,15 +14,6 @@ def _make_gc_args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
-@pytest.fixture
-def mlflow_db(tmp_path, monkeypatch):
-    uri = f"sqlite:///{tmp_path}/mlflow.db"
-    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
-    mlflow.set_tracking_uri(uri)
-    yield uri
-    mlflow.set_tracking_uri("")
-
-
 @pytest.fixture(autouse=True)
 def no_ray():
     """Default: Ray returns no jobs, so reconcile is a no-op unless a test overrides it."""

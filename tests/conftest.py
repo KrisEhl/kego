@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,51 @@ import pytest
 def repo_root() -> Path:
     """Absolute path to the repository root (contains kego.toml and .git)."""
     return Path(__file__).parent.parent
+
+
+# --- MLflow schema migration runs ONCE per session, not per test ----------------
+# Connecting MLflow to a fresh sqlite DB runs the full alembic migration chain
+# (~1-2s). We migrate one template DB once, then copy it (a file copy, ~ms) for
+# every test that needs a fresh MLflow store — in-process and for e2e subprocesses.
+
+_TEMPLATE_DB: Path | None = None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _migrated_mlflow_template(tmp_path_factory):
+    global _TEMPLATE_DB
+    import mlflow
+    from mlflow.tracking import MlflowClient
+
+    db = tmp_path_factory.mktemp("mlflow_template") / "template.db"
+    mlflow.set_tracking_uri(f"sqlite:///{db}")
+    MlflowClient().search_experiments()  # triggers the full alembic migration once
+    mlflow.set_tracking_uri("")
+    _TEMPLATE_DB = db
+    yield db
+
+
+def seed_mlflow_db(sqlite_uri: str) -> None:
+    """Copy the pre-migrated schema to a sqlite:/// path so it skips alembic."""
+    if _TEMPLATE_DB is None or not sqlite_uri.startswith("sqlite:///"):
+        return
+    dest = Path(sqlite_uri[len("sqlite:///") :])
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not dest.exists():
+        shutil.copy(_TEMPLATE_DB, dest)
+
+
+@pytest.fixture
+def mlflow_db(tmp_path, monkeypatch, _migrated_mlflow_template):
+    """Isolated, pre-migrated SQLite MLflow store; resets global tracking URI after."""
+    import mlflow
+
+    uri = f"sqlite:///{tmp_path}/mlflow.db"
+    seed_mlflow_db(uri)
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
+    mlflow.set_tracking_uri(uri)
+    yield uri
+    mlflow.set_tracking_uri("")
 
 
 @pytest.fixture

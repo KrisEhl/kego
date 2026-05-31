@@ -342,6 +342,9 @@ def _base_env(repo_root: Path, mlflow_uri: str) -> dict[str, str]:
     """Minimal environment for CLI subprocesses."""
     import os
 
+    from tests.conftest import seed_mlflow_db
+
+    seed_mlflow_db(mlflow_uri)  # pre-migrate so the subprocess skips alembic
     env = os.environ.copy()
     env["MLFLOW_TRACKING_URI"] = mlflow_uri
     env["PYTHONPATH"] = str(repo_root)

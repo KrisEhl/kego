@@ -30,10 +30,13 @@ dev = [
     "pre-commit>=3.6.0",
     "pytest>=8.0.0",
     "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Parallel by default (pytest-xdist). ~3x faster. Disable for debugging with `-n0`.
+addopts = "-n auto"
 
 [tool.ruff]
 line-length = 120

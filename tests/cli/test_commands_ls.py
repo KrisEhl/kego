@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 import mlflow
 import pandas as pd
-import pytest
 
 from kego.cli.commands.ls import _ls, format_table
 
@@ -28,16 +27,6 @@ def _make_ls_args(**overrides) -> argparse.Namespace:
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
-
-
-@pytest.fixture
-def mlflow_db(tmp_path, monkeypatch):
-    """Isolated SQLite MLflow backend; resets global tracking URI after test."""
-    uri = f"sqlite:///{tmp_path}/mlflow.db"
-    monkeypatch.setenv("MLFLOW_TRACKING_URI", uri)
-    mlflow.set_tracking_uri(uri)
-    yield uri
-    mlflow.set_tracking_uri("")
 
 
 def _create_run(
