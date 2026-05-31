@@ -85,15 +85,17 @@ def _detect_device() -> str:
 def _xgb(seed: int, debug: bool, device: str):
     from xgboost import XGBRegressor
 
+    # HP overrides via env (lets a sweep vary depth/trees/lr/min_child_weight without
+    # arg-threading). Defaults = the v13c/LB-10.538 config.
     return XGBRegressor(
-        n_estimators=50 if debug else 3000,
-        learning_rate=0.03,
-        max_depth=7,
+        n_estimators=50 if debug else int(os.environ.get("ROGII_XGB_TREES", 3000)),
+        learning_rate=float(os.environ.get("ROGII_XGB_LR", 0.03)),
+        max_depth=int(os.environ.get("ROGII_XGB_DEPTH", 7)),
         subsample=0.8,
         colsample_bytree=0.7,
         reg_alpha=0.1,
         reg_lambda=1.0,
-        min_child_weight=5,
+        min_child_weight=int(os.environ.get("ROGII_XGB_MCW", 5)),
         early_stopping_rounds=80,
         tree_method="hist",
         device=device,  # "cuda" → fit on a 3090; "cpu" fallback
