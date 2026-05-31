@@ -207,7 +207,18 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | v24 (anchor #2, **BEST**) | + **pf_ancc** blend w=0.10 | 10.795 (CPU) | **10.105** |
 | v29/v3 (anchor #3) | + **median(pf,beam,dense)** blend w=0.125 | 10.730 (CPU) | 10.317 |
 
-**🔑 BLEND TARGET MATTERS (2026-05-31): pf_ancc-alone (10.105) beats the consensus-median (10.317) on the public LB by 0.21 — even though the consensus had BETTER OOF + better disjoint-half transfer (0/12 neg vs 4/12).** So OOF-robustness did NOT predict the public LB; diluting pf_ancc's correction with beam/dense hurt the 4 public wells. pf_ancc-alone blend is the public-LB winner; v4 ensemble-only (no blend) is in flight to test if a better MODEL beats the blend.
+**🔑 BLEND TARGET (public LB): pf_ancc-alone (10.105) > consensus-median (10.317).** Earlier I read this as "OOF/transfer doesn't predict LB" — see the correction below; that read over-weighted a 3-well signal.
+
+### ⚠️ STATISTICAL-RELIABILITY CORRECTION (2026-05-31) — earlier framing was unsound
+**The public LB is only 3 wells / 14,151 rows — a HIGH-VARIANCE, small-n signal. The full-data CV (773 wells, multi-seed) is the LARGE-N, reliable estimator, and the PRIVATE LB (~200 hidden wells) is large-n → it should track the CV, NOT the 3-well public LB.** My prior "PIVOTAL FINDING — OOF is a poor/inverted proxy for LB" and "CV doesn't predict LB" over-weighted 3 public wells: a 0.21 (consensus vs pf) or even 0.43 (blend) public-LB gap, on 3 wells whose per-well RMSE std is several ft, is **within the public-LB noise band → it says little**, and cannot overturn the large-N CV. **Corrected rankings (by reliable large-N CPU OOF; lower=better) → best private-LB bets:**
+| Candidate | large-N OOF | note |
+|---|---|---|
+| **XGB+CatBoost NNLS ensemble** | **~10.60** | best CV; structural; v4 submitted — **top private-LB bet** |
+| single XGB + consensus blend | ~10.69 | better CV than pf-alone (public 10.317 = noise) |
+| single XGB + pf_ancc blend | ~10.795 | public-LB best (10.105) but that's 3-well noise |
+| single XGB (no pp) | ~10.73 | anchor |
+
+**Implications**: (1) don't dismiss CV levers because the 3-well public LB disagreed — that's the LB's variance; (2) the ENSEMBLE (best large-N CV) is the strongest private-LB candidate even if its public LB looks unremarkable; (3) keep optimizing the large-N CV (the reliable signal) — the ensemble is the win, and further diverse members (LGB) / regularization may add; (4) for FINAL submission selection, pick by large-N CV, not the 3-well public score. (Caveat the other way: blend-ON-ensemble was rejected by the *large-N* disjoint-half transfer (8/12 neg) — that's a reliable large-N finding, so ensemble-only stands.)
 
 **🔑 PIVOTAL FINDING — OOF is a POOR proxy for LB at this scale; post-processing toward the PF drift estimate is the DOMINANT LB lever.** The blend moved LB **−0.433** but OOF only −0.054 (8×). And the CV↔LB relationship is *inverted/uncorrelated*: v24 has WORSE OOF (10.795 > 10.62) yet BETTER LB (10.105 < 10.538). Root cause: the public test is only **4 wells / 14,151 rows** → high variance; the blend strongly corrects XGB over-drift on those specific wells. **Implications**: (1) trust LB, not OOF, for ranking pp/blend changes; (2) the small-feature/HP CV experiments (kinematics, depth8, regularization) barely matter for LB — the blend dominates; (3) **private-LB gain may be smaller** than the public −0.433 (don't over-trust 4 wells); (4) **risk: tuning the blend weight on the 4-well public LB overfits it** — w=0.10 is OOF-principled, push higher only cautiously. Reference best LB = 8.905, R6 = 9.41. Submission = code-comp kernel (`-f submission.csv -k <kernel> -v <ver>`, ~80min scoring re-run).
 
