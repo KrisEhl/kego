@@ -138,7 +138,12 @@ def _main() -> None:
         return _XGBRegressor(
             n_estimators=n_est,
             learning_rate=0.03,
-            max_depth=6,  # v36: depth6 ensemble -0.036 OOF vs depth7 (3/3 paired seeds); reg-tune was seed-overfit dead end
+            # depth7 = the on-board v31 ensemble config. depth6 (v36, -0.036 OOF, 3-seed) was
+            # audit-FAILED for shipping: -0.036 is within ~1 std, 3-seed < the project's >=5-seed
+            # rule, and v37 is the smoking gun (a 3-seed -0.035 reg win flipped to +0.056 at 5 seeds).
+            # depth6 is DIRECTIONALLY better (pooled v27+v36 6/6, sign-test p=0.031) -> re-apply +
+            # ship ONLY after >=5 paired seeds confirm it (needs the cluster).
+            max_depth=7,
             subsample=0.8,
             colsample_bytree=0.7,
             reg_alpha=0.1,
@@ -164,7 +169,7 @@ def _main() -> None:
             mc = _CatBoost(
                 iterations=n_est,
                 learning_rate=0.03,
-                depth=6,  # v36: depth6 paired win (matches XGB depth6)
+                depth=7,  # on-board v31 config; depth6 pending >=5-seed confirmation (see XGB note above)
                 l2_leaf_reg=3.0,
                 loss_function="RMSE",
                 od_type="Iter",
