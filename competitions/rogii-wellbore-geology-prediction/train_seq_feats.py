@@ -177,6 +177,32 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0):
         res = m.get_evals_result()
         _log_curve(res["learn"]["RMSE"], res["validation"]["RMSE"], fold_num)
         return m
+    if model_name == "lightgbm":
+        # The reference's WORKHORSE model (num_leaves=255, ~6000 trees). LightGBM pip = CPU
+        # only (no OpenCL); fast + well-threaded. Genuinely diverse vs XGB (leaf-wise growth).
+        from lightgbm import LGBMRegressor, early_stopping, log_evaluation
+
+        m = LGBMRegressor(
+            n_estimators=50 if debug else 6000,
+            learning_rate=0.03,
+            num_leaves=255,
+            subsample=0.8,
+            subsample_freq=1,
+            colsample_bytree=0.7,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
+            min_child_samples=20,
+            random_state=seed,
+            n_jobs=-1,
+            verbose=-1,
+        )
+        m.fit(
+            Xtr,
+            ytr,
+            eval_set=[(Xva, yva)],
+            callbacks=[early_stopping(80, verbose=False), log_evaluation(0)],
+        )
+        return m
     # default: xgboost — eval train(subsample) + val(full); early stopping uses val (last entry)
     m = _xgb(seed, debug, device)
     m.fit(Xtr, ytr, eval_set=[(Xtr[si], ytr[si]), (Xva, yva)], verbose=False)
