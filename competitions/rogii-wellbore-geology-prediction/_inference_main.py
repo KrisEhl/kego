@@ -190,9 +190,10 @@ def _main() -> None:
         drift = w[0] * xgb_te + w[1] * cb_te
     else:
         drift = xgb_te
-    # Consensus-blend post-processing (w=0.125): blend toward median of 3 robust drift estimators.
-    consensus = _np.median(_np.column_stack([df_te[c].to_numpy(_np.float64) for c in _CONSENSUS]), axis=1)
-    drift = _postprocess(drift, consensus)
+    # NO consensus blend here: v32 validation showed the blend does NOT transfer on the ENSEMBLE base
+    # (disjoint-half transfer mean -0.046, 8/12 splits negative) — the ensemble already incorporates
+    # pf/beam/dense (inputs) + NNLS de-shrink conflicts with the blend's shrink. So ensemble-ONLY.
+    # (The blend stays on the single-XGB kernels (LB 10.105 / consensus v3) where it DOES transfer.)
     sub = _pd.DataFrame({"id": df_te["id"], "tvt": df_te["last_known_tvt"].to_numpy() + drift})
     sub.to_csv(out_dir / "submission.csv", index=False)
     print(f"Wrote {len(sub):,} rows -> {out_dir / 'submission.csv'}", flush=True)
