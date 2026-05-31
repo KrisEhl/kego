@@ -158,23 +158,26 @@ def test_logs_unknown_id(tmp_path: Path, repo_root: Path) -> None:
     assert "No runs found" in result.stdout
 
 
-def test_logs_no_ray_submission_id(tmp_path: Path, repo_root: Path) -> None:
-    """kego logs shows a helpful message when run has no ray_submission_id tag."""
+def test_logs_local_run_with_no_capture_dir_falls_back_to_message(tmp_path: Path, repo_root: Path) -> None:
+    """A local run whose captured-stdout file is missing prints a clear message, not a crash."""
     mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
     env = _base_env(repo_root, mlflow_uri)
+    env["KEGO_LOG_DIR"] = str(tmp_path / "logs")
 
-    # Create a run via kego run (local — no ray_submission_id tag)
     script = tmp_path / "train.py"
     script.write_text("print('KEGO_METRIC fold_auc 0.9')\n")
     run_result = _run_kego(["run", str(script), "--name", "logs-test"], env=env, cwd=repo_root)
     assert run_result.returncode == 0, run_result.stderr
-
-    # Extract the kego ID from the run output
     kego_id = run_result.stdout.split("[")[1].split("]")[0]
+
+    # Wipe the capture dir to simulate a run that predates local-log capture
+    import shutil
+
+    shutil.rmtree(tmp_path / "logs", ignore_errors=True)
 
     result = _run_kego(["logs", kego_id], env=env, cwd=repo_root)
     assert result.returncode == 0
-    assert "ray_submission_id" in result.stdout
+    assert "No captured stdout" in result.stdout
 
 
 def test_logs_unknown_submission_id(tmp_path: Path, repo_root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -206,6 +209,24 @@ def test_logs_unknown_submission_id(tmp_path: Path, repo_root: Path, monkeypatch
     # Either Ray returned an HTTP error (cluster up, ID not found) or the cluster
     # is unreachable — both are valid "can't fetch logs" outcomes.
     assert "Ray API error" in result.stdout or "Cannot reach Ray cluster" in result.stdout
+
+
+def test_logs_replays_local_run_stdout(tmp_path: Path, repo_root: Path) -> None:
+    """A local run's stdout is captured so `kego logs <id>` can replay it (no Ray job)."""
+    mlflow_uri = f"sqlite:///{tmp_path}/mlflow.db"
+    env = _base_env(repo_root, mlflow_uri)
+    env["KEGO_LOG_DIR"] = str(tmp_path / "logs")
+
+    script = tmp_path / "train.py"
+    script.write_text("print('UNIQUE_MARKER_LINE_42')\nprint('KEGO_METRIC x 1.0')\n")
+
+    run_result = _run_kego(["run", str(script), "--name", "local-log-test"], env=env, cwd=repo_root)
+    assert run_result.returncode == 0, run_result.stderr
+    kego_id = run_result.stdout.split("[")[1].split("]")[0]
+
+    logs_result = _run_kego(["logs", kego_id], env=env, cwd=repo_root)
+    assert logs_result.returncode == 0
+    assert "UNIQUE_MARKER_LINE_42" in logs_result.stdout
 
 
 def test_run_multifold_creates_parent_and_children(tmp_path: Path) -> None:

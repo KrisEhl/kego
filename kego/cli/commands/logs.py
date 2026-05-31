@@ -149,7 +149,8 @@ def _logs(args: argparse.Namespace, extra_args: list[str]) -> int:
         print(f"=== {run.info.run_name} fold={fold} ===")
 
         if not submission_id:
-            print("  No ray_submission_id tag — job may have been submitted before log tracking was added.")
+            # Local run (no Ray job) — replay the captured stdout file.
+            _print_local_log(run.info.run_id, run.data.tags.get("kego_target"))
             continue
 
         rc = _stream_job_logs(base, submission_id, follow=follow)
@@ -157,3 +158,16 @@ def _logs(args: argparse.Namespace, extra_args: list[str]) -> int:
             return rc
 
     return 0
+
+
+def _print_local_log(run_id: str, target: str | None) -> None:
+    """Print a local run's captured stdout (tee'd by the runner)."""
+    from kego.cli.runner import local_log_path
+
+    path = local_log_path(run_id)
+    if path.exists():
+        print(path.read_text(), end="")
+    elif target == "cluster":
+        print("  No ray_submission_id tag — submitted before log tracking was added.")
+    else:
+        print("  No captured stdout for this local run (it may predate local-log capture).")

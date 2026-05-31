@@ -22,6 +22,18 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+
+def local_log_path(run_id: str) -> Path:
+    """File where a local run's stdout is captured, so `kego logs` can replay it.
+
+    Cluster runs get their logs from Ray; local runs have no Ray job, so we tee
+    stdout here keyed by MLflow run_id. Override the dir with KEGO_LOG_DIR.
+    """
+    base = Path(os.environ.get("KEGO_LOG_DIR") or (Path.home() / ".kego" / "logs"))
+    return base / f"{run_id}.log"
+
 
 _METRIC_RE = re.compile(r"^KEGO_METRIC\s+(\S+)\s+(\S+)\s*$")
 _PARAM_RE = re.compile(r"^KEGO_PARAM\s+(\S+)\s+(.+?)\s*$")
@@ -112,12 +124,27 @@ def run(argv: list[str]) -> int:
         bufsize=1,
     )
 
+    # Local runs have no Ray log — tee stdout to a file so `kego logs` can replay it.
+    log_file = None
+    run_id = os.environ.get("KEGO_MLFLOW_RUN_ID", "")
+    if target == "local" and run_id:
+        path = local_log_path(run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = path.open("w")
+
     collected_lines: list[str] = []
     assert process.stdout is not None
-    for line in process.stdout:
-        sys.stdout.write(line)
-        sys.stdout.flush()
-        collected_lines.append(line)
+    try:
+        for line in process.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            collected_lines.append(line)
+            if log_file:
+                log_file.write(line)
+                log_file.flush()
+    finally:
+        if log_file:
+            log_file.close()
 
     process.wait()
 
