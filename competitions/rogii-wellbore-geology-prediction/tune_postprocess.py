@@ -85,6 +85,8 @@ def main() -> None:
         print(f"fold {k} done", flush=True)
         log_metric_live("progress_pct", 10 + 60 * (k + 1) / 4)
 
+    # Save OOF + aux so future pp tuning skips the ~8min xgb retrain.
+    np.savez(_HERE / "outputs" / "oof_v23.npz", oof=oof, md_since=md_since, pf=pf, y=y, groups=groups)
     base = _rmse(y, oof)
     print(f"BASELINE OOF post_ps_rmse = {base:.4f}", flush=True)
     print(f"KEGO_METRIC baseline_oof {base:.6f}", flush=True)
@@ -133,6 +135,22 @@ def main() -> None:
     print(f"KEGO_METRIC pp_gain {base - r_b:.6f}", flush=True)
     log_metric_live("post_ps_rmse", r_b)
     log_metric_live("progress_pct", 100)
+
+    # Persist best params (robust capture for applying pp in the kernel + judging overfit).
+    import json
+
+    params = {
+        "baseline": round(base, 4),
+        "stageA": round(r_a, 4),
+        "pp_oof": round(r_b, 4),
+        "gain": round(base - r_b, 4),
+        "alpha": alpha,
+        "tau": round(tau, 1),
+        "w_pf": w,
+        "savgol_win": sg_best,
+    }
+    (_HERE / "outputs" / "pp_best.json").write_text(json.dumps(params, indent=2) + "\n")
+    print(f"PP_PARAMS {params}", flush=True)
 
 
 if __name__ == "__main__":
