@@ -111,6 +111,16 @@ def main() -> None:
     E = {e: df[e].to_numpy(np.float64) for e in ESTIMATORS}
     stack3 = np.column_stack([E["pf_ancc_delta"], E["beam_med_d"], E["tvt_dense_d"]])
     stack5 = np.column_stack([E[e] for e in ESTIMATORS])
+    # Save OOF + estimators so future blend analysis skips the ~8min retrain.
+    np.savez(
+        _HERE / "outputs" / "oof_consensus.npz",
+        oof=oof,
+        y=y,
+        groups=groups.astype(str),
+        pf=E["pf_ancc_delta"],
+        beam=E["beam_med_d"],
+        dense=E["tvt_dense_d"],
+    )
     # Candidate blend targets (the thing we shrink the XGB drift toward).
     targets = {
         "pf_ancc (current 10.105)": E["pf_ancc_delta"],
@@ -135,6 +145,35 @@ def main() -> None:
         if "median(pf,beam,dense)" in name or "pf_ancc" in name:
             print("   " + "  ".join(f"w{w:.3f}={r:.4f}" for w, r in row), flush=True)
     log_metric_live("progress_pct", 95)
+
+    # ---- Disjoint-half transfer test (the README's blessed methodology): tune w on half the
+    # wells, eval the gain on the disjoint half. A blend that OVERFITS its w-optimum shows
+    # negative/unstable transfer; a robust one transfers positively. pf-alone vs median(3). ----
+    def _transfer(target, n_splits=12):
+        wells = np.unique(groups)
+        out = []
+        for s in range(n_splits):
+            rng = np.random.default_rng(1000 + s)
+            perm = rng.permutation(len(wells))
+            tune_set = set(wells[perm[: len(wells) // 2]].tolist())
+            mA = np.array([g in tune_set for g in groups])
+            mB = ~mA
+            baseA = _rmse(y[mA], oof[mA])
+            best_w, best_g = 0.0, 0.0
+            for w in ws:
+                g = baseA - _rmse(y[mA], oof[mA] * (1 - w) + target[mA] * w)
+                if g > best_g:
+                    best_g, best_w = g, w
+            gB = _rmse(y[mB], oof[mB]) - _rmse(y[mB], oof[mB] * (1 - best_w) + target[mB] * best_w)
+            out.append(gB)
+        return np.array(out)
+
+    print("\n=== DISJOINT-HALF TRANSFER (tune w on half wells, eval gain on disjoint half) ===", flush=True)
+    for nm, tgt in [("pf_ancc-alone", E["pf_ancc_delta"]), ("median(pf,beam,dense)", np.median(stack3, axis=1))]:
+        g = _transfer(tgt)
+        print(
+            f"{nm:22s} mean={g.mean():+.4f}  min={g.min():+.4f}  n_negative={int((g < 0).sum())}/{len(g)}", flush=True
+        )
 
     best_name = min(results, key=lambda k: results[k]["best_rmse"])
     print("\n=== CONSENSUS-BLEND RESULT ===", flush=True)

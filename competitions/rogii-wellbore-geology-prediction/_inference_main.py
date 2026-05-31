@@ -44,18 +44,21 @@ _KIN_COLS = {
 }
 _DEBUG = _os.environ.get("ROGII_KERNEL_DEBUG") == "1"
 
-# Post-processing: PF-blend only. d = drift*(1-w) + pf*w, w=0.10.
-# Audit (2026-05-31) decomposed the v23 OOF and found the blend IS the entire gain:
-# on the 198-feat model (no divergence, = this kernel) blend(w=0.10) gives -0.054 ft OOF
-# (10.8491 -> 10.7949), a broad smooth peak over w=0.075..0.125. The earlier tau=39
-# "attenuation" was INERT (only ~0.8% of rows have md_since<39; median ~2458 ft -> factor~1)
-# and per-well savgol was a boundary-overfit +0.003 — both dropped. pf_ancc_delta is an
-# input (MD/geometry/known-zone GR + type-well log), never the post-PS target -> no leakage.
-_PP = {"w_pf": 0.10}
+# Post-processing: blend the XGB drift toward median(pf_ancc_delta, beam_med_d, tvt_dense_d)
+# at w=0.125. MECHANISM (audit-corrected): beam_med_d/tvt_dense_d are individually WEAK blend
+# targets — the median is NOT a consensus of 3 good estimators; it acts as a ROBUST CLIPPER of
+# pf_ancc's extreme drift corrections (the 2 conservative estimators bound pf's over-corrections).
+# JUSTIFICATION: the disjoint-half transfer test (tune w on half the wells, eval on the disjoint
+# half — the methodology that blessed the original blend) shows median3 transfers robustly
+# (mean +0.026, 0/12 splits negative) while pf-alone OVERFITS its w-optimum (mean +0.017, 4/12
+# negative). The blend is the one lever with proven LB traction (10.538->10.105) and OOF-directional.
+# All three are input drift estimates (MD/geometry/known-zone GR + type-well log) -> no leakage.
+_PP = {"w": 0.125}
+_CONSENSUS = ("pf_ancc_delta", "beam_med_d", "tvt_dense_d")
 
 
-def _postprocess(drift, pf):
-    return drift * (1 - _PP["w_pf"]) + pf * _PP["w_pf"]
+def _postprocess(drift, consensus):
+    return drift * (1 - _PP["w"]) + consensus * _PP["w"]
 
 
 def _find_data_dir() -> _Path:
@@ -142,8 +145,9 @@ def _main() -> None:
     Xte = df_te.reindex(columns=feat).to_numpy(_np.float32)
     Xte[~_np.isfinite(Xte)] = _np.nan
     drift = _np.mean([m.predict(Xte) for m in models], axis=0)
-    # PF-blend post-processing (w=0.10): -0.054 OOF on the 198-feat model. pf is an input.
-    drift = _postprocess(drift, df_te["pf_ancc_delta"].to_numpy(_np.float64))
+    # Consensus-blend post-processing (w=0.125): blend toward median of 3 robust drift estimators.
+    consensus = _np.median(_np.column_stack([df_te[c].to_numpy(_np.float64) for c in _CONSENSUS]), axis=1)
+    drift = _postprocess(drift, consensus)
     sub = _pd.DataFrame({"id": df_te["id"], "tvt": df_te["last_known_tvt"].to_numpy() + drift})
     sub.to_csv(out_dir / "submission.csv", index=False)
     print(f"Wrote {len(sub):,} rows -> {out_dir / 'submission.csv'}", flush=True)
