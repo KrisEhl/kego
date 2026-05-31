@@ -185,6 +185,8 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | v18-ensemble | **NNLS blend XGB+CB** on 212 divergence features (NNLS w: xgb 0.40 / cb 0.67) | 10.44 ft | Blend < both members (xgb 10.63 / cb 10.53 *this run*). **⚠️ INSTABILITY FOUND**: v18's xgb OOF=10.63 but v15's (same config/seed/features) =10.48 — **~0.15 OOF swing run-to-run** (fold 1: 10.28 vs 10.86). GPU xgb + early-stopping is not reproducible. **Small CV deltas (divergence +0.14, ensemble +0.04) are within this noise band — NOT cleanly confirmed.** LB is the only trustworthy signal. |
 | v19-seed7 | v18 ensemble seed 7 | KILLED | Cluster powered off (10h maintenance) before finish. Noise measured locally instead (v20). |
 | v20-local-xgb | xgb seed 42, 212 divergence feat, **CPU/local** (offline sqlite) | 10.77 ft | Build 390s (Mac CPU faster than cluster) + cached. 3rd same-config data point. |
+| v22-ens3-gpu | full xgb+cb+hgb NNLS, single-seed GPU | KILLED | Single-seed (not submittable per audit) + HGB ran 1-CPU (default `--cpu 1`) → ~28min/fold, GPU 0%. Killed; ensemble is priority-4 (post-proc first). Lesson: use `--cpu 8` for HGB ensembles. |
+| v23-postproc | **drift-attenuation + PF-blend + per-well Savitzky-Golay**, tuned on 4-fold xgb OOF (GPU-free) | TBD | Audit's #1 lever (ref's signature path to 8.905). `tune_postprocess.py` on cached features: pp(d)=savgol[(d(1-w)+pf·w)·(1−e^−md/τ)·α]. Structural (above noise). |
 
 ## 🎯 LB ANCHOR (2026-05-30): **public LB 10.538** — v13c kernel (198 feat, no divergence, single xgb, train-in-kernel CPU)
 
