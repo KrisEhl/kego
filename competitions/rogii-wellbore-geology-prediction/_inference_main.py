@@ -84,7 +84,14 @@ def _xy(df: "_pd.DataFrame"):
     # neutral, mean Δ +0.015). Keeps the model == the 195-feat config that scored LB 10.105
     # (depth7 + pf_ancc blend w=0.10) — the current banked best. (depth6 explored, audit-FAILed
     # the submission as sub-LB-noise; not applied. See README "Strategy after the 10.105 audit".)
-    feat = [c for c in df.columns if c not in _NON_FEATURES and not c.startswith("div_") and c not in _KIN_COLS]
+    feat = [
+        c
+        for c in df.columns
+        if c not in _NON_FEATURES
+        and not c.startswith("div_")
+        and c not in _KIN_COLS
+        and not c.startswith("gr_dwt")  # DWT neutral (v35); drop to match the v36 ens-d6 195-feat config
+    ]
     X = df[feat].to_numpy(_np.float32)
     X[~_np.isfinite(X)] = _np.nan
     return feat, X
@@ -131,7 +138,7 @@ def _main() -> None:
         return _XGBRegressor(
             n_estimators=n_est,
             learning_rate=0.03,
-            max_depth=7,
+            max_depth=6,  # v36: depth6 ensemble -0.036 OOF vs depth7 (3/3 paired seeds); reg-tune was seed-overfit dead end
             subsample=0.8,
             colsample_bytree=0.7,
             reg_alpha=0.1,
@@ -157,7 +164,7 @@ def _main() -> None:
             mc = _CatBoost(
                 iterations=n_est,
                 learning_rate=0.03,
-                depth=7,
+                depth=6,  # v36: depth6 paired win (matches XGB depth6)
                 l2_leaf_reg=3.0,
                 loss_function="RMSE",
                 od_type="Iter",
