@@ -19,6 +19,7 @@ from pathlib import Path as _Path
 
 import numpy as _np
 import pandas as _pd
+from scipy.optimize import nnls as _nnls
 from sklearn.model_selection import GroupKFold as _GroupKFold
 from xgboost import XGBRegressor as _XGBRegressor
 
@@ -115,12 +116,22 @@ def _main() -> None:
     print(f"train: {len(df):,} rows x {len(feat)} feat", flush=True)
 
     n_est = 50 if _DEBUG else 3000
-    models = []
-    for tr, va in _GroupKFold(n_splits=4).split(X, y, groups):
-        m = _XGBRegressor(
+    # v31: NNLS ensemble of XGB + CatBoost (-0.150 OOF vs single XGB; 3-seed confirmed; structural).
+    # CatBoost wrapped defensively: if absent in the Kaggle env (enable_internet=false), fall back
+    # to single XGB so a missing dep can't blank the score (submission stays valid).
+    _cb_ok = False
+    try:
+        from catboost import CatBoostRegressor as _CatBoost
+
+        _cb_ok = True
+    except Exception as _e:
+        print(f"CatBoost unavailable ({_e}) -> single-XGB fallback", flush=True)
+
+    def _mk_xgb():
+        return _XGBRegressor(
             n_estimators=n_est,
             learning_rate=0.03,
-            max_depth=7,  # depth6 (-0.047 OOF) NOT submitted: audit FAIL — sub-LB-noise + OOF inverted + only 3-seed
+            max_depth=7,
             subsample=0.8,
             colsample_bytree=0.7,
             reg_alpha=0.1,
@@ -133,9 +144,38 @@ def _main() -> None:
             n_jobs=-1,
             verbosity=0,
         )
-        m.fit(X[tr], y[tr], eval_set=[(X[va], y[va])], verbose=False)
-        models.append(m)
-    print(f"trained {len(models)} fold models", flush=True)
+
+    oof_x = _np.full(len(y), _np.nan)
+    oof_c = _np.full(len(y), _np.nan)
+    xgb_models, cb_models = [], []
+    for tr, va in _GroupKFold(n_splits=4).split(X, y, groups):
+        mx = _mk_xgb()
+        mx.fit(X[tr], y[tr], eval_set=[(X[va], y[va])], verbose=False)
+        oof_x[va] = mx.predict(X[va])
+        xgb_models.append(mx)
+        if _cb_ok:
+            mc = _CatBoost(
+                iterations=n_est,
+                learning_rate=0.03,
+                depth=7,
+                l2_leaf_reg=3.0,
+                loss_function="RMSE",
+                od_type="Iter",
+                od_wait=80,
+                task_type="CPU",
+                random_seed=42,
+                verbose=False,
+            )
+            mc.fit(X[tr], y[tr], eval_set=(X[va], y[va]), use_best_model=True)
+            oof_c[va] = mc.predict(X[va])
+            cb_models.append(mc)
+    if _cb_ok:
+        A = _np.column_stack([oof_x, oof_c]).astype(_np.float64)
+        w, _ = _nnls(A, y.astype(_np.float64))
+        print(f"NNLS weights: xgb={w[0]:.4f} cb={w[1]:.4f}", flush=True)
+    else:
+        w = None
+    print(f"trained {len(xgb_models)} xgb + {len(cb_models)} cb fold models", flush=True)
 
     test_paths = sorted(test_dir.glob("*__horizontal_well.csv"))
     df_te = build_dataset(test_paths, False, FI, DI, n_jobs=4)
@@ -144,7 +184,12 @@ def _main() -> None:
     # model sees exactly the columns it was trained on, even on the hidden test set.
     Xte = df_te.reindex(columns=feat).to_numpy(_np.float32)
     Xte[~_np.isfinite(Xte)] = _np.nan
-    drift = _np.mean([m.predict(Xte) for m in models], axis=0)
+    xgb_te = _np.mean([m.predict(Xte) for m in xgb_models], axis=0)
+    if w is not None:
+        cb_te = _np.mean([m.predict(Xte) for m in cb_models], axis=0)
+        drift = w[0] * xgb_te + w[1] * cb_te
+    else:
+        drift = xgb_te
     # Consensus-blend post-processing (w=0.125): blend toward median of 3 robust drift estimators.
     consensus = _np.median(_np.column_stack([df_te[c].to_numpy(_np.float64) for c in _CONSENSUS]), axis=1)
     drift = _postprocess(drift, consensus)
