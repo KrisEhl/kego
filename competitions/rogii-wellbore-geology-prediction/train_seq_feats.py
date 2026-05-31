@@ -260,6 +260,12 @@ def main() -> None:
     print(f"KEGO_PARAM model {args.model}", flush=True)
     print(f"KEGO_PARAM xgb_depth {os.environ.get('ROGII_XGB_DEPTH', 7)}", flush=True)
     print(f"KEGO_PARAM cb_depth {args.cb_depth}", flush=True)
+    print(
+        f"KEGO_PARAM xgb_reg a{os.environ.get('ROGII_XGB_ALPHA', 0.1)}_l{os.environ.get('ROGII_XGB_LAMBDA', 1.0)}"
+        f"_mcw{os.environ.get('ROGII_XGB_MCW', 5)}_ss{os.environ.get('ROGII_XGB_SUBSAMPLE', 0.8)}"
+        f"_cs{os.environ.get('ROGII_XGB_COLSAMPLE', 0.7)}",
+        flush=True,
+    )
     print(f"KEGO_PARAM folds {args.folds}", flush=True)
     print(f"KEGO_PARAM seed {args.seed}", flush=True)
     print(f"KEGO_PARAM device {device}", flush=True)
