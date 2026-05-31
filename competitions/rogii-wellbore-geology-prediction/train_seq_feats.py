@@ -44,6 +44,26 @@ OUTPUT_DIR = Path(__file__).parent / "outputs"
 CACHE_DIR = OUTPUT_DIR / "feat_cache"
 
 NON_FEATURES = {"well", "id", "target"}
+# Trajectory-kinematics + apparent-dip columns added in v25 (ported from the 8.905 reference).
+# Listed explicitly (no shared prefix) so --no-kinematics can A/B them on one cached build.
+KINEMATIC_COLS = {
+    "incl_deg",
+    "azi_deg",
+    "dls",
+    "build_rate",
+    "cos_incl",
+    "sin_incl",
+    "tvt_dip_full_d",
+    "tvt_dip_late_d",
+    "azi_delta",
+    "apparent_dip_dir",
+    "b_dip_full",
+    "b_dip_late",
+    "b_dip_early",
+    "b_dip_slope",
+    "plane_dip_x",
+    "plane_dip_y",
+}
 
 
 def _feat_version() -> str:
@@ -186,6 +206,11 @@ def main() -> None:
         action="store_true",
         help="Drop div_* columns (A/B the v4 divergence features on the same cached build).",
     )
+    p.add_argument(
+        "--no-kinematics",
+        action="store_true",
+        help="Drop trajectory-kinematics + apparent-dip columns (A/B the ported features on one build).",
+    )
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -221,6 +246,9 @@ def main() -> None:
     if args.no_divergence:
         feat_cols = [c for c in feat_cols if not c.startswith("div_")]
         print(f"KEGO_PARAM no_divergence 1  ({len(feat_cols)} cols)", flush=True)
+    if args.no_kinematics:
+        feat_cols = [c for c in feat_cols if c not in KINEMATIC_COLS]
+        print(f"KEGO_PARAM no_kinematics 1  ({len(feat_cols)} cols)", flush=True)
     # Vectorised inf/-inf -> nan ONCE on the float32 array. pandas .replace() over
     # 3.78M x 198 (~750M cells) is single-threaded and was the low-CPU bottleneck.
     X = df[feat_cols].to_numpy(np.float32)

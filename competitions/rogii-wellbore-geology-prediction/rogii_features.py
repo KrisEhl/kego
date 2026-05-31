@@ -651,6 +651,56 @@ def _warmup_numba():
     _beam_jit(np.random.randn(30), np.random.randn(50), 25, 8, 15.0, 100.0)
 
 
+def compute_trajectory_kinematics(md, x, y, z):
+    """Standard directional-drilling kinematics over a full well (reconstructed from the
+    8.905 reference's usage equations; utils.py is in the author's private dataset).
+
+    Sign convention is pinned to OUR pipeline (TVT = -Z + offset, so dTVT/dMD = -dZ/dMD):
+    cos(incl) = -dZ/dMD (vertical fraction), sin(incl) = horizontal/dMD. incl ∈ [0,90] for
+    these wells (0 = vertical anchor, 90 = horizontal eval). Returns full-length arrays."""
+    md = np.asarray(md, np.float64)
+    x = np.asarray(x, np.float64)
+    y = np.asarray(y, np.float64)
+    z = np.asarray(z, np.float64)
+    n = len(md)
+    dmd = np.diff(md, prepend=md[0])
+    dmd_safe = np.where(np.abs(dmd) < 1e-6, np.nan, dmd)
+    dx = np.diff(x, prepend=x[0])
+    dy = np.diff(y, prepend=y[0])
+    dz = np.diff(z, prepend=z[0])
+    horiz = np.sqrt(dx * dx + dy * dy)
+    incl = np.degrees(np.arctan2(horiz, -dz))  # cos(incl) = -dZ/dMD matches TVT = -Z
+    azi = np.degrees(np.arctan2(dx, dy)) % 360.0
+    cos_incl = np.cos(np.radians(incl))
+    sin_incl = np.sin(np.radians(incl))
+    build = np.diff(incl, prepend=incl[0]) / dmd_safe  # d(incl)/dMD, deg/ft
+    # Dogleg severity (deg/100ft): spherical angle between consecutive survey stations.
+    ir = np.radians(incl)
+    ar = np.radians(azi)
+    cosb = np.cos(ir[:-1]) * np.cos(ir[1:]) + np.sin(ir[:-1]) * np.sin(ir[1:]) * np.cos(ar[1:] - ar[:-1])
+    beta = np.degrees(np.arccos(np.clip(cosb, -1.0, 1.0)))
+    dls = np.zeros(n)
+    dls[1:] = beta / dmd_safe[1:] * 100.0
+
+    def _fill(a):
+        return pd.Series(a).replace([np.inf, -np.inf], np.nan).bfill().ffill().fillna(0.0).to_numpy(np.float64)
+
+    return {
+        "incl_deg": _fill(incl),
+        "azi_deg": _fill(azi),
+        "dls": _fill(dls),
+        "build_rate": _fill(build),
+        "cos_incl": _fill(cos_incl),
+        "sin_incl": _fill(sin_incl),
+    }
+
+
+def _fit_dip_b(cos_a, sin_a, rate_a):
+    """Fit apparent-dip b: actual vertical rate r = cos(incl) + b*sin(incl) (least squares)."""
+    den = float(np.sum(sin_a * sin_a))
+    return float(np.sum(sin_a * (rate_a - cos_a)) / den) if den > 1e-9 else 0.0
+
+
 def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCImputer):
     wid = Path(hw_path).stem.replace("__horizontal_well", "")
     try:
@@ -785,6 +835,53 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
     dxdmd = (hw["X"].diff() / mdd).iloc[ev.index].values.astype(np.float32)
     dydmd = (hw["Y"].diff() / mdd).iloc[ev.index].values.astype(np.float32)
 
+    # ---- Trajectory kinematics + apparent-dip physics (ported from the 8.905 reference) ----
+    kin = compute_trajectory_kinematics(hw["MD"].to_numpy(), hw["X"].to_numpy(), hw["Y"].to_numpy(), hw["Z"].to_numpy())
+    a_idx = kn.index.to_numpy()
+    e_idx = ev.index.to_numpy()
+    cos_e = kin["cos_incl"][e_idx]
+    sin_e = kin["sin_incl"][e_idx]
+    azi_e = kin["azi_deg"][e_idx]
+    # Fit apparent-dip b on the KNOWN anchor zone (actual vertical rate r = cos + b*sin).
+    cos_a = kin["cos_incl"][a_idx]
+    sin_a = kin["sin_incl"][a_idx]
+    dmd_a = np.diff(kmd.astype(np.float64), prepend=float(kmd[0]))
+    dtvt_a = np.diff(ktvt.astype(np.float64), prepend=float(ktvt[0]))
+    m_a = np.abs(dmd_a) > 1e-6
+    rate_a = np.zeros_like(dmd_a)
+    rate_a[m_a] = dtvt_a[m_a] / dmd_a[m_a]
+    b_full = _fit_dip_b(cos_a[m_a], sin_a[m_a], rate_a[m_a])
+    n_a = len(cos_a)
+    t1 = max(1, n_a // 3)
+    me = m_a.copy()
+    me[t1:] = False  # early third
+    ml = m_a.copy()
+    ml[: max(0, n_a - 50)] = False  # last 50
+    b_early = _fit_dip_b(cos_a[me], sin_a[me], rate_a[me]) if me.any() else b_full
+    b_late = _fit_dip_b(cos_a[ml], sin_a[ml], rate_a[ml]) if ml.any() else b_full
+    b_slope = b_late - b_early
+    dmd_e = np.diff(hmd.astype(np.float64), prepend=float(lk["MD"]))
+    tvt_dip_full = last_tvt + np.cumsum((cos_e + sin_e * b_full) * dmd_e)
+    tvt_dip_late = last_tvt + np.cumsum((cos_e + sin_e * b_late) * dmd_e)
+    # Signed azimuth deviation from the anchor circular mean.
+    aar = np.radians(kin["azi_deg"][a_idx])
+    amean = float(np.arctan2(np.sin(aar).mean(), np.cos(aar).mean()))
+    azi_delta = np.degrees(np.arctan2(np.sin(np.radians(azi_e) - amean), np.cos(np.radians(azi_e) - amean)))
+    # Formation-plane dip direction at the well centroid (gradient of FormationPlaneKNN ANCC depth).
+    xc, yc = float(np.median(ev["X"].to_numpy())), float(np.median(ev["Y"].to_numpy()))
+    hstep = 500.0
+
+    def _ancc_at(px, py):
+        f, _ = FI.impute(np.array([[px, py]], np.float64), self_wid=swid)
+        return float(f[0, 0])
+
+    _fc = _ancc_at(xc, yc)
+    plane_dip_x = (_ancc_at(xc + hstep, yc) - _fc) / hstep
+    plane_dip_y = (_ancc_at(xc, yc + hstep) - _fc) / hstep
+    apparent_dip_dir = (plane_dip_x * np.sin(np.radians(azi_e)) + plane_dip_y * np.cos(np.radians(azi_e))).astype(
+        np.float32
+    )
+
     nh = len(ev)
     frac = (np.arange(nh) / max(nh - 1, 1)).astype(np.float32)
 
@@ -862,6 +959,23 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
         "dzdmd": dzdmd,
         "dxdmd": dxdmd,
         "dydmd": dydmd,
+        # Trajectory kinematics (per-row) + apparent-dip physics (8.905 reference port)
+        "incl_deg": kin["incl_deg"][e_idx].astype(np.float32),
+        "azi_deg": azi_e.astype(np.float32),
+        "dls": kin["dls"][e_idx].astype(np.float32),
+        "build_rate": kin["build_rate"][e_idx].astype(np.float32),
+        "cos_incl": cos_e.astype(np.float32),
+        "sin_incl": sin_e.astype(np.float32),
+        "tvt_dip_full_d": (tvt_dip_full - last_tvt).astype(np.float32),
+        "tvt_dip_late_d": (tvt_dip_late - last_tvt).astype(np.float32),
+        "azi_delta": azi_delta.astype(np.float32),
+        "apparent_dip_dir": apparent_dip_dir,
+        "b_dip_full": sc(b_full),
+        "b_dip_late": sc(b_late),
+        "b_dip_early": sc(b_early),
+        "b_dip_slope": sc(b_slope),
+        "plane_dip_x": sc(plane_dip_x),
+        "plane_dip_y": sc(plane_dip_y),
         "gr": hgr,
         "gr_d1": gr_d1,
         "gr_d2": gr_d2,
