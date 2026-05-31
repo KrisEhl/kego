@@ -186,7 +186,7 @@ uv run kego run competitions/rogii-wellbore-geology-prediction/train_rogii.py --
 | v19-seed7 | v18 ensemble seed 7 | KILLED | Cluster powered off (10h maintenance) before finish. Noise measured locally instead (v20). |
 | v20-local-xgb | xgb seed 42, 212 divergence feat, **CPU/local** (offline sqlite) | 10.77 ft | Build 390s (Mac CPU faster than cluster) + cached. 3rd same-config data point. |
 | v22-ens3-gpu | full xgb+cb+hgb NNLS, single-seed GPU | KILLED | Single-seed (not submittable per audit) + HGB ran 1-CPU (default `--cpu 1`) → ~28min/fold, GPU 0%. Killed; ensemble is priority-4 (post-proc first). Lesson: use `--cpu 8` for HGB ensembles. |
-| v23-postproc | **drift-attenuation + PF-blend + per-well Savitzky-Golay**, tuned on 4-fold xgb OOF (GPU-free) | TBD | Audit's #1 lever (ref's signature path to 8.905). `tune_postprocess.py` on cached features: pp(d)=savgol[(d(1-w)+pf·w)·(1−e^−md/τ)·α]. Structural (above noise). |
+| v23-postproc | **drift-attenuation + PF-blend + savgol**, tuned on 4-fold xgb OOF (GPU-free) | 10.727 ft (CPU OOF, **−0.041**) | **REAL lever**: baseline 10.768→10.727. Params: **α=1.0, τ=39, w_pf=0.1, savgol_win=31**. The −0.038 is the τ=39 attenuation `d·(1−e^{−md_since/39})` (suppresses drift within ~39ft of anchor — physical prior; savgol +0.003 marginal). Low overfit (2 free params / 3.78M rows), no leakage (md_since is an input). Transferable → apply in kernel for LB ~10.50. Params in `outputs/pp_best.json`; OOF cached in `oof_v23.npz`. |
 
 ## 🎯 LB ANCHOR (2026-05-30): **public LB 10.538** — v13c kernel (198 feat, no divergence, single xgb, train-in-kernel CPU)
 
