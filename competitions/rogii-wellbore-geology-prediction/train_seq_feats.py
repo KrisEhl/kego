@@ -183,9 +183,9 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb
         from lightgbm import LGBMRegressor, early_stopping, log_evaluation
 
         m = LGBMRegressor(
-            n_estimators=50 if debug else 6000,
+            n_estimators=50 if debug else int(os.environ.get("ROGII_LGB_TREES", 6000)),
             learning_rate=0.03,
-            num_leaves=255,
+            num_leaves=int(os.environ.get("ROGII_LGB_LEAVES", 255)),
             subsample=0.8,
             subsample_freq=1,
             colsample_bytree=0.7,
