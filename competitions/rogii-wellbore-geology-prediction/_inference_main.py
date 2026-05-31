@@ -5,9 +5,10 @@
 # ============================================================================
 # Kaggle inference entrypoint — APPENDED to rogii_features.py by build_kernel.sh
 # to form the single-file `inference_kernel.py` (Kaggle script kernels are
-# single-file). Trains the 198-feature seqfeats pipeline in-kernel on CPU and
-# writes submission.csv. Reproduces train_seq_feats.py exactly: GroupKFold(4),
-# 4 models averaged for the test prediction (= the validated OOF-10.62 setup).
+# single-file). Trains the seqfeats pipeline (divergence features dropped in _xy
+# -> ~195 feat, matching the LB-10.538 anchor's no-divergence set) in-kernel on
+# CPU and writes submission.csv. Reproduces train_seq_feats.py: GroupKFold(4),
+# 4 models averaged, then PF-blend post-processing (w=0.10, -0.054 ft OOF).
 #
 # enable_gpu=false on Kaggle → device="cpu". Set ROGII_KERNEL_DEBUG=1 for a
 # fast local end-to-end smoke (few wells, 50 trees).
@@ -18,30 +19,24 @@ from pathlib import Path as _Path
 
 import numpy as _np
 import pandas as _pd
-from scipy.signal import savgol_filter as _savgol
 from sklearn.model_selection import GroupKFold as _GroupKFold
 from xgboost import XGBRegressor as _XGBRegressor
 
 _NON_FEATURES = {"well", "id", "target"}
 _DEBUG = _os.environ.get("ROGII_KERNEL_DEBUG") == "1"
 
-# Post-processing tuned on the v23 4-fold OOF (CPU): -0.041 ft. tau=39 drift-attenuation
-# (suppresses drift within ~39ft of the anchor — physical prior) is the main lever;
-# w_pf blend + per-well savgol are minor. md_since/pf are inputs → no leakage.
-_PP = {"alpha": 1.0, "tau": 39.0, "w_pf": 0.1, "savgol_win": 31}
+# Post-processing: PF-blend only. d = drift*(1-w) + pf*w, w=0.10.
+# Audit (2026-05-31) decomposed the v23 OOF and found the blend IS the entire gain:
+# on the 198-feat model (no divergence, = this kernel) blend(w=0.10) gives -0.054 ft OOF
+# (10.8491 -> 10.7949), a broad smooth peak over w=0.075..0.125. The earlier tau=39
+# "attenuation" was INERT (only ~0.8% of rows have md_since<39; median ~2458 ft -> factor~1)
+# and per-well savgol was a boundary-overfit +0.003 — both dropped. pf_ancc_delta is an
+# input (MD/geometry/known-zone GR + type-well log), never the post-PS target -> no leakage.
+_PP = {"w_pf": 0.10}
 
 
-def _postprocess(drift, md_since, pf, well_ids):
-    d = drift * (1 - _PP["w_pf"]) + pf * _PP["w_pf"]
-    d = d * (1 - _np.exp(-md_since / _PP["tau"])) * _PP["alpha"]
-    out = d.copy()
-    for wid in _np.unique(well_ids):
-        rows = _np.where(well_ids == wid)[0]
-        n = len(rows)
-        wl = min(_PP["savgol_win"], n if n % 2 else n - 1)
-        if wl >= 5:
-            out[rows] = _savgol(d[rows], wl, 3)
-    return out
+def _postprocess(drift, pf):
+    return drift * (1 - _PP["w_pf"]) + pf * _PP["w_pf"]
 
 
 def _find_data_dir() -> _Path:
@@ -61,7 +56,10 @@ def _find_data_dir() -> _Path:
 
 
 def _xy(df: "_pd.DataFrame"):
-    feat = [c for c in df.columns if c not in _NON_FEATURES]
+    # Drop div_* (divergence) features: the LB-10.538 anchor was trained WITHOUT them
+    # and a 5-seed A/B found them neutral. Dropping here makes the PF-blend the ONLY
+    # change vs that anchor, so the resulting LB delta is cleanly attributable.
+    feat = [c for c in df.columns if c not in _NON_FEATURES and not c.startswith("div_")]
     X = df[feat].to_numpy(_np.float32)
     X[~_np.isfinite(X)] = _np.nan
     return feat, X
@@ -123,13 +121,8 @@ def _main() -> None:
     Xte = df_te.reindex(columns=feat).to_numpy(_np.float32)
     Xte[~_np.isfinite(Xte)] = _np.nan
     drift = _np.mean([m.predict(Xte) for m in models], axis=0)
-    # v23 post-processing (tau=39 drift-attenuation + PF-blend + per-well savgol): -0.041 OOF
-    drift = _postprocess(
-        drift,
-        df_te["md_since"].to_numpy(_np.float64),
-        df_te["pf_ancc_delta"].to_numpy(_np.float64),
-        df_te["well"].to_numpy(),
-    )
+    # PF-blend post-processing (w=0.10): -0.054 OOF on the 198-feat model. pf is an input.
+    drift = _postprocess(drift, df_te["pf_ancc_delta"].to_numpy(_np.float64))
     sub = _pd.DataFrame({"id": df_te["id"], "tvt": df_te["last_known_tvt"].to_numpy() + drift})
     sub.to_csv(out_dir / "submission.csv", index=False)
     print(f"Wrote {len(sub):,} rows -> {out_dir / 'submission.csv'}", flush=True)
