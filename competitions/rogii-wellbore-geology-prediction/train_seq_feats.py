@@ -134,7 +134,7 @@ def _log_curve(train_hist, val_hist, fold_num, every=25):
         log_metric_live(f"val_rmse_f{fold_num}", float(val_hist[i]), step=i)
 
 
-def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0):
+def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb_depth=7):
     """Fit one model family on a fold. All handle NaN natively. Returns fitted model.
 
     Logs a train+val RMSE learning curve per fold. Train is evaluated on a 100k
@@ -164,7 +164,7 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0):
         m = CatBoostRegressor(
             iterations=n,
             learning_rate=0.03,
-            depth=7,
+            depth=cb_depth,
             l2_leaf_reg=3.0,
             loss_function="RMSE",
             od_type="Iter",
@@ -242,11 +242,24 @@ def main() -> None:
         action="store_true",
         help="Drop gr_dwt_* (DWT-GR) columns (A/B the wavelet features on one build).",
     )
+    p.add_argument(
+        "--xgb-depth",
+        type=int,
+        default=None,
+        help="XGB max_depth override. CLI arg forwards to the cluster (unlike ROGII_XGB_DEPTH env, which does NOT — see v34 no-op).",
+    )
+    p.add_argument("--cb-depth", type=int, default=7, help="CatBoost depth (default 7).")
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
+    # CLI depth flag forwards to the cluster; set the env _xgb() reads so the override propagates.
+    if args.xgb_depth is not None:
+        os.environ["ROGII_XGB_DEPTH"] = str(args.xgb_depth)
+
     device = _detect_device()
     print(f"KEGO_PARAM model {args.model}", flush=True)
+    print(f"KEGO_PARAM xgb_depth {os.environ.get('ROGII_XGB_DEPTH', 7)}", flush=True)
+    print(f"KEGO_PARAM cb_depth {args.cb_depth}", flush=True)
     print(f"KEGO_PARAM folds {args.folds}", flush=True)
     print(f"KEGO_PARAM seed {args.seed}", flush=True)
     print(f"KEGO_PARAM device {device}", flush=True)
@@ -303,7 +316,9 @@ def main() -> None:
     fold_models = {f: [] for f in families}
     for fold_num, (tr, va) in enumerated:
         for f in families:
-            m = _fit_one(f, args.seed, args.debug, device, X[tr], y[tr], X[va], y[va], fold_num=fold_num)
+            m = _fit_one(
+                f, args.seed, args.debug, device, X[tr], y[tr], X[va], y[va], fold_num=fold_num, cb_depth=args.cb_depth
+            )
             oof[f][va] = m.predict(X[va])
             fold_models[f].append(m)
             fr = float(np.sqrt(mean_squared_error(y[va], oof[f][va])))
