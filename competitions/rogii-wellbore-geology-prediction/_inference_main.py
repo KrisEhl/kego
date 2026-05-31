@@ -18,11 +18,30 @@ from pathlib import Path as _Path
 
 import numpy as _np
 import pandas as _pd
+from scipy.signal import savgol_filter as _savgol
 from sklearn.model_selection import GroupKFold as _GroupKFold
 from xgboost import XGBRegressor as _XGBRegressor
 
 _NON_FEATURES = {"well", "id", "target"}
 _DEBUG = _os.environ.get("ROGII_KERNEL_DEBUG") == "1"
+
+# Post-processing tuned on the v23 4-fold OOF (CPU): -0.041 ft. tau=39 drift-attenuation
+# (suppresses drift within ~39ft of the anchor — physical prior) is the main lever;
+# w_pf blend + per-well savgol are minor. md_since/pf are inputs → no leakage.
+_PP = {"alpha": 1.0, "tau": 39.0, "w_pf": 0.1, "savgol_win": 31}
+
+
+def _postprocess(drift, md_since, pf, well_ids):
+    d = drift * (1 - _PP["w_pf"]) + pf * _PP["w_pf"]
+    d = d * (1 - _np.exp(-md_since / _PP["tau"])) * _PP["alpha"]
+    out = d.copy()
+    for wid in _np.unique(well_ids):
+        rows = _np.where(well_ids == wid)[0]
+        n = len(rows)
+        wl = min(_PP["savgol_win"], n if n % 2 else n - 1)
+        if wl >= 5:
+            out[rows] = _savgol(d[rows], wl, 3)
+    return out
 
 
 def _find_data_dir() -> _Path:
@@ -104,6 +123,13 @@ def _main() -> None:
     Xte = df_te.reindex(columns=feat).to_numpy(_np.float32)
     Xte[~_np.isfinite(Xte)] = _np.nan
     drift = _np.mean([m.predict(Xte) for m in models], axis=0)
+    # v23 post-processing (tau=39 drift-attenuation + PF-blend + per-well savgol): -0.041 OOF
+    drift = _postprocess(
+        drift,
+        df_te["md_since"].to_numpy(_np.float64),
+        df_te["pf_ancc_delta"].to_numpy(_np.float64),
+        df_te["well"].to_numpy(),
+    )
     sub = _pd.DataFrame({"id": df_te["id"], "tvt": df_te["last_known_tvt"].to_numpy() + drift})
     sub.to_csv(out_dir / "submission.csv", index=False)
     print(f"Wrote {len(sub):,} rows -> {out_dir / 'submission.csv'}", flush=True)
