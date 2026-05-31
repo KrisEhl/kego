@@ -17,7 +17,7 @@ _POLL_INTERVAL = 2  # seconds between log polls
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     p = subparsers.add_parser("logs", help="Show logs for a cluster job")
-    p.add_argument("id", help="Kego experiment ID (or prefix)")
+    p.add_argument("id", nargs="?", help="Kego experiment ID/prefix or run name (default: most recent run)")
     p.add_argument("--fold", type=int, help="Show logs for a specific fold only")
     p.add_argument(
         "--no-follow",
@@ -25,6 +25,19 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[
         help="Print logs once and exit (default: follow until job finishes)",
     )
     p.set_defaults(func=_logs)
+
+
+def _latest_job_run(client, experiment_ids: list[str]) -> list:
+    """Most recent run with a Ray job, preferring RUNNING. Returns [run] or []."""
+
+    def _pick(filter_string: str):
+        runs = client.search_runs(
+            experiment_ids, filter_string=filter_string, order_by=["start_time DESC"], max_results=20
+        )
+        return [r for r in runs if r.data.tags.get("kego_is_parent") != "true" and r.data.tags.get("ray_submission_id")]
+
+    candidates = _pick("attributes.status = 'RUNNING'") or _pick("")
+    return candidates[:1]
 
 
 def _ray_get(base: str, path: str) -> dict:
@@ -100,14 +113,24 @@ def _logs(args: argparse.Namespace, extra_args: list[str]) -> int:
         from kego.cli.experiment import resolve_runs
 
         experiment_ids = [e.experiment_id for e in client.search_experiments()]
-        runs = resolve_runs(args.id, client, experiment_ids)
+        if args.id:
+            runs = resolve_runs(args.id, client, experiment_ids)
+        else:
+            runs = _latest_job_run(client, experiment_ids)
     except Exception as e:
         print(f"Error reaching MLflow at {tracking_uri}: {e}")
         return 1
 
     if not runs:
-        print(f"No runs found matching ID: {args.id}")
+        msg = f"No runs found matching ID: {args.id}" if args.id else "No cluster jobs found to show logs for."
+        print(msg)
         return 1
+
+    if not args.id:
+        r0 = runs[0]
+        print(
+            f"(latest run: {r0.data.tags.get('mlflow.runName', '?')} [{r0.data.tags.get('kego_id', '?')}])", flush=True
+        )
 
     runs = [r for r in runs if r.data.tags.get("kego_is_parent") != "true"]
 
