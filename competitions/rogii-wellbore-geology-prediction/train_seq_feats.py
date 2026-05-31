@@ -237,6 +237,11 @@ def main() -> None:
         action="store_true",
         help="Drop trajectory-kinematics + apparent-dip columns (A/B the ported features on one build).",
     )
+    p.add_argument(
+        "--no-dwt",
+        action="store_true",
+        help="Drop gr_dwt_* (DWT-GR) columns (A/B the wavelet features on one build).",
+    )
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -275,6 +280,9 @@ def main() -> None:
     if args.no_kinematics:
         feat_cols = [c for c in feat_cols if c not in KINEMATIC_COLS]
         print(f"KEGO_PARAM no_kinematics 1  ({len(feat_cols)} cols)", flush=True)
+    if args.no_dwt:
+        feat_cols = [c for c in feat_cols if not c.startswith("gr_dwt")]
+        print(f"KEGO_PARAM no_dwt 1  ({len(feat_cols)} cols)", flush=True)
     # Vectorised inf/-inf -> nan ONCE on the float32 array. pandas .replace() over
     # 3.78M x 198 (~750M cells) is single-threaded and was the low-CPU bottleneck.
     X = df[feat_cols].to_numpy(np.float32)

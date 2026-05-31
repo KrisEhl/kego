@@ -701,6 +701,30 @@ def _fit_dip_b(cos_a, sin_a, rate_a):
     return float(np.sum(sin_a * (rate_a - cos_a)) / den) if den > 1e-9 else 0.0
 
 
+def _compute_dwt_gr(gr, wavelet="db4", n_levels=5):
+    """DWT multi-resolution of the eval-zone GR (ported verbatim from the 8.905 reference's
+    add_v4_features Phase-3). Returns (approx5 low-freq trend, detail-level-3 RMS energy).
+    pywt is lazy-imported + try/except so the module still loads where pywt is absent (cluster);
+    there DWT degrades to (gr, zeros) — neutral, not a crash."""
+    n = len(gr)
+    finite = np.isfinite(gr)
+    gr_c = np.where(finite, gr, np.nanmean(gr) if finite.any() else 0.0).astype(np.float64)
+    try:
+        import pywt
+
+        coeffs = pywt.wavedec(gr_c, wavelet, mode="periodization", level=n_levels)
+        recon = [coeffs[0]] + [np.zeros_like(c) for c in coeffs[1:]]
+        approx = pywt.waverec(recon, wavelet, mode="periodization")[:n]
+        det3 = [np.zeros_like(c) for c in coeffs]
+        if len(coeffs) > 3:
+            det3[3] = coeffs[3]
+        det3_s = pywt.waverec(det3, wavelet, mode="periodization")[:n]
+        detail = pd.Series(det3_s**2).rolling(16, center=True, min_periods=1).mean().values ** 0.5
+    except Exception:
+        approx, detail = gr_c, np.zeros(n)
+    return approx.astype(np.float32), detail.astype(np.float32)
+
+
 def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCImputer):
     wid = Path(hw_path).stem.replace("__horizontal_well", "")
     try:
@@ -824,6 +848,9 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
         .iloc[ev.index]
         .values.astype(np.float32)
     )
+    # DWT multi-resolution of the eval GR (8.905 reference port). gr_dwt_residual = hgr - approx5.
+    gr_dwt_approx5, gr_dwt_detail = _compute_dwt_gr(hgr)
+    gr_dwt_residual = (hgr - gr_dwt_approx5).astype(np.float32)
 
     hmd = ev["MD"].to_numpy(np.float32)
     md_since = hmd - float(lk["MD"])
@@ -981,6 +1008,9 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
         "gr_d2": gr_d2,
         "gr_env": gr_env,
         "gr_nrg": gr_nrg,
+        "gr_dwt_approx5": gr_dwt_approx5,
+        "gr_dwt_detail_energy": gr_dwt_detail,
+        "gr_dwt_residual": gr_dwt_residual,
         "gr_vs_tw_anc": hgr - np.float32(np.interp(last_tvt, tw_tvt, tw_gr)),
         "gr_vs_slp_all": hgr - np.interp(slp_b_all, tw_tvt, tw_gr).astype(np.float32),
         **{f"tda{int(o)}": hgr - np.float32(np.interp(last_tvt + o, tw_tvt, tw_gr)) for o in ANCH_OFFS},
