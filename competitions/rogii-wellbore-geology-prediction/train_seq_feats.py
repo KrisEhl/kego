@@ -268,6 +268,13 @@ def main() -> None:
         default=None,
         help="Particle-filter particle multiplier (variance-reduce pf_ancc/pf_z).",
     )
+    p.add_argument(
+        "--save-artifacts",
+        action="store_true",
+        help="Pickle the trained fold-models + NNLS weights + feat_cols to OUTPUT_DIR. The inference kernel loads "
+        "these (offline-trained models) and builds ONLY test features in-kernel — cutting kernel runtime from "
+        "hours to minutes and making mult4/mult8 deployable (the expensive train-set mult-PF build moves offline).",
+    )
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -379,6 +386,29 @@ def main() -> None:
         print(f"KEGO_METRIC post_ps_rmse {post_ps_rmse:.6f}", flush=True)
         log_metric_live("post_ps_rmse", post_ps_rmse)
         log_metric_live("progress_pct", 95)
+
+        # Ship the trained models for the inference kernel (load offline-trained models, build only test
+        # features in-kernel). Replicates _inference_main's test path exactly: average each family's fold
+        # models, then NNLS-blend. pf_mult + feat_cols pin the kernel to build test features identically.
+        if args.save_artifacts and args.model == "ensemble":
+            import joblib
+
+            _pfm = os.environ.get("ROGII_PF_MULT", "1")
+            artifact = {
+                "fold_models": fold_models,  # {family: [fitted fold models]}
+                "weights": list(weights) if weights is not None else None,  # NNLS, aligned to families
+                "families": families,
+                "feat_cols": feat_cols,
+                "pf_mult": _pfm,
+                "cb_depth": args.cb_depth,
+                "xgb_depth": os.environ.get("ROGII_XGB_DEPTH", "7"),
+                "seed": args.seed,
+                "oof_post_ps_rmse": post_ps_rmse,
+            }
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            apath = OUTPUT_DIR / f"rogii_artifacts_pfm{_pfm}_s{args.seed}.joblib"
+            joblib.dump(artifact, apath, compress=3)
+            print(f"Saved artifacts -> {apath} ({apath.stat().st_size / 1e6:.1f} MB)", flush=True)
 
         # Test predictions: imputers fit on ALL train wells, no exclusion
         test_paths = sorted(TEST_DIR.glob("*__horizontal_well.csv"))
