@@ -275,6 +275,14 @@ def main() -> None:
         "these (offline-trained models) and builds ONLY test features in-kernel — cutting kernel runtime from "
         "hours to minutes and making mult4/mult8 deployable (the expensive train-set mult-PF build moves offline).",
     )
+    p.add_argument(
+        "--blend",
+        action="store_true",
+        help="Eval the v24 PF-blend post-processing on the OOF: blended = drift*(1-w) + pf_ancc_delta*w. "
+        "Tests whether the mult4 PF win transfers within the public-friendly single-XGB+blend config "
+        "(v24 = LB 10.105). When set, KEGO_METRIC reports the BLENDED post-PS RMSE.",
+    )
+    p.add_argument("--blend-w", type=float, default=0.10, help="PF-blend weight (v24 used 0.10).")
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -383,8 +391,22 @@ def main() -> None:
             oof_final = oof[args.model]
         post_ps_rmse = float(np.sqrt(mean_squared_error(y[mask], oof_final[mask])))
         print(f"OOF post-PS RMSE = {post_ps_rmse:.4f} ft", flush=True)
-        print(f"KEGO_METRIC post_ps_rmse {post_ps_rmse:.6f}", flush=True)
-        log_metric_live("post_ps_rmse", post_ps_rmse)
+        if args.blend:
+            # v24 PF-blend (LB 10.105): shrink the model drift toward pf_ancc_delta. Tests whether the
+            # mult4 PF win transfers within the public-friendly single+blend config. pf_ancc_delta IS a
+            # column (the PF drift estimate); mult4 improves it, so the blend compounds with mult4.
+            w_b = args.blend_w
+            pf_d = df["pf_ancc_delta"].to_numpy(np.float64)
+            blended = oof_final * (1.0 - w_b) + pf_d * w_b
+            blended_rmse = float(np.sqrt(mean_squared_error(y[mask], blended[mask])))
+            print(f"OOF post-PS RMSE (blend w={w_b}) = {blended_rmse:.4f} ft (raw {post_ps_rmse:.4f})", flush=True)
+            print(f"KEGO_METRIC post_ps_rmse {blended_rmse:.6f}", flush=True)  # blended is the config under test
+            print(f"KEGO_METRIC raw_post_ps_rmse {post_ps_rmse:.6f}", flush=True)
+            log_metric_live("post_ps_rmse", blended_rmse)
+            log_metric_live("raw_post_ps_rmse", post_ps_rmse)
+        else:
+            print(f"KEGO_METRIC post_ps_rmse {post_ps_rmse:.6f}", flush=True)
+            log_metric_live("post_ps_rmse", post_ps_rmse)
         log_metric_live("progress_pct", 95)
 
         # Ship the trained models for the inference kernel (load offline-trained models, build only test
