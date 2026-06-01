@@ -138,7 +138,7 @@ def _log_curve(train_hist, val_hist, fold_num, every=25):
         log_metric_live(f"val_rmse_f{fold_num}", float(val_hist[i]), step=i)
 
 
-def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb_depth=7):
+def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb_depth=7, hgb_max_iter=5000):
     """Fit one model family on a fold. All handle NaN natively. Returns fitted model.
 
     Logs a train+val RMSE learning curve per fold. Train is evaluated on a 100k
@@ -153,7 +153,10 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb
         # early_stopping=False per ref: its internal validation_fraction is a random split
         # that leaks per-well GR patterns; GroupKFold OOF is the true stopping criterion.
         m = HistGradientBoostingRegressor(
-            max_iter=50 if debug else 5000,  # ref hgb_p (R11→8.905): 5000
+            # ref hgb_p (R11→8.905) = 5000, early_stopping=False. HGB is CPU-only (no GPU),
+            # so 5000 iters dominates wall-clock (~12min/fold). lr=0.05 plateaus well before
+            # 5000 → --hgb-max-iter lets resume runs use ~2000 (~2.5x faster) and verify the OOF holds.
+            max_iter=50 if debug else hgb_max_iter,
             learning_rate=0.05,
             max_depth=6,  # ref: max_depth=6
             max_leaf_nodes=31,  # HGB default (ref leaves default)
@@ -261,6 +264,12 @@ def main() -> None:
     )
     p.add_argument("--cb-depth", type=int, default=7, help="CatBoost depth (default 7).")
     p.add_argument(
+        "--hgb-max-iter",
+        type=int,
+        default=5000,
+        help="HGB max_iter (default 5000 = ref). HGB is CPU-only; lower (~2000) for ~2.5x speed since lr=0.05 plateaus early.",
+    )
+    p.add_argument(
         "--lgb-leaves", type=int, default=None, help="LGB num_leaves (CLI forwards to cluster; env does not)."
     )
     p.add_argument("--lgb-trees", type=int, default=None, help="LGB n_estimators.")
@@ -310,6 +319,7 @@ def main() -> None:
     print(f"KEGO_PARAM model {args.model}", flush=True)
     print(f"KEGO_PARAM xgb_depth {os.environ.get('ROGII_XGB_DEPTH', 7)}", flush=True)
     print(f"KEGO_PARAM cb_depth {args.cb_depth}", flush=True)
+    print(f"KEGO_PARAM hgb_max_iter {args.hgb_max_iter}", flush=True)
     print(
         f"KEGO_PARAM xgb_reg a{os.environ.get('ROGII_XGB_ALPHA', 0.1)}_l{os.environ.get('ROGII_XGB_LAMBDA', 1.0)}"
         f"_mcw{os.environ.get('ROGII_XGB_MCW', 5)}_ss{os.environ.get('ROGII_XGB_SUBSAMPLE', 0.8)}"
@@ -376,7 +386,17 @@ def main() -> None:
     for fold_num, (tr, va) in enumerated:
         for f in families:
             m = _fit_one(
-                f, args.seed, args.debug, device, X[tr], y[tr], X[va], y[va], fold_num=fold_num, cb_depth=args.cb_depth
+                f,
+                args.seed,
+                args.debug,
+                device,
+                X[tr],
+                y[tr],
+                X[va],
+                y[va],
+                fold_num=fold_num,
+                cb_depth=args.cb_depth,
+                hgb_max_iter=args.hgb_max_iter,
             )
             oof[f][va] = m.predict(X[va])
             fold_models[f].append(m)
