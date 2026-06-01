@@ -59,7 +59,17 @@ Each horizontal well is drilled vertically then curves to horizontal. At the **P
 
 ## Plan
 
-### ⭐ CURRENT STATE (2026-06-01, CONVERGED) — experimental levers exhausted
+### 🔴 RE-OPENED (2026-06-01) — TARGET: tie/beat the 8.905 ref (`mitchgansemer/gr-features-outlier-detection-rogii-wellbore`)
+**The "converged/exhausted" conclusion below was PREMATURE.** User flagged the gansemer public kernel (LB **8.905**, OOF 9.85) as reproducible. Deep-analysis (pulled the .ipynb; its `rogii-wellbore-models` dataset = PRIVATE/403, so utils.py reconstructed from the visible `build_features` cell + our own rogii_features.py). **THE GAP — the ref's edge over our 10.27 OOF:**
+1. **Uses ALL feature families TOGETHER** (kinematics, DWT, divergence, RowKNN, gr_xcorr, b_well-segmented offsets) — exactly the families WE COMPUTE but DROP (`--no-div/--no-kin/--no-dwt`) based on *isolated* A/Bs. README's own insight: "the edge is the COMBINATION." **We've been dropping our own signal.** (full build = 232 cols; we use only 195.)
+2. **HGB 3rd ensemble member** (HistGradientBoosting: max_iter5000, lr0.05, depth6, l2=0.1, max_features0.7, **early_stopping=False** [internal val leaks per-well GR], nan→0). R10→R11: OOF 9.91→9.85, **LB→8.905**. We support `hgb` but don't ship it.
+3. **Per-well Savitzky-Golay post-proc** (savgol w=17 p=3 on the blended drift, MD-ordered per well). We dismissed SG as "phantom" — but the ref uses it on the ENSEMBLE blend.
+4. **Optuna-tuned XGB + CatBoost (depth 5)** (we use depth7/defaults); NNLS XGB-heavy (55.9/44.1, vs our cb-heavy 0.36/0.72).
+5. **GroupKFold(5)** (we use 4); 2 families we never ported: **RowKNN** (`knn_row*`) + **gr_xcorr** (`xcorr*`).
+**OUR EDGE:** mult4 variance-reduced PF (−0.25) — the ref uses mult1 (500 particles). Ref's-features + our-mult4-PF could BEAT 8.905.
+**PHASED PLAN:** (P1, cheap/warm-pfm4-cache) full-feature set (no drops) + HGB + 5-fold + SG post-proc → how close to 9.85? (P2) port RowKNN + gr_xcorr + b_well-seg (needs fresh build). (P3) Optuna XGB+CB(depth5). (P4) stack all + mult4 PF → beat 8.905. **Reproduce-before-diverge: get close to 9.85 first, then add our mult4 edge.**
+
+### CURRENT STATE (2026-06-01, was "CONVERGED" — NOW SUPERSEDED by the re-open above)
 - **Best lever found + DEPLOYED: PF-mult** (variance-reduced particle filter). mult1 10.517 → mult2 10.344 → **mult4 10.267** (773-well CV, 14σ, leakage-clean); mult8 REVERSES (10.44) → mult4 is the optimum. Deployed via the **v46 kernel redesign** (load offline-trained models + build test-only → ~49s kernel, was hours). Submitted (v6); public LB 10.715 (3-well noise — trust the OOF).
 - **Primary final-pick candidate:** ensemble (XGB+CB NNLS) + mult4, **multi-seed (12 models, OOF 10.2665)** artifact built+validated, deploy DEFERRED to final pick. **Hedge:** v24 (single+blend, best public 10.105).
 - **EXHAUSTED:** features (PF-mult=the win; kinematics/DWT/typewell-NCC neutral; anchor-NCC ALREADY present as sc_ens_d; gr_xcorr/RowKNN redundant), depth (7), reg (overfit), single+blend (OOF-worse than ensemble), mult>4 (worse). Ref-gap GATE satisfied (8.905 single-sourced/unverified; ~9.5 corroborated ceiling).
