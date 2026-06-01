@@ -8,7 +8,9 @@
   "enable_gpu": "false",
   "enable_tpu": "false",
   "enable_internet": "false",
-  "dataset_sources": [],
+  "dataset_sources": [
+    "aldisued/rogii-seqfeats-artifacts"
+  ],
   "competition_sources": [
     "rogii-wellbore-geology-prediction"
   ],

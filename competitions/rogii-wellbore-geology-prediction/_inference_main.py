@@ -106,7 +106,82 @@ def _xy(df: "_pd.DataFrame"):
 _PF_MULT = "2"
 
 
+def _load_artifact():
+    """Find + load the offline-trained model artifact (the redesign: build only test feats in-kernel).
+    Globs the attached dataset; returns the artifact dict, or None to trigger the train-in-kernel fallback."""
+    cands = sorted(_glob.glob("/kaggle/input/**/rogii_artifacts_*.joblib", recursive=True))
+    if not cands:
+        local = _Path(__file__).parent / "outputs"
+        cands = [str(p) for p in sorted(local.glob("rogii_artifacts_*.joblib"))]
+    if not cands:
+        print("No artifact found -> train-in-kernel fallback", flush=True)
+        return None
+    try:
+        import joblib
+
+        print(f"Loading artifact: {cands[0]}", flush=True)
+        return joblib.load(cands[0])
+    except Exception as _e:
+        print(f"Artifact load failed ({_e}) -> train-in-kernel fallback", flush=True)
+        return None
+
+
+def _main_from_artifact(art) -> None:
+    """Fast path: offline-trained models loaded; build ONLY test features in-kernel, then predict.
+    Cuts kernel runtime from hours to ~minutes and makes mult4/mult8 deployable (the expensive
+    train-set mult-PF build happened offline). Replicates _main_fallback's test path exactly:
+    average each family's fold models, then NNLS-blend; no consensus blend (ensemble-only)."""
+    _os.environ["ROGII_PF_MULT"] = str(art["pf_mult"])  # build test feats at the SAME mult the models saw
+    print(
+        f"ARTIFACT load-path: pf_mult={art['pf_mult']} families={art['families']} "
+        f"weights={art['weights']} oof={art.get('oof_post_ps_rmse')}",
+        flush=True,
+    )
+    data = _find_data_dir()
+    train_dir, test_dir = data / "train", data / "test"
+    out_dir = _Path("/kaggle/working") if _os.path.isdir("/kaggle/working") else _Path(__file__).parent / "outputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"data={data}  out={out_dir}  debug={_DEBUG}", flush=True)
+
+    _warmup_numba()
+    hw_paths = sorted(train_dir.glob("*__horizontal_well.csv"))
+    train_wids = [p.stem.replace("__horizontal_well", "") for p in hw_paths]
+    if _DEBUG:
+        train_wids = train_wids[:12]
+        hw_paths = [train_dir / f"{w}__horizontal_well.csv" for w in train_wids]
+    # Imputers fit on train wells (cheap, ~seconds) — NOT the expensive feature build.
+    print(f"Fitting imputers on {len(train_wids)} wells...", flush=True)
+    FI = FormationPlaneKNN(train_wids, train_dir)
+    DI = DenseANCCImputer(train_wids, train_dir)
+
+    test_paths = sorted(test_dir.glob("*__horizontal_well.csv"))
+    print(f"Building TEST features ONLY ({len(test_paths)} wells, pf_mult={art['pf_mult']})...", flush=True)
+    df_te = build_dataset(test_paths, False, FI, DI, n_jobs=4)
+    feat = art["feat_cols"]
+    Xte = df_te.reindex(columns=feat).to_numpy(_np.float32)
+    Xte[~_np.isfinite(Xte)] = _np.nan
+    print(f"test: {len(df_te):,} rows x {len(feat)} feat", flush=True)
+
+    fold_models, families, weights = art["fold_models"], art["families"], art["weights"]
+    te_pred = {f: _np.mean([m.predict(Xte) for m in fold_models[f]], axis=0) for f in families}
+    if weights is not None:
+        drift = sum(w * te_pred[f] for f, w in zip(families, weights))
+    else:
+        drift = te_pred[families[0]]
+    sub = _pd.DataFrame({"id": df_te["id"], "tvt": df_te["last_known_tvt"].to_numpy() + drift})
+    sub.to_csv(out_dir / "submission.csv", index=False)
+    print(f"Wrote {len(sub):,} rows -> {out_dir / 'submission.csv'}", flush=True)
+
+
 def _main() -> None:
+    art = _load_artifact()
+    if art is not None:
+        _main_from_artifact(art)
+        return
+    _main_fallback()
+
+
+def _main_fallback() -> None:
     _os.environ.setdefault("ROGII_PF_MULT", _PF_MULT)
     print(f"ROGII_PF_MULT={_os.environ.get('ROGII_PF_MULT')}", flush=True)
     data = _find_data_dir()
