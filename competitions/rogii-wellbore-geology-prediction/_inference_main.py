@@ -90,14 +90,25 @@ def _xy(df: "_pd.DataFrame"):
         if c not in _NON_FEATURES
         and not c.startswith("div_")
         and c not in _KIN_COLS
-        and not c.startswith("gr_dwt")  # DWT neutral (v35); drop to match the v36 ens-d6 195-feat config
+        and not c.startswith("gr_dwt")  # DWT neutral (v35)
+        and c != "ncc_tw_delta"  # typewell-NCC neutral (v39); drop to match the 195-feat training config
     ]
     X = df[feat].to_numpy(_np.float32)
     X[~_np.isfinite(X)] = _np.nan
     return feat, X
 
 
+# v42: PF particle multiplier — the variance-reduced pf_ancc (the strongest feature) is a
+# real OOF win that scales monotonically (mult1 10.50 > mult2 10.39 > mult4 10.27, all 3-seed,
+# leakage-audited). The kernel MUST set this (run_pf_ancc reads ROGII_PF_MULT) or it ships the
+# mult1 loser. Kaggle code limit ~9h; mult4 in-kernel build est ~2h (4× the ~12min mult1 build)
+# + CPU GBDT ~1h -> fits. Start conservative (2) to validate the path+budget, then raise to 4.
+_PF_MULT = "2"
+
+
 def _main() -> None:
+    _os.environ.setdefault("ROGII_PF_MULT", _PF_MULT)
+    print(f"ROGII_PF_MULT={_os.environ.get('ROGII_PF_MULT')}", flush=True)
     data = _find_data_dir()
     train_dir, test_dir = data / "train", data / "test"
     out_dir = _Path("/kaggle/working") if _os.path.isdir("/kaggle/working") else _Path(__file__).parent / "outputs"
