@@ -19,6 +19,7 @@ Target is drift = TVT - last_anchor_tvt (post-PS rows only).
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -97,6 +98,15 @@ def _resamp(pos, aux, w, N, rp, rv):
         np2[j] = pos[ci] + rp * np.random.randn()
         na[j] = aux[ci] + rv * np.random.randn()
     return np2, na
+
+
+@njit(cache=True)
+def _seed_pf(s):
+    # Seed numba's per-thread RNG so the particle filter is DETERMINISTIC per well.
+    # The PF was unseeded -> every cache rebuild drew a different pf_ancc (~0.09 OOF
+    # swing, dominating all marginal levers) AND every in-kernel submission was a random
+    # draw. Per-well seed (hash of well_id) -> reproducible pf_ancc across builds + stable LB.
+    np.random.seed(s)
 
 
 @njit(cache=True)
@@ -362,7 +372,9 @@ def beam_search(gr_h, tw_tvt, tw_gr, start_tvt, bs, mc, es, r):
     return tw_tvt[path].astype(np.float32)
 
 
-def run_pf_ancc(hw, tw_tvt, tw_gr, N=ANCC_N):
+def run_pf_ancc(hw, tw_tvt, tw_gr, N=ANCC_N, seed=0):
+    if seed:
+        _seed_pf(int(seed) & 0x7FFFFFFF)
     gs = _gr_sig(hw, tw_tvt, tw_gr)
     kn = hw[hw["TVT_input"].notna()]
     ev = hw[hw["TVT_input"].isna()]
@@ -398,7 +410,9 @@ def run_pf_ancc(hw, tw_tvt, tw_gr, N=ANCC_N):
     return pts.astype(np.float32), std.astype(np.float32)
 
 
-def run_pf_z(hw, tw_tvt, tw_gr, N=PF_N):
+def run_pf_z(hw, tw_tvt, tw_gr, N=PF_N, seed=0):
+    if seed:
+        _seed_pf(int(seed) & 0x7FFFFFFF)
     gs = _gr_sig(hw, tw_tvt, tw_gr)
     tw_s = pd.Series(tw_gr).rolling(PF_GR_WIN, center=True, min_periods=1).mean().values.astype(np.float32)
     kna = hw[hw["TVT_input"].notna()]
@@ -745,10 +759,13 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
     if len(tw_tvt) < 3:
         return None
 
-    pf_a, std_a = run_pf_ancc(hw, tw_tvt, tw_gr)
+    # Per-well deterministic PF seed (hash of wid) -> reproducible pf_ancc across cache
+    # rebuilds + stable in-kernel submissions (the unseeded PF caused ~0.09 OOF swings).
+    pf_seed = int.from_bytes(hashlib.md5(wid.encode()).digest()[:4], "little") | 1
+    pf_a, std_a = run_pf_ancc(hw, tw_tvt, tw_gr, seed=pf_seed)
     if len(pf_a) == 0:
         return None
-    pf_z, std_z = run_pf_z(hw, tw_tvt, tw_gr)
+    pf_z, std_z = run_pf_z(hw, tw_tvt, tw_gr, seed=pf_seed + 1)
     pf_use = pf_a.astype(np.float32)
     std_use = std_a.astype(np.float32)
     has_z = len(pf_z) == len(pf_a) and not np.any(np.isnan(pf_z))
