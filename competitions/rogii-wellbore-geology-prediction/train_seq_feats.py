@@ -153,10 +153,12 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb
         # early_stopping=False per ref: its internal validation_fraction is a random split
         # that leaks per-well GR patterns; GroupKFold OOF is the true stopping criterion.
         m = HistGradientBoostingRegressor(
-            max_iter=50 if debug else 1500,
+            max_iter=50 if debug else 5000,  # ref hgb_p (R11→8.905): 5000
             learning_rate=0.05,
-            max_leaf_nodes=31,
-            l2_regularization=1.0,
+            max_depth=6,  # ref: max_depth=6
+            max_leaf_nodes=31,  # HGB default (ref leaves default)
+            l2_regularization=0.1,  # ref: 0.1
+            max_features=0.7,  # ref: 0.7
             early_stopping=False,
             random_state=seed,
         )
@@ -283,6 +285,14 @@ def main() -> None:
         "(v24 = LB 10.105). When set, KEGO_METRIC reports the BLENDED post-PS RMSE.",
     )
     p.add_argument("--blend-w", type=float, default=0.10, help="PF-blend weight (v24 used 0.10).")
+    p.add_argument(
+        "--sg",
+        action="store_true",
+        help="Per-well Savitzky-Golay smoothing of the (MD-ordered) blended drift OOF — the 8.905 ref's "
+        "final post-proc. When set, KEGO_METRIC reports the SG-smoothed post-PS RMSE.",
+    )
+    p.add_argument("--sg-window", type=int, default=17, help="SG window length (ref: 17).")
+    p.add_argument("--sg-poly", type=int, default=3, help="SG polyorder (ref: 3).")
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -407,6 +417,24 @@ def main() -> None:
         else:
             print(f"KEGO_METRIC post_ps_rmse {post_ps_rmse:.6f}", flush=True)
             log_metric_live("post_ps_rmse", post_ps_rmse)
+        if args.sg:
+            # 8.905 ref's final post-proc: per-well Savitzky-Golay smooth of the MD-ordered blended
+            # drift. df rows are MD-ordered within each well (build_well processes eval rows in MD order).
+            from scipy.signal import savgol_filter
+
+            w_sg, p_sg = args.sg_window, args.sg_poly
+            sg = oof_final.copy()
+            for wid in np.unique(groups):
+                gm = groups == wid
+                chunk = oof_final[gm]
+                if len(chunk) >= w_sg:
+                    sg[gm] = savgol_filter(chunk, w_sg, p_sg)
+            sg_rmse = float(np.sqrt(mean_squared_error(y[mask], sg[mask])))
+            print(f"OOF post-PS RMSE (SG w={w_sg} p={p_sg}) = {sg_rmse:.4f} ft (raw {post_ps_rmse:.4f})", flush=True)
+            print(f"KEGO_METRIC post_ps_rmse {sg_rmse:.6f}", flush=True)  # SG is the config under test
+            print(f"KEGO_METRIC raw_post_ps_rmse {post_ps_rmse:.6f}", flush=True)
+            log_metric_live("post_ps_rmse", sg_rmse)
+            log_metric_live("raw_post_ps_rmse", post_ps_rmse)
         log_metric_live("progress_pct", 95)
 
         # Ship the trained models for the inference kernel (load offline-trained models, build only test
