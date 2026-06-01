@@ -20,6 +20,7 @@ Target is drift = TVT - last_anchor_tvt (post-PS rows only).
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import numpy as np
@@ -373,6 +374,7 @@ def beam_search(gr_h, tw_tvt, tw_gr, start_tvt, bs, mc, es, r):
 
 
 def run_pf_ancc(hw, tw_tvt, tw_gr, N=ANCC_N, seed=0):
+    N = int(N * float(os.environ.get("ROGII_PF_MULT", "1")))  # variance-reduce pf_ancc (more particles)
     if seed:
         _seed_pf(int(seed) & 0x7FFFFFFF)
     gs = _gr_sig(hw, tw_tvt, tw_gr)
@@ -411,6 +413,7 @@ def run_pf_ancc(hw, tw_tvt, tw_gr, N=ANCC_N, seed=0):
 
 
 def run_pf_z(hw, tw_tvt, tw_gr, N=PF_N, seed=0):
+    N = int(N * float(os.environ.get("ROGII_PF_MULT", "1")))  # variance-reduce pf_z (more particles)
     if seed:
         _seed_pf(int(seed) & 0x7FFFFFFF)
     gs = _gr_sig(hw, tw_tvt, tw_gr)

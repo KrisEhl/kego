@@ -77,9 +77,13 @@ def _feat_version() -> str:
 def _build_or_load(hw_paths, is_train, FI, DI, n_wells):
     """Build features, or load a cached parquet. The build is deterministic given the
     feature code + well set, so caching lets local runs skip the ~12min rebuild and just
-    vary model/seed. Key = feature-code hash + train/test + well count (debug-safe)."""
+    vary model/seed. Key = feature-code hash + train/test + well count (debug-safe).
+    ROGII_PF_MULT changes the FEATURES (pf particle count) so it MUST be in the key,
+    else a pf-mult build collides with the mult=1 cache."""
     tag = "train" if is_train else "test"
-    cache = CACHE_DIR / f"{tag}_{_feat_version()}_{n_wells}w.parquet"
+    _mult = os.environ.get("ROGII_PF_MULT", "1")
+    _sfx = "" if _mult in ("1", "1.0") else f"_pfm{_mult}"
+    cache = CACHE_DIR / f"{tag}_{_feat_version()}_{n_wells}w{_sfx}.parquet"
     if cache.exists():
         print(f"Loading cached features: {cache.name}", flush=True)
         return pd.read_parquet(cache)
@@ -258,6 +262,12 @@ def main() -> None:
         "--lgb-leaves", type=int, default=None, help="LGB num_leaves (CLI forwards to cluster; env does not)."
     )
     p.add_argument("--lgb-trees", type=int, default=None, help="LGB n_estimators.")
+    p.add_argument(
+        "--pf-mult",
+        type=float,
+        default=None,
+        help="Particle-filter particle multiplier (variance-reduce pf_ancc/pf_z).",
+    )
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
@@ -268,6 +278,8 @@ def main() -> None:
         os.environ["ROGII_LGB_LEAVES"] = str(args.lgb_leaves)
     if args.lgb_trees is not None:
         os.environ["ROGII_LGB_TREES"] = str(args.lgb_trees)
+    if args.pf_mult is not None:
+        os.environ["ROGII_PF_MULT"] = str(args.pf_mult)
 
     device = _detect_device()
     print(f"KEGO_PARAM model {args.model}", flush=True)
