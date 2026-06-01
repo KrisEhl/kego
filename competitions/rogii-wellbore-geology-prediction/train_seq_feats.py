@@ -254,12 +254,20 @@ def main() -> None:
         help="XGB max_depth override. CLI arg forwards to the cluster (unlike ROGII_XGB_DEPTH env, which does NOT — see v34 no-op).",
     )
     p.add_argument("--cb-depth", type=int, default=7, help="CatBoost depth (default 7).")
+    p.add_argument(
+        "--lgb-leaves", type=int, default=None, help="LGB num_leaves (CLI forwards to cluster; env does not)."
+    )
+    p.add_argument("--lgb-trees", type=int, default=None, help="LGB n_estimators.")
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
 
     # CLI depth flag forwards to the cluster; set the env _xgb() reads so the override propagates.
     if args.xgb_depth is not None:
         os.environ["ROGII_XGB_DEPTH"] = str(args.xgb_depth)
+    if args.lgb_leaves is not None:
+        os.environ["ROGII_LGB_LEAVES"] = str(args.lgb_leaves)
+    if args.lgb_trees is not None:
+        os.environ["ROGII_LGB_TREES"] = str(args.lgb_trees)
 
     device = _detect_device()
     print(f"KEGO_PARAM model {args.model}", flush=True)
