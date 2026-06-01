@@ -243,6 +243,11 @@ def main() -> None:
         help="Drop gr_dwt_* (DWT-GR) columns (A/B the wavelet features on one build).",
     )
     p.add_argument(
+        "--no-ncctw",
+        action="store_true",
+        help="Drop ncc_tw_delta (typewell-template NCC) (A/B the feature on one build).",
+    )
+    p.add_argument(
         "--xgb-depth",
         type=int,
         default=None,
@@ -302,6 +307,9 @@ def main() -> None:
     if args.no_dwt:
         feat_cols = [c for c in feat_cols if not c.startswith("gr_dwt")]
         print(f"KEGO_PARAM no_dwt 1  ({len(feat_cols)} cols)", flush=True)
+    if args.no_ncctw:
+        feat_cols = [c for c in feat_cols if c != "ncc_tw_delta"]
+        print(f"KEGO_PARAM no_ncctw 1  ({len(feat_cols)} cols)", flush=True)
     # Vectorised inf/-inf -> nan ONCE on the float32 array. pandas .replace() over
     # 3.78M x 198 (~750M cells) is single-threaded and was the low-CPU bottleneck.
     X = df[feat_cols].to_numpy(np.float32)

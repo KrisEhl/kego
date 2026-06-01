@@ -773,6 +773,18 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
     sc_trust = float(np.clip(len(kn) / 200.0, 0.0, 0.6))
     hyb_ref = (1 - sc_trust) * beam_ref + sc_trust * sc_ens
 
+    # Typewell-template NCC (8.905 ref's GR_ncc_delta): match the eval GR against the
+    # TYPEWELL GR (vs our anchor-template multi_scale_ncc above), restricted to +/-150 ft
+    # of last_tvt so the search stays in the reservoir band (the global-range NCC was a
+    # documented dead-end as a predictor; here it's a GBM feature). Leak-free: typewell +
+    # own GR only. Reuses multi_scale_ncc with the sliced typewell as the template.
+    tw_mask = (tw_tvt >= last_tvt - 150.0) & (tw_tvt <= last_tvt + 150.0)
+    if int(tw_mask.sum()) >= 60:
+        _, ncc_tw_ens = multi_scale_ncc(tw_gr[tw_mask], tw_tvt[tw_mask], hgr, hws=(8, 15, 25), stride=3)
+        ncc_tw_delta = (ncc_tw_ens - last_tvt).astype(np.float32)
+    else:
+        ncc_tw_delta = np.zeros(len(hgr), np.float32)
+
     tw_at_k = np.interp(ktvt, tw_tvt, tw_gr).astype(np.float32)
     a_cal, b_cal = affine_cal(kgr, tw_at_k)
     kmd = kn["MD"].to_numpy(np.float32)
@@ -1011,6 +1023,7 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
         "gr_dwt_approx5": gr_dwt_approx5,
         "gr_dwt_detail_energy": gr_dwt_detail,
         "gr_dwt_residual": gr_dwt_residual,
+        "ncc_tw_delta": ncc_tw_delta,
         "gr_vs_tw_anc": hgr - np.float32(np.interp(last_tvt, tw_tvt, tw_gr)),
         "gr_vs_slp_all": hgr - np.interp(slp_b_all, tw_tvt, tw_gr).astype(np.float32),
         **{f"tda{int(o)}": hgr - np.float32(np.interp(last_tvt + o, tw_tvt, tw_gr)) for o in ANCH_OFFS},
