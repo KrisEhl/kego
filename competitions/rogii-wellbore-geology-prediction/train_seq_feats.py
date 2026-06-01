@@ -106,6 +106,21 @@ def _detect_device() -> str:
         return "cpu"
 
 
+def _n_gpus() -> int:
+    """Number of visible CUDA GPUs (for spreading ensemble members across both 3090s)."""
+    try:
+        import torch
+
+        return max(1, torch.cuda.device_count())
+    except Exception:
+        return 1
+
+
+# GPU-capable families — get a specific cuda:N device under --parallel-fit; others run on CPU.
+# (LightGBM-pip + HGB are CPU-only on this cluster — see README/memory.)
+_GPU_FAMILIES = {"xgboost", "catboost"}
+
+
 def _xgb(seed: int, debug: bool, device: str):
     from xgboost import XGBRegressor
 
@@ -170,6 +185,9 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb
     if model_name == "catboost":
         from catboost import CatBoostRegressor
 
+        # device may be "cuda", "cuda:1" (under --parallel-fit) or "cpu".
+        on_gpu = device.startswith("cuda")
+        gpu_id = device.split(":")[1] if ":" in device else "0"
         m = CatBoostRegressor(
             iterations=n,
             learning_rate=0.03,
@@ -178,7 +196,8 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb
             loss_function="RMSE",
             od_type="Iter",
             od_wait=80,
-            task_type="GPU" if device == "cuda" else "CPU",
+            task_type="GPU" if on_gpu else "CPU",
+            devices=gpu_id if on_gpu else None,
             random_seed=seed,
             verbose=False,
         )
@@ -268,6 +287,14 @@ def main() -> None:
         type=int,
         default=5000,
         help="HGB max_iter (default 5000 = ref). HGB is CPU-only; lower (~2000) for ~2.5x speed since lr=0.05 plateaus early.",
+    )
+    p.add_argument(
+        "--parallel-fit",
+        action="store_true",
+        help="Fit a fold's ensemble members CONCURRENTLY: xgboost→cuda:0, catboost→cuda:1, hgb→all CPUs — "
+        "so both 3090s AND all cores are busy at once (vs serial: 1 GPU then idle while HGB grinds). "
+        "Threads share the read-only feature matrix (no data copy); HGB serialized across folds (1 at a "
+        "time → gets all OMP threads, no oversubscription). Verify both GPUs light up on a smoke fold first.",
     )
     p.add_argument(
         "--lgb-leaves", type=int, default=None, help="LGB num_leaves (CLI forwards to cluster; env does not)."
@@ -383,22 +410,51 @@ def main() -> None:
     families = args.ensemble_members.split(",") if args.model == "ensemble" else [args.model]
     oof = {f: np.full(len(df), np.nan) for f in families}
     fold_models = {f: [] for f in families}
+    n_gpus = _n_gpus()
+    if args.parallel_fit:
+        print(f"KEGO_PARAM parallel_fit 1  (n_gpus={n_gpus})", flush=True)
+
+    def _fit_family(fam, dev, Xtr, ytr, Xva, yva, fnum):
+        # Fit one family on a given device + return its val predictions. Runs in a worker
+        # thread under --parallel-fit; xgb/cb/hgb each release the GIL during the heavy fit,
+        # so xgb (cuda:0) + cb (cuda:1) + hgb (CPU/OMP) genuinely overlap.
+        m = _fit_one(
+            fam,
+            args.seed,
+            args.debug,
+            dev,
+            Xtr,
+            ytr,
+            Xva,
+            yva,
+            fold_num=fnum,
+            cb_depth=args.cb_depth,
+            hgb_max_iter=args.hgb_max_iter,
+        )
+        return fam, m, m.predict(Xva)
+
     for fold_num, (tr, va) in enumerated:
-        for f in families:
-            m = _fit_one(
-                f,
-                args.seed,
-                args.debug,
-                device,
-                X[tr],
-                y[tr],
-                X[va],
-                y[va],
-                fold_num=fold_num,
-                cb_depth=args.cb_depth,
-                hgb_max_iter=args.hgb_max_iter,
-            )
-            oof[f][va] = m.predict(X[va])
+        # Materialise this fold's slices ONCE (read-only, shared across the family threads);
+        # only one fold's slices are live at a time → bounded memory.
+        Xtr, ytr, Xva, yva = X[tr], y[tr], X[va], y[va]
+        if args.parallel_fit and len(families) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            # Spread GPU-capable members across both 3090s (xgb→cuda:0, cb→cuda:1); CPU-only →cpu.
+            devs, grank = {}, 0
+            for f in families:
+                if f in _GPU_FAMILIES and device.startswith("cuda"):
+                    devs[f] = f"cuda:{grank % n_gpus}"
+                    grank += 1
+                else:
+                    devs[f] = device if f in _GPU_FAMILIES else "cpu"
+            with ThreadPoolExecutor(max_workers=len(families)) as ex:
+                futs = [ex.submit(_fit_family, f, devs[f], Xtr, ytr, Xva, yva, fold_num) for f in families]
+                results = [fut.result() for fut in futs]
+        else:
+            results = [_fit_family(f, device, Xtr, ytr, Xva, yva, fold_num) for f in families]
+        for f, m, pred in results:
+            oof[f][va] = pred
             fold_models[f].append(m)
             fr = float(np.sqrt(mean_squared_error(y[va], oof[f][va])))
             print(f"Fold {fold_num} [{f}] post_ps_rmse={fr:.4f}", flush=True)
