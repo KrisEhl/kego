@@ -242,6 +242,14 @@ def _fit_one(model_name, seed, debug, device, Xtr, ytr, Xva, yva, fold_num=0, cb
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--folds", type=int, default=4)
+    p.add_argument(
+        "--cv-folds",
+        type=int,
+        default=None,
+        help="Override the number of GroupKFold splits. Use this on the CLUSTER instead of --folds: "
+        "the `kego run` CLI intercepts --folds as its fan-out spec (injects --fold N), so --folds never "
+        "reaches the script. --cv-folds is unknown to kego → passes through. NOT a feature-cache key.",
+    )
     p.add_argument("--fold", type=int, default=None)
     p.add_argument(
         "--all-folds",
@@ -331,6 +339,10 @@ def main() -> None:
     p.add_argument("--sg-poly", type=int, default=3, help="SG polyorder (ref: 3).")
     p.add_argument("--debug", action="store_true")
     args = p.parse_args()
+
+    # --cv-folds overrides the GroupKFold split count (use on cluster; --folds is eaten by `kego run`).
+    if args.cv_folds is not None:
+        args.folds = args.cv_folds
 
     # CLI depth flag forwards to the cluster; set the env _xgb() reads so the override propagates.
     if args.xgb_depth is not None:
