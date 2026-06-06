@@ -22,18 +22,6 @@ line-length = 79
 
 [tool.uv.sources]
 kego = { workspace = true }
-torch = [{ index = "pytorch-cu130" , marker = "sys_platform == 'linux'"}, { index = "pytorch-cpu" , marker = "sys_platform != 'linux'"}]
-torchvision = [{ index = "pytorch-cu130" , marker = "sys_platform == 'linux'"}, { index = "pytorch-cpu" , marker = "sys_platform != 'linux'"}]
 
 [dependency-groups]
 dev = ["pre-commit>=4.1.0"]
-
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
