@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -7,7 +8,12 @@ import polars as pl
 
 
 class FeatureStore:
-    def __init__(self, path=None, user=os.environ["USER"], hostname=os.environ["HOSTNAME"]) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        user: str | None = os.environ["USER"],
+        hostname: str | None = os.environ["HOSTNAME"],
+    ) -> None:
         pass
 
     def load(self) -> pl.DataFrame: ...

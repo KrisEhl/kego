@@ -1,18 +1,42 @@
-## kego
+# kego
 
-## Setup
-To make VScode see poetry kernels use:
-```bash
-poetry config virtualenvs.in-project true
+## Pipeline
+Usage idea:
+
+Run training run by explicitly specifying params:
 ```
-Make sure notebook use newest version of code by adding
-```python
-%load_ext autoreload
-%autoreload 2
+kego run --model catboost --params learning_rate:0.01 --hp-tune --hp-params max_trees::0:9:log
 ```
-## Competition specific
-### Ariel
-- `.env`
-```bash
-FOLDER_COMPETITION=${PATH_EFOLDER}/ariel-data-challenge-2024/
+
+Run training run from config file.
+```
+kego run --config catboostv1
+
+```
+Run training run with overwritten config file params:
+```
+kego run --config catboostv1 --params featureset:v1
+```
+
+Following configuration files exist:
+```yaml
+# config.yaml
+competition:
+  - name: ragii
+  - deadline: 2026.07.01
+
+featurestore:
+  - paths: [kristian@omarchyd, ~/]
+
+models:
+  - name: xgboost
+    params:
+      metric: auc
+
+  - name: resnet
+    params:
+      n_layers: 10
+
+ensemble:
+  method: ridge_stack
 ```
