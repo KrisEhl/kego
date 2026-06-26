@@ -1,19 +1,12 @@
 [project]
-name = "rogii-wellbore-geology-prediction"
+name = "pokemon-tcg-ai-battle"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "kego",
-    "torch>=2.0",
-    "xgboost>=2.0",
-    "catboost>=1.2",
-    "numba>=0.59",
 ]
 
 [tool.uv.sources]
 kego = { workspace = true }
-
-[tool.ruff]
-line-length = 120

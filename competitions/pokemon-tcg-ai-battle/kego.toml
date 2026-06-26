@@ -1,0 +1,9 @@
+[competition]
+slug = "pokemon-tcg-ai-battle"
+kaggle_user = "aldisued"
+enable_gpu = false
+submit_file = "submission.tar.gz"
+pattern = "simulation"
+inference_notebook = ""
+checkpoint_dir = "outputs"
+primary_metric = "win_rate"

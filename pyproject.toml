@@ -13,10 +13,11 @@ dependencies = [
     "matplotlib>=3.7.0",
     "tqdm>=4.66.4",
     "polars>=1.31.0",
+    "omegaconf>=2.3.0",
 ]
 
 [project.scripts]
-kego = "kego.cli:main"
+kego = "kego.pipeline.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -67,6 +68,7 @@ ignore = [
     "SIM101",  # merged isinstance — less readable when checking different categories
     "SIM103",  # return condition directly — if/else sometimes clearer
     "B027",    # empty __init__ in ABC without abstract — intentional pattern
+    "S603",    # allow subprocess calls with variable arguments
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -105,6 +107,7 @@ members = [
     "competitions/ai-mathematical-olympiad-progress-prize-3",
     "competitions/birdclef-2026",
     "competitions/rogii-wellbore-geology-prediction",
+    "competitions/pokemon-tcg-ai-battle",
 ]
 
 # Torch index resolution applies workspace-wide so every member resolves

@@ -86,7 +86,7 @@ class GPUMonitor:
     def _poll(self) -> None:
         while not self._stop.is_set():
             try:
-                result = subprocess.run(  # noqa: S603
+                result = subprocess.run(
                     [  # noqa: S607
                         "nvidia-smi",
                         f"--id={self.device_index}",

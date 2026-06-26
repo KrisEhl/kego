@@ -94,7 +94,7 @@ def wellbore_zone(horizontal: pd.DataFrame) -> pd.Series:
     # Determine ordering empirically from medians.
     surf_order = sorted(
         GEOLOGY_LAYERS,
-        key=lambda l: horizontal[l].median(),
+        key=lambda layer: horizontal[layer].median(),
         reverse=True,  # shallowest (largest Z) first
     )
     for i, top_layer in enumerate(surf_order):
@@ -119,7 +119,7 @@ def plot_well(well_id: str, horizontal: pd.DataFrame, typewell: pd.DataFrame, ax
         # Determine top->bottom ordering by median depth (shallowest first = largest Z value)
         surf_order = sorted(
             GEOLOGY_LAYERS,
-            key=lambda l: horizontal[l].median(),
+            key=lambda layer: horizontal[layer].median(),
             reverse=True,
         )
         for i in range(len(surf_order) - 1):
