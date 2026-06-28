@@ -115,7 +115,21 @@ class Pipeline:
             print(f"Connecting to Ray Dashboard at {dashboard_address}...")
             client = _make_ray_job_client(dashboard_address)
 
-            # 2. Submit the job
+            # 2. Ship the LOCAL repo with the job so the cluster's own git checkout
+            # is never used: the job's cwd is the uploaded working_dir, and both
+            # `import kego` and `import cg` resolve there (cwd wins over the editable
+            # .pth on sys.path). A stale cluster checkout therefore cannot matter.
+            from pathlib import Path
+
+            # Repo root = nearest ancestor of this file containing .git (the repo
+            # whose kego/ + cg/ we want to upload), independent of the caller's cwd.
+            repo_root = next(
+                (p for p in Path(__file__).resolve().parents if (p / ".git").exists()),
+                Path.cwd(),
+            )
+
+            # Output is written to an absolute cluster path so it survives the
+            # discarded working_dir and can be scp'd back.
             remote_output = f"/home/kristian/projects/kego/{output_path}" if output_path else None
             cmd = f"/home/kristian/projects/kego/.venv/bin/python -m kego.pipeline.cli train-agent --task {self.task.name}"
             if epochs:
@@ -123,28 +137,31 @@ class Pipeline:
             if remote_output:
                 cmd += f" --output {remote_output}"
 
-            print(f"Submitting job to Ray cluster: {cmd}")
-            # Exclude other competitions and large folders to keep upload lightweight
+            print(f"Submitting job to Ray cluster (working_dir={repo_root}): {cmd}")
+            # Keep the upload light: drop VCS/venv/data/caches and every competition
+            # except the one being trained. cg/ (the game engine) is kept.
             excludes = [
                 ".git",
                 ".venv",
                 "**/__pycache__",
+                "**/*.tar.gz",
                 "data",
                 "model_data",
                 "outputs",
                 "tmp",
+                "mlruns",
             ]
-            try:
-                from pathlib import Path
+            comps = repo_root / "competitions"
+            if comps.is_dir():
+                excludes += [
+                    f"competitions/{p.name}" for p in comps.iterdir() if p.is_dir() and p.name != self.task.name
+                ]
 
-                for p in Path("competitions").iterdir():
-                    if p.is_dir() and p.name != self.task.name:
-                        excludes.append(f"competitions/{p.name}")
-            except Exception:  # noqa: S110
-                pass
-
-            # Ray job submission requires a working_dir to package local changes.
-            job_id = client.submit_job(entrypoint=cmd, runtime_env={"working_dir": ".", "excludes": excludes})
+            # working_dir = repo root → packages kego/, cg/, and the active competition.
+            job_id = client.submit_job(
+                entrypoint=cmd,
+                runtime_env={"working_dir": str(repo_root), "excludes": excludes},
+            )
             print(f"Job '{job_id}' submitted successfully. Tailing logs...")
 
             # 3. Tail logs and wait for completion
