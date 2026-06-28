@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -14,8 +15,18 @@ from kego.pipeline.battle import load_agent, load_deck, locate_cg_dir, run_game
 cg_parent = locate_cg_dir()
 sys.path.insert(0, str(cg_parent))
 
+# Point the MCTS agent at the trained checkpoint (override with MCTS_MODEL_PATH).
+MCTS_MODEL_PATH = os.environ.get("MCTS_MODEL_PATH", str(comp_dir / "outputs" / "mcts.pth"))
+os.environ["MCTS_MODEL_PATH"] = MCTS_MODEL_PATH
+os.environ["MCTS_DECK"] = str(comp_dir / "decks" / "abomasnow.csv")
+print(f"MCTS checkpoint: {MCTS_MODEL_PATH} (exists: {os.path.exists(MCTS_MODEL_PATH)})")
+
 # 2. Define the agents and their decks
 agents = {
+    "MCTS (trained)": {
+        "file": "competitions/pokemon-tcg-ai-battle/agents/mcts.py",
+        "deck": "competitions/pokemon-tcg-ai-battle/decks/abomasnow.csv",
+    },
     "Random": {
         "file": "competitions/pokemon-tcg-ai-battle/agents/random_agent.py",
         "deck": "data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission/deck.csv",

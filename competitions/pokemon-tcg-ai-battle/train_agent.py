@@ -1,6 +1,8 @@
 import math
+import os
 import random
 import sys
+import time
 from pathlib import Path
 
 import torch
@@ -11,7 +13,8 @@ repo_root = comp_dir.parent.parent
 sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(comp_dir))
 
-from kego.pipeline.battle import load_deck, locate_cg_dir
+from kego.pipeline.battle import load_agent, load_deck, locate_cg_dir
+from kego.timing import DEFAULT, Timings, timed, timer
 
 cg_parent = locate_cg_dir()
 sys.path.insert(0, str(cg_parent))
@@ -80,15 +83,75 @@ class Node:
 
 def eval_nn_train(sv_enc: SparseVector, sv_dec: SparseVector, model: MyModel) -> tuple[float, list[float]]:
     device = next(model.parameters()).device
-    value, policy = model(
-        torch.tensor(sv_enc.index, dtype=torch.int32, device=device),
-        torch.tensor(sv_enc.value, dtype=torch.float32, device=device),
-        torch.tensor(sv_enc.offset, dtype=torch.int32, device=device),
-        torch.tensor(sv_dec.index, dtype=torch.int32, device=device),
-        torch.tensor(sv_dec.value, dtype=torch.float32, device=device),
-        torch.tensor(sv_dec.offset, dtype=torch.int32, device=device),
-    )
-    return (value.tolist()[0][0], policy.tolist()[0])
+    with timer("nn_eval"):
+        value, policy = model(
+            torch.tensor(sv_enc.index, dtype=torch.int32, device=device),
+            torch.tensor(sv_enc.value, dtype=torch.float32, device=device),
+            torch.tensor(sv_enc.offset, dtype=torch.int32, device=device),
+            torch.tensor(sv_dec.index, dtype=torch.int32, device=device),
+            torch.tensor(sv_dec.value, dtype=torch.float32, device=device),
+            torch.tensor(sv_dec.offset, dtype=torch.int32, device=device),
+        )
+        return (value.tolist()[0][0], policy.tolist()[0])
+
+
+def _enumerate_actions(obs) -> list[list[int]]:
+    """Enumerate up to 64 candidate action-index combinations for an observation."""
+    actions = []
+    indices = list(range(obs.select.maxCount))
+    for _ in range(64):
+        actions.append(indices.copy())
+        for i in range(len(indices)):
+            index = len(indices) - i - 1
+            if indices[index] < len(obs.select.option) - i - 1:
+                indices[index] += 1
+                for j in range(index + 1, len(indices)):
+                    indices[j] = indices[j - 1] + 1
+                break
+        else:
+            break
+    return actions
+
+
+def eval_nn_batch(svs: list[tuple[SparseVector, SparseVector]], model: MyModel) -> list[tuple[float, list[float]]]:
+    """Evaluate B (encoder, decoder) inputs in a single forward; return per-item (value, policy).
+
+    Mirrors the training-loop batching: each decoder is padded to 64 words so the
+    model returns out_enc (B, 1) and out_dec (B, 64); the policy is sliced back to
+    each item's real action count.
+    """
+    device = next(model.parameters()).device
+    n_actions = [len(sv_dec.offset) for _, sv_dec in svs]
+    enc, dec = LearnInput(), LearnInput()
+    for sv_enc, sv_dec in svs:
+        enc.add(sv_enc)
+        dec.add(sv_dec)
+        for _ in range(64 - len(sv_dec.offset)):
+            dec.offset.append(len(dec.index))
+    b = len(svs)
+    with timer("nn_eval"):
+        out_enc, out_dec = model(
+            torch.tensor(enc.index, dtype=torch.int32, device=device),
+            torch.tensor(enc.value, dtype=torch.float32, device=device),
+            torch.tensor(enc.offset, dtype=torch.int32, device=device),
+            torch.tensor(dec.index, dtype=torch.int32, device=device),
+            torch.tensor(dec.value, dtype=torch.float32, device=device),
+            torch.tensor(dec.offset, dtype=torch.int32, device=device),
+        )
+        values = out_enc.view(b, -1).tolist()
+        policies = out_dec.view(b, -1).tolist()
+    return [(values[i][0], policies[i][: n_actions[i]]) for i in range(b)]
+
+
+def _build_children(node: Node, actions: list[list[int]], policy: list[float]) -> None:
+    """Attach softmax-weighted children to a node from a policy vector."""
+    total_prob = 0.0
+    for i in range(len(policy)):
+        p = math.exp(policy[i] * 10.0)
+        node.children.append(Child(actions[i], p))
+        total_prob += p
+    for c in node.children:
+        c.prob /= total_prob
 
 
 def create_node_train(
@@ -108,20 +171,7 @@ def create_node_train(
         node.backprop(node.value)
         sample = None
     else:
-        actions = []
-        indices = list(range(obs.select.maxCount))
-        for _ in range(64):
-            actions.append(indices.copy())
-            for i in range(len(indices)):
-                index = len(indices) - i - 1
-                if indices[index] < len(obs.select.option) - i - 1:
-                    indices[index] += 1
-                    for j in range(index + 1, len(indices)):
-                        indices[j] = indices[j - 1] + 1
-                    break
-            else:
-                break
-
+        actions = _enumerate_actions(obs)
         sv_enc = get_encoder_input(obs, your_deck)
         sv_dec = get_decoder_input(obs, actions)
         value, policy = eval_nn_train(sv_enc, sv_dec, model)
@@ -130,19 +180,45 @@ def create_node_train(
             v = -v
         node.value = v
         node.backprop(v)
-
-        total_prob = 0.0
-        for i in range(len(policy)):
-            p = math.exp(policy[i] * 10.0)
-            node.children.append(Child(actions[i], p))
-            total_prob += p
-        for c in node.children:
-            c.prob /= total_prob
+        _build_children(node, actions, policy)
         sample = LearnSample(value, policy, sv_enc, sv_dec)
 
     return node, sample
 
 
+def _expand_batch(root: Node, search_count: int, your_index: int, your_deck: list[int], model: MyModel) -> None:
+    """One batched MCTS wave: materialize the top-``search_count`` root children and
+    evaluate them all in a single forward (faithful for shallow search, where the
+    sequential loop mostly expands root's children anyway). Toggled by MCTS_BATCHED=1.
+    """
+    order = sorted(range(len(root.children)), key=lambda i: root.children[i].prob, reverse=True)
+    pending = []  # (node, actions, sv_enc, sv_dec, leaf_state)
+    for ci in order[:search_count]:
+        child = root.children[ci]
+        with timer("engine"):
+            search_state = search_step(root.state.searchId, child.select)
+        node = Node(root, search_state)
+        child.node = node
+        leaf = search_state.observation.current
+        if leaf.result >= 0:
+            node.value = 0.0 if leaf.result == 2 else (1.0 if leaf.result == your_index else -1.0)
+            node.backprop(node.value)
+        else:
+            actions = _enumerate_actions(search_state.observation)
+            sv_enc = get_encoder_input(search_state.observation, your_deck)
+            sv_dec = get_decoder_input(search_state.observation, actions)
+            pending.append((node, actions, sv_enc, sv_dec, leaf))
+    if pending:
+        for (node, actions, _se, _sd, leaf), (value, policy) in zip(
+            pending, eval_nn_batch([(p[2], p[3]) for p in pending], model)
+        ):
+            v = -value if leaf.yourIndex != your_index else value
+            node.value = v
+            node.backprop(v)
+            _build_children(node, actions, policy)
+
+
+@timed("mcts_move")
 def mcts_train_agent(
     obs_dict: dict, your_deck: list[int], model: MyModel, search_count=10
 ) -> tuple[list[int], LearnSample]:
@@ -151,19 +227,24 @@ def mcts_train_agent(
     state = obs.current
     active = state.players[1 - your_index].active
 
-    search_state = search_begin(
-        obs,
-        your_deck=random.sample(your_deck, state.players[your_index].deckCount),
-        your_prize=random.sample(your_deck, len(state.players[your_index].prize)),
-        opponent_deck=[1072] * state.players[1 - your_index].deckCount,
-        opponent_prize=[1] * len(state.players[1 - your_index].prize),
-        opponent_hand=[1] * state.players[1 - your_index].handCount,
-        opponent_active=[1072] if len(active) > 0 and active[0] is None else [],
-    )
+    with timer("engine"):
+        search_state = search_begin(
+            obs,
+            your_deck=random.sample(your_deck, state.players[your_index].deckCount),
+            your_prize=random.sample(your_deck, len(state.players[your_index].prize)),
+            opponent_deck=[1072] * state.players[1 - your_index].deckCount,
+            opponent_prize=[1] * len(state.players[1 - your_index].prize),
+            opponent_hand=[1] * state.players[1 - your_index].handCount,
+            opponent_active=[1072] if len(active) > 0 and active[0] is None else [],
+        )
 
     root, sample = create_node_train(None, search_state, your_index, your_deck, model)
 
-    for _ in range(search_count):
+    do_batched = os.environ.get("MCTS_BATCHED") == "1" and bool(root.children)
+    if do_batched:
+        _expand_batch(root, search_count, your_index, your_deck, model)
+
+    for _ in range(0 if do_batched else search_count):
         current = root
         while True:
             value = -1e9
@@ -183,7 +264,8 @@ def mcts_train_agent(
                     next_node = child
 
             if next_node.node is None:
-                search_state = search_step(current.state.searchId, next_node.select)
+                with timer("engine"):
+                    search_state = search_step(current.state.searchId, next_node.select)
                 next_node.node, _ = create_node_train(current, search_state, your_index, your_deck, model)
                 break
             else:
@@ -194,13 +276,19 @@ def mcts_train_agent(
 
     max_child = None
     max_visit = -1
+    best_value = -1e9
     min_value = 10.0
     for child in root.children:
         if child.node is not None:
-            if max_visit < child.node.visit:
+            v = child.node.total / child.node.visit
+            if do_batched:
+                # batched leaves all have visit==1, so rank by value, not visit count
+                if best_value < v:
+                    best_value = v
+                    max_child = child
+            elif max_visit < child.node.visit:
                 max_child = child
                 max_visit = child.node.visit
-            v = child.node.total / child.node.visit
             if min_value > v:
                 min_value = v
 
@@ -223,13 +311,171 @@ def random_agent(obs_dict: dict) -> list[int]:
     return random.sample(list(range(len(obs.select.option))), obs.select.maxCount)
 
 
-def run_training_loop(iterations=3, eval_games=5, self_play_games=10, output_path="outputs/mcts_model.pth"):
+MODEL_ARGS = (128, 2, 256, 1, 1)
+
+
+def _worker_init():
+    # Batch-1 inference gains nothing from intra-op threads; N workers each spawning
+    # a full torch thread pool oversubscribes the cores and collapses throughput.
+    torch.set_num_threads(1)
+
+
+def _transport_state(model: MyModel) -> dict:
+    """State dict as numpy arrays. Tensors sent through the worker pool use torch's
+    fd-based shared memory (one fd per tensor), which exhausts file descriptors over
+    many pool.map calls ('Too many open files'). numpy pickles to plain bytes instead.
+    """
+    return {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
+
+
+def _build_cpu_model(state_dict) -> MyModel:
+    model = MyModel(*MODEL_ARGS)
+    model.load_state_dict({k: torch.from_numpy(v) for k, v in state_dict.items()})
+    model.eval()
+    return model
+
+
+_AGENT_CACHE: dict = {}  # per-worker cache of loaded rule-agent modules
+
+
+def _opp_agent_fn(opp_file: str):
+    """Load (and cache per worker process) a rule agent's move function."""
+    if opp_file not in _AGENT_CACHE:
+        _AGENT_CACHE[opp_file] = load_agent(opp_file)
+    return _AGENT_CACHE[opp_file].agent
+
+
+def _split_counts(total: int, parts: int) -> list[int]:
+    """Split ``total`` items into at most ``parts`` near-equal positive chunks."""
+    parts = max(1, min(parts, total))
+    base, rem = divmod(total, parts)
+    return [base + (1 if i < rem else 0) for i in range(parts)]
+
+
+def _play_selfplay_game(sample_deck: list[int], model: MyModel, search_count: int) -> list[LearnSample]:
+    obs, _ = battle_start(sample_deck, sample_deck)
+    samples: list[list[LearnSample]] = [[], []]
+    while obs["current"]["result"] < 0:
+        selected, sample = mcts_train_agent(obs, sample_deck, model, search_count)
+        samples[obs["current"]["yourIndex"]].append(sample)
+        obs = battle_select(selected)
+    battle_finish()
+
+    result = obs["current"]["result"]
+    out: list[LearnSample] = []
+    for i in range(2):
+        LAMBDA = 0.9
+        value = 1.0 if i == result else -1.0
+        for sample in reversed(samples[i]):
+            label = (value + sample.value) * 0.5
+            value = value * LAMBDA + sample.value * (1.0 - LAMBDA)
+            sample.value = label
+            out.append(sample)
+    return out
+
+
+def _play_vs_game(mcts_deck, model, opp_deck, opp_move, your_index: int, search_count: int) -> int:
+    """One game: MCTS(model, mcts_deck) at ``your_index`` vs ``opp_move`` at the other
+    seat (each side gets its own deck). Returns 0=win, 1=loss, 2=draw for the MCTS side.
+    """
+    deck0, deck1 = (mcts_deck, opp_deck) if your_index == 0 else (opp_deck, mcts_deck)
+    obs, _ = battle_start(deck0, deck1)
+    while obs["current"]["result"] < 0:
+        if obs["current"]["yourIndex"] == your_index:
+            selected, _ = mcts_train_agent(obs, mcts_deck, model, search_count)
+        else:
+            selected = opp_move(obs)
+        obs = battle_select(selected)
+    battle_finish()
+    res_val = obs["current"]["result"]
+    if res_val == 2:
+        return 2
+    return 0 if res_val == your_index else 1
+
+
+def _selfplay_worker(payload):
+    """Worker entry: play ``n_games`` self-play games on a fresh CPU model.
+
+    Returns ``(samples, component_timings)`` so the parent can merge per-worker
+    timing (nn_eval / engine / mcts_move) back into the run-level report.
+    """
+    state_dict, n_games, sample_deck, seed, search_count = payload
+    random.seed(seed)
+    DEFAULT.reset()
+    model = _build_cpu_model(state_dict)
+    out: list[LearnSample] = []
+    with torch.no_grad():
+        for _ in range(n_games):
+            out.extend(_play_selfplay_game(sample_deck, model, search_count))
+    return out, DEFAULT.as_dict()
+
+
+def _gauntlet_worker(payload):
+    """Play eval games of the current MCTS model vs ONE opponent; return ([W,L,D], timings).
+
+    opponent kinds: 'random' (random_agent), 'rule' (a loaded agent module's agent fn),
+    'self' (MCTS driven by the best checkpoint so far).
+    """
+    cur_state, kind, opp_file, opp_deck_path, mcts_deck, game_indices, seed, search_count, best_state = payload
+    random.seed(seed)
+    DEFAULT.reset()
+    model = _build_cpu_model(cur_state)
+
+    if kind == "random":
+        opp_move, opp_deck = random_agent, mcts_deck
+    elif kind == "rule":
+        opp_move, opp_deck = _opp_agent_fn(opp_file), load_deck(opp_deck_path)
+    elif kind == "self":
+        best_model = _build_cpu_model(best_state)
+
+        def opp_move(o):
+            return mcts_train_agent(o, mcts_deck, best_model, search_count)[0]
+
+        opp_deck = mcts_deck
+    else:
+        raise ValueError(f"unknown opponent kind: {kind}")
+
+    res = [0, 0, 0]
+    with torch.no_grad():
+        for gi in game_indices:
+            res[_play_vs_game(mcts_deck, model, opp_deck, opp_move, gi % 2, search_count)] += 1
+    return res, DEFAULT.as_dict()
+
+
+def run_training_loop(
+    iterations=3,
+    eval_games=5,
+    self_play_games=10,
+    output_path="outputs/mcts_model.pth",
+    num_workers: int | None = None,
+    eval_every: int = 1,
+    search_count: int = 10,
+    batched: bool = False,
+    eval_opponents: list[str] | None = None,
+):
+    import multiprocessing as mp
+
+    # Opponents to evaluate the trained agent against. "random" = floor, "rule:<name>"
+    # = a heuristic meta-deck agent (agents/<name>.py + decks/<name>.csv), "self" = the
+    # best checkpoint so far. The best-checkpoint gate uses the rule-agent average.
+    if eval_opponents is None:
+        eval_opponents = ["random", "rule:zacian", "rule:abomasnow", "rule:dragapult", "rule:lucario", "self"]
+
+    # Toggle batched MCTS leaf evaluation; set before the worker pool so spawned
+    # children (and the inline path) inherit it via the environment.
+    os.environ["MCTS_BATCHED"] = "1" if batched else "0"
+
     deck_path = comp_dir / "decks" / "abomasnow.csv"
     sample_deck = load_deck(str(deck_path))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Starting MCTS self-play training on {device}...")
-    model = MyModel(128, 2, 256, 1, 1).to(device)
+    if num_workers is None:
+        num_workers = max(1, (os.cpu_count() or 2) - 2)
+    # No point spawning more workers than games in a phase.
+    num_workers = max(1, min(num_workers, max(self_play_games, eval_games, 1)))
+    print(f"Starting MCTS self-play training on {device} | rollout workers: {num_workers}...")
+
+    model = MyModel(*MODEL_ARGS).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
     loss_fn_enc = torch.nn.HuberLoss(delta=0.2)
     loss_fn_dec = torch.nn.HuberLoss(reduction="none", delta=0.1)
@@ -237,115 +483,174 @@ def run_training_loop(iterations=3, eval_games=5, self_play_games=10, output_pat
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    for iter_idx in range(iterations):
-        print(f"\n--- Iteration {iter_idx + 1}/{iterations} ---")
+    run_timings = Timings()  # cumulative wall-clock per phase + merged worker components
 
-        # 1. Evaluation against Random Agent
-        if eval_games > 0:
-            model.eval()
-            print("Evaluating model against Random baseline...")
-            results = [0, 0, 0]  # win, lose, draw
-            with torch.no_grad():
-                for game_idx in range(eval_games):
-                    obs, start_data = battle_start(sample_deck, sample_deck)
-                    your_index = game_idx % 2
-                    while True:
-                        if obs["current"]["result"] >= 0:
-                            break
-                        if obs["current"]["yourIndex"] == your_index:
-                            selected, _ = mcts_train_agent(obs, sample_deck, model)
-                        else:
-                            selected = random_agent(obs)
-                        obs = battle_select(selected)
-                    battle_finish()
+    # Self-play/eval run on CPU-only worker processes: batch-1 inference is far cheaper
+    # on CPU than via per-call GPU launches/syncs, and the games are independent. The
+    # cg engine keeps global state, so each game needs its own process (not thread).
+    # Training (batched) still runs on the GPU in this process.
+    pool = None
+    if num_workers > 1:
+        # Spawned children must be able to import this module + agents/ + cg, and must
+        # run single-threaded torch (see _worker_init) to avoid core oversubscription.
+        os.environ["PYTHONPATH"] = os.pathsep.join(
+            p for p in [str(comp_dir), str(repo_root), os.environ.get("PYTHONPATH", "")] if p
+        )
+        os.environ.setdefault("OMP_NUM_THREADS", "1")
+        pool = mp.get_context("spawn").Pool(num_workers, initializer=_worker_init)
 
-                    res_val = obs["current"]["result"]
-                    if res_val == 2:
-                        results[2] += 1
-                    elif res_val == your_index:
-                        results[0] += 1
-                    else:
-                        results[1] += 1
-            win_rate = (100 * results[0]) // max(1, results[0] + results[1])
-            print(f"Evaluation Win Rate: {win_rate}% (Wins: {results[0]}, Losses: {results[1]}, Draws: {results[2]})")
+    def _run(worker, payloads):
+        return pool.map(worker, payloads) if pool is not None else [worker(p) for p in payloads]
 
-        # 2. Self-Play data collection
-        sample_list = []
-        model.eval()
-        print(f"Collecting self-play training data ({self_play_games} games)...")
-        with torch.no_grad():
-            for game_idx in range(self_play_games):
-                obs, _ = battle_start(sample_deck, sample_deck)
-                samples = [[], []]
-                while True:
-                    if obs["current"]["result"] >= 0:
-                        break
-                    selected, sample = mcts_train_agent(obs, sample_deck, model)
-                    samples[obs["current"]["yourIndex"]].append(sample)
-                    obs = battle_select(selected)
-                battle_finish()
+    opponent_specs = []  # (kind, name, agent_file, deck_file)
+    for spec in eval_opponents:
+        if spec in ("random", "self"):
+            opponent_specs.append((spec, spec, None, None))
+        elif spec.startswith("rule:"):
+            nm = spec.split(":", 1)[1]
+            opponent_specs.append(
+                ("rule", nm, str(comp_dir / "agents" / f"{nm}.py"), str(comp_dir / "decks" / f"{nm}.csv"))
+            )
 
-                for i in range(2):
-                    LAMBDA = 0.9
-                    value = 1.0 if i == obs["current"]["result"] else -1.0
-                    for sample in reversed(samples[i]):
-                        label = (value + sample.value) * 0.5
-                        value = value * LAMBDA + sample.value * (1.0 - LAMBDA)
-                        sample.value = label
-                        sample_list.append(sample)
+    def _gauntlet(cur_state, best_state, seed_base):
+        """Eval the current model vs each opponent; return {name: win_rate%} and the
+        rule-agent average (the metric the best checkpoint is gated on)."""
+        results = {}
+        for kind, name, opp_file, opp_deck_path in opponent_specs:
+            if kind == "self" and best_state is None:
+                continue
+            payloads = [
+                (cur_state, kind, opp_file, opp_deck_path, sample_deck, chunk, seed_base + i, search_count, best_state)
+                for i, chunk in enumerate(list(range(eval_games))[w::num_workers] for w in range(num_workers))
+                if chunk
+            ]
+            with run_timings.timer("eval"):
+                returns = _run(_gauntlet_worker, payloads)
+            agg = [0, 0, 0]
+            for triple, tdict in returns:
+                for k in range(3):
+                    agg[k] += triple[k]
+                run_timings.merge(tdict)
+            wr = (100 * agg[0]) // max(1, agg[0] + agg[1])
+            results[name] = wr
+            print(f"  vs {name:<10} {wr:3d}%  (W{agg[0]} L{agg[1]} D{agg[2]})")
+        rule_wrs = [wr for nm, wr in results.items() if nm not in ("random", "self")]
+        avg = sum(rule_wrs) / len(rule_wrs) if rule_wrs else float(results.get("random", 0))
+        print(f"  gauntlet avg (rule agents): {avg:.1f}%")
+        return results, avg
 
-        # 3. Model updates / Training
-        print(f"Training on {len(sample_list)} collected samples...")
-        model.train()
-        random.shuffle(sample_list)
-        BATCH_SIZE = min(128, len(sample_list))
-        if BATCH_SIZE > 0:
-            batch_count = len(sample_list) // BATCH_SIZE
-            for batch_idx in range(batch_count):
-                input_enc = LearnInput()
-                input_dec = LearnInput()
-                mask = []
-                label_enc = []
-                label_dec = []
-                start = BATCH_SIZE * batch_idx
-                for j in range(start, start + BATCH_SIZE):
-                    sample = sample_list[j]
-                    input_enc.add(sample.sv_enc)
-                    input_dec.add(sample.sv_dec)
-                    label_enc.append(sample.value)
-                    label_dec.extend(sample.policy)
-                    for _ in range(len(sample.policy)):
-                        mask.append(1.0)
-                    for _ in range(64 - len(sample.policy)):
-                        mask.append(0.0)
-                        label_dec.append(0.0)
-                        input_dec.offset.append(len(input_dec.index))
+    best_score = -1.0  # best rule-agent average; output_file always holds this checkpoint
+    best_state = None
 
-                mask_tensor = torch.tensor(mask, dtype=torch.float32, device=device).view(BATCH_SIZE, -1)
-                label_tensor_enc = torch.tensor(label_enc, dtype=torch.float32, device=device).view(BATCH_SIZE, -1)
-                label_tensor_dec = torch.tensor(label_dec, dtype=torch.float32, device=device).view(BATCH_SIZE, -1)
+    try:
+        for iter_idx in range(iterations):
+            print(f"\n--- Iteration {iter_idx + 1}/{iterations} ---")
+            cpu_state = _transport_state(model)
 
-                optimizer.zero_grad()
-                out_enc, out_dec = model(
-                    torch.tensor(input_enc.index, dtype=torch.int32, device=device),
-                    torch.tensor(input_enc.value, dtype=torch.float32, device=device),
-                    torch.tensor(input_enc.offset, dtype=torch.int32, device=device),
-                    torch.tensor(input_dec.index, dtype=torch.int32, device=device),
-                    torch.tensor(input_dec.value, dtype=torch.float32, device=device),
-                    torch.tensor(input_dec.offset, dtype=torch.int32, device=device),
+            # 1. Evaluation gauntlet (throttled by eval_every); keep the best by rule avg.
+            if eval_games > 0 and iter_idx % eval_every == 0:
+                print("Evaluating gauntlet (random / rule agents / self)...")
+                _, avg = _gauntlet(cpu_state, best_state, 7000 + iter_idx * 131)
+                if avg > best_score:
+                    best_score = avg
+                    best_state = cpu_state
+                    torch.save(model.state_dict(), str(output_file))
+                    print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
+
+            # 2. Self-Play data collection (parallel across workers)
+            print(f"Collecting self-play training data ({self_play_games} games)...")
+            payloads = [
+                (cpu_state, c, sample_deck, iter_idx * 9973 + i, search_count)
+                for i, c in enumerate(_split_counts(self_play_games, num_workers))
+                if c
+            ]
+            with run_timings.timer("self_play"):
+                returns = _run(_selfplay_worker, payloads)
+            sample_list = []
+            for samples, tdict in returns:
+                sample_list.extend(samples)
+                run_timings.merge(tdict)
+
+            # 3. Model updates / Training
+            print(f"Training on {len(sample_list)} collected samples...")
+            _train_start = time.perf_counter()
+            model.train()
+            random.shuffle(sample_list)
+            BATCH_SIZE = min(128, len(sample_list))
+            if BATCH_SIZE > 0:
+                batch_count = len(sample_list) // BATCH_SIZE
+                sum_enc = sum_dec = 0.0
+                for batch_idx in range(batch_count):
+                    input_enc = LearnInput()
+                    input_dec = LearnInput()
+                    mask = []
+                    label_enc = []
+                    label_dec = []
+                    start = BATCH_SIZE * batch_idx
+                    for j in range(start, start + BATCH_SIZE):
+                        sample = sample_list[j]
+                        input_enc.add(sample.sv_enc)
+                        input_dec.add(sample.sv_dec)
+                        label_enc.append(sample.value)
+                        label_dec.extend(sample.policy)
+                        for _ in range(len(sample.policy)):
+                            mask.append(1.0)
+                        for _ in range(64 - len(sample.policy)):
+                            mask.append(0.0)
+                            label_dec.append(0.0)
+                            input_dec.offset.append(len(input_dec.index))
+
+                    mask_tensor = torch.tensor(mask, dtype=torch.float32, device=device).view(BATCH_SIZE, -1)
+                    label_tensor_enc = torch.tensor(label_enc, dtype=torch.float32, device=device).view(BATCH_SIZE, -1)
+                    label_tensor_dec = torch.tensor(label_dec, dtype=torch.float32, device=device).view(BATCH_SIZE, -1)
+
+                    optimizer.zero_grad()
+                    out_enc, out_dec = model(
+                        torch.tensor(input_enc.index, dtype=torch.int32, device=device),
+                        torch.tensor(input_enc.value, dtype=torch.float32, device=device),
+                        torch.tensor(input_enc.offset, dtype=torch.int32, device=device),
+                        torch.tensor(input_dec.index, dtype=torch.int32, device=device),
+                        torch.tensor(input_dec.value, dtype=torch.float32, device=device),
+                        torch.tensor(input_dec.offset, dtype=torch.int32, device=device),
+                    )
+
+                    loss_enc = loss_fn_enc(out_enc, label_tensor_enc)
+                    loss_dec = loss_fn_dec(out_dec, label_tensor_dec)
+                    loss_dec = (loss_dec * mask_tensor).sum() / float(BATCH_SIZE)
+                    loss = loss_enc + loss_dec
+
+                    sum_enc += float(loss_enc.detach())
+                    sum_dec += float(loss_dec.detach())
+                    loss.backward()
+                    optimizer.step()
+                print(
+                    f"Training epoch complete. avg loss: value={sum_enc / batch_count:.4f} "
+                    f"policy={sum_dec / batch_count:.4f}"
                 )
+            run_timings.add("train", time.perf_counter() - _train_start)
+            run_timings.report(f"timings @ iter {iter_idx + 1}")
 
-                loss_enc = loss_fn_enc(out_enc, label_tensor_enc)
-                loss_dec = loss_fn_dec(out_dec, label_tensor_dec)
-                loss_dec = (loss_dec * mask_tensor).sum() / float(BATCH_SIZE)
-                loss = loss_enc + loss_dec
+        # Final gauntlet on the fully-trained model (pool still open); keep it if best.
+        if eval_games > 0:
+            print("\nFinal gauntlet on trained model...")
+            final_state = _transport_state(model)
+            _, avg = _gauntlet(final_state, best_state, 999983)
+            if avg > best_score:
+                best_score = avg
+                best_state = final_state
+                torch.save(model.state_dict(), str(output_file))
+                print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
 
-                loss.backward()
-                optimizer.step()
-            print("Training epoch complete.")
+    # If we never evaluated (eval_games=0), fall back to saving the final model.
+    if best_score < 0:
+        torch.save(model.state_dict(), str(output_file))
 
-    torch.save(model.state_dict(), str(output_file))
-    print(f"Model successfully trained and saved to {output_file}")
+    run_timings.report("timings @ final")
+    print(f"Done. Best rule-agent avg: {best_score:.1f}%. Model saved to {output_file}")
 
 
 if __name__ == "__main__":

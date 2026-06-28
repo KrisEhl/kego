@@ -32,6 +32,7 @@ class PokemonTCGAIBattleTask:
 
     def train(self, config, epochs: int | None = None, output_path: str | None = None, **kwargs) -> None:
         import importlib.util
+        import sys
         from pathlib import Path
 
         comp_dir = Path(__file__).resolve().parent
@@ -39,6 +40,9 @@ class PokemonTCGAIBattleTask:
 
         spec = importlib.util.spec_from_file_location("train_agent", str(train_file))
         train_module = importlib.util.module_from_spec(spec)
+        # Register before exec so multiprocessing (spawn) can pickle the module's
+        # worker functions by reference (pickle resolves them via sys.modules).
+        sys.modules["train_agent"] = train_module
         spec.loader.exec_module(train_module)
 
         # Load custom config if present in kego.toml
@@ -49,6 +53,11 @@ class PokemonTCGAIBattleTask:
 
         eval_games = 5
         self_play_games = 10
+        num_workers = None
+        eval_every = 1
+        search_count = 10
+        batched = False
+        eval_opponents = None
         config_path = comp_dir / "kego.toml"
         if config_path.exists():
             try:
@@ -57,6 +66,11 @@ class PokemonTCGAIBattleTask:
                 train_cfg = toml_data.get("train", {})
                 eval_games = train_cfg.get("eval_games", eval_games)
                 self_play_games = train_cfg.get("self_play_games", self_play_games)
+                num_workers = train_cfg.get("num_workers", num_workers)
+                eval_every = train_cfg.get("eval_every", eval_every)
+                search_count = train_cfg.get("search_count", search_count)
+                batched = train_cfg.get("batched", batched)
+                eval_opponents = train_cfg.get("eval_opponents", eval_opponents)
             except Exception:
                 pass
 
@@ -64,7 +78,15 @@ class PokemonTCGAIBattleTask:
         out_path = output_path if output_path is not None else "outputs/mcts_model.pth"
 
         train_module.run_training_loop(
-            iterations=iterations, eval_games=eval_games, self_play_games=self_play_games, output_path=out_path
+            iterations=iterations,
+            eval_games=eval_games,
+            self_play_games=self_play_games,
+            output_path=out_path,
+            num_workers=num_workers,
+            eval_every=eval_every,
+            search_count=search_count,
+            batched=batched,
+            eval_opponents=eval_opponents,
         )
 
     def make_submission(self, ids: np.ndarray, preds: np.ndarray) -> Path:

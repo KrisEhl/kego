@@ -11,5 +11,12 @@ agent_file = "agents/abomasnow.py"
 deck_file = "decks/abomasnow.csv"
 
 [train]
-eval_games = 5
-self_play_games = 10
+eval_games = 20         # games PER opponent; the gate is the avg over 4 rule agents (~80 games => reliable)
+self_play_games = 30    # >= worker count so all cores stay busy + games load-balance
+eval_every = 5          # run the eval gauntlet every N iterations
+search_count = 10       # MCTS simulations per move (lower = faster, shallower)
+batched = true          # batch a move's leaf evals into ONE forward (~1.7x faster wall, ~4x less NN compute; search is breadth-only/shallower)
+num_workers = 16        # cap below cores: 22 workers oversaturated memory bw (nn_eval 1.23->1.88ms)
+# Opponents: "random" floor, "rule:<name>" heuristic meta deck, "self" = best checkpoint.
+# Best checkpoint is gated on the average win-rate vs the rule agents.
+eval_opponents = ["random", "rule:zacian", "rule:abomasnow", "rule:dragapult", "rule:lucario", "self"]

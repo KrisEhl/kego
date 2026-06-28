@@ -378,8 +378,11 @@ class MCTSTransformerAgent(BaseAgent):
         if model_path and os.path.exists(model_path):
             try:
                 self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-            except Exception:
-                pass
+                print(f"[MCTSTransformerAgent] loaded weights from {model_path}", flush=True)
+            except Exception as e:
+                print(f"[MCTSTransformerAgent] FAILED to load {model_path}: {e}", flush=True)
+        elif model_path:
+            print(f"[MCTSTransformerAgent] model_path not found: {model_path} (untrained weights)", flush=True)
 
         self.SEARCH_COUNT = 10
 
@@ -459,5 +462,10 @@ _agent_instance = None
 def agent(obs_dict: dict) -> list[int]:
     global _agent_instance
     if _agent_instance is None:
-        _agent_instance = MCTSTransformerAgent()
+        # MCTS_MODEL_PATH / MCTS_DECK let callers (e.g. the tournament) plug in a
+        # trained checkpoint + deck; unset => untrained weights on the default deck.
+        _agent_instance = MCTSTransformerAgent(
+            deck=os.environ.get("MCTS_DECK", "abomasnow.csv"),
+            model_path=os.environ.get("MCTS_MODEL_PATH"),
+        )
     return _agent_instance.act(obs_dict)
