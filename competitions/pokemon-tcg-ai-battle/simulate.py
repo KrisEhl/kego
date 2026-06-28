@@ -1,31 +1,52 @@
 """Local Pokémon TCG AI Battle Simulation Runner.
 
-Runs a local match between two agents (or the same agent against itself)
+Runs a local match between the configured agent and itself
 using the underlying compiled game engine library.
 """
 
 import sys
 from pathlib import Path
 
-# Add competition directory and sample submission directory to path
+# Resolve competition directory and add repository root to path
 comp_dir = Path(__file__).parent.resolve()
-sys.path.insert(0, str(comp_dir))
+repo_root = comp_dir.parent.parent
+sys.path.insert(0, str(repo_root))
 
-# Find the cg library (either in local folder or data folder)
-cg_dir = Path("data/pokemon/pokemon-tcg-ai-battle/sample_submission")
-if not cg_dir.exists():
-    cg_dir = Path("/home/kristian/projects/kego/data/pokemon/pokemon-tcg-ai-battle/sample_submission")
-sys.path.insert(0, str(cg_dir))
+from kego.pipeline.battle import load_agent, load_deck, locate_cg_dir
 
-import main as agent_mod  # imports main.py from the competition folder
+# Setup CG path
+cg_parent = locate_cg_dir()
+sys.path.insert(0, str(cg_parent))
+
 from cg.api import to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
 
 
 def run_match():
-    print("Loading decks...")
-    deck0 = agent_mod.read_deck_csv()
-    deck1 = agent_mod.read_deck_csv()
+    # Load settings from kego.toml
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore
+
+    config_path = comp_dir / "kego.toml"
+    with open(config_path, "rb") as f:
+        cfg = tomllib.load(f)
+    comp_cfg = cfg.get("competition", {})
+    agent_file = comp_cfg.get("agent_file")
+    deck_file = comp_cfg.get("deck_file")
+
+    if not agent_file or not deck_file:
+        raise ValueError("agent_file and deck_file must be explicitly set in kego.toml")
+
+    agent_path = comp_dir / agent_file
+    deck_path = comp_dir / deck_file
+
+    print(f"Loading agent {agent_path.name}...")
+    agent_mod = load_agent(str(agent_path))
+    print(f"Loading deck {deck_path.name}...")
+    deck0 = load_deck(str(deck_path))
+    deck1 = load_deck(str(deck_path))
 
     print("Starting local simulation battle...")
     obs_dict, start_data = battle_start(deck0, deck1)

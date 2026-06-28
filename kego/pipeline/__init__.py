@@ -15,6 +15,9 @@ behind :class:`~kego.pipeline.executor.Executor`; persistence behind
 
 from __future__ import annotations
 
+import importlib
+from typing import Any
+
 from kego.pipeline.config import (
     EnsembleConfig,
     EvaluatorConfig,
@@ -27,23 +30,38 @@ from kego.pipeline.config import (
     expand_grid,
     load_config,
 )
-from kego.pipeline.ensemble import AutoEnsembler, EnsembleResult
-from kego.pipeline.evaluate import Evaluator
-from kego.pipeline.executor import Executor, RayExecutor, SerialExecutor, get_executor
-from kego.pipeline.features import FeatureSets, FeatureStore
-from kego.pipeline.model import Model, get_model_class, register_model
-from kego.pipeline.predictions import (
-    CachingPredictionStore,
-    LocalCacheStore,
-    MlflowPredictionStore,
-    Predictions,
-    PredictionStore,
-)
-from kego.pipeline.runner import Pipeline, RunOutcome
-from kego.pipeline.submit import Submitter
-from kego.pipeline.task import RawData, Task, get_task, register_task
-from kego.pipeline.train import TrainContext, Trainer
-from kego.pipeline.tune import HPSpace, Tuner
+
+# Map of public API names to their submodules for lazy loading.
+_SUBMODULES = {
+    "AutoEnsembler": "ensemble",
+    "EnsembleResult": "ensemble",
+    "Evaluator": "evaluate",
+    "Executor": "executor",
+    "RayExecutor": "executor",
+    "SerialExecutor": "executor",
+    "get_executor": "executor",
+    "FeatureSets": "features",
+    "FeatureStore": "features",
+    "Model": "model",
+    "get_model_class": "model",
+    "register_model": "model",
+    "CachingPredictionStore": "predictions",
+    "LocalCacheStore": "predictions",
+    "MlflowPredictionStore": "predictions",
+    "Predictions": "predictions",
+    "PredictionStore": "predictions",
+    "Pipeline": "runner",
+    "RunOutcome": "runner",
+    "Submitter": "submit",
+    "RawData": "task",
+    "Task": "task",
+    "get_task": "task",
+    "register_task": "task",
+    "TrainContext": "train",
+    "Trainer": "train",
+    "Tuner": "tune",
+    "HPSpace": "tune",
+}
 
 __all__ = [
     "AutoEnsembler",
@@ -85,3 +103,11 @@ __all__ = [
     "register_model",
     "register_task",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in _SUBMODULES:
+        submodule = _SUBMODULES[name]
+        module = importlib.import_module(f"kego.pipeline.{submodule}")
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

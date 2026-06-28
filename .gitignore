@@ -3,6 +3,7 @@
 *.json
 !**/kernel-metadata.json
 *.csv
+!competitions/**/decks/*.csv
 *.xml
 data/*
 *.npy
@@ -51,3 +52,13 @@ quantum_docs.md
 .worktrees/
 competitions/rogii-wellbore-geology-prediction/inference_kernel.py
 competitions/rogii-wellbore-geology-prediction/outputs/feat_cache/
+
+# scratch / temp working dirs
+tmp/
+
+# build artifacts (submission archives)
+*.tar.gz
+
+# competition-provided game engine (downloaded with competition data, 5.3MB of
+# compiled .dll/.so/.dylib binaries) — re-obtained per machine, not vendored
+cg/

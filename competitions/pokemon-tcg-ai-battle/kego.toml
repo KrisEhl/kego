@@ -7,3 +7,9 @@ pattern = "simulation"
 inference_notebook = ""
 checkpoint_dir = "outputs"
 primary_metric = "win_rate"
+agent_file = "agents/abomasnow.py"
+deck_file = "decks/abomasnow.csv"
+
+[train]
+eval_games = 5
+self_play_games = 10

@@ -82,6 +82,15 @@ class SubmitConfig:
 
 
 @dataclass(frozen=True)
+class BattleConfig:
+    agent1: str | None = None
+    agent2: str | None = None
+    games: int = 10
+    deck1: str | None = None
+    deck2: str | None = None
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
     """Top-level config: everything needed for a full run."""
 
@@ -93,6 +102,7 @@ class PipelineConfig:
     ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     submit: SubmitConfig = field(default_factory=SubmitConfig)
+    battle: BattleConfig = field(default_factory=BattleConfig)
     # Behavioural toggles.
     tune: bool = False
     do_ensemble: bool = True
@@ -227,6 +237,16 @@ def _hydrate_config(d: dict[str, Any]) -> PipelineConfig:
         poll_timeout_s=s.get("poll_timeout_s", 300),
     )
 
+    # Hydrate battle
+    b = d.get("battle", {})
+    battle = BattleConfig(
+        agent1=b.get("agent1"),
+        agent2=b.get("agent2"),
+        games=b.get("games", 10),
+        deck1=b.get("deck1"),
+        deck2=b.get("deck2"),
+    )
+
     return PipelineConfig(
         task=d.get("task", ""),
         data_version=d.get("data_version", DATA_VERSION),
@@ -236,13 +256,14 @@ def _hydrate_config(d: dict[str, Any]) -> PipelineConfig:
         ensemble=ensemble,
         evaluator=evaluator,
         submit=submit,
+        battle=battle,
         tune=d.get("tune", False),
         do_ensemble=d.get("do_ensemble", True),
         force=d.get("force", False),
     )
 
 
-def load_config(path: str, overrides: list[str] | None = None) -> PipelineConfig:
+def load_config(path: str, overrides: list[str] | None = None, task_name: str | None = None) -> PipelineConfig:
     """Load YAML into a :class:`PipelineConfig`, applying CLI dotlist overrides.
 
     Resolution order: built-in defaults < YAML file < ``overrides``.
@@ -252,13 +273,36 @@ def load_config(path: str, overrides: list[str] | None = None) -> PipelineConfig
 
     p = Path(path)
     if not p.exists():
-        p_yaml = Path("configs") / f"{path}.yaml"
-        p_yml = Path("configs") / f"{path}.yml"
-        if p_yaml.exists():
-            p = p_yaml
-        elif p_yml.exists():
-            p = p_yml
-        else:
+        paths_to_try = []
+        if task_name:
+            task_clean = task_name.replace("-", "_")
+            paths_to_try.extend(
+                [
+                    Path("competitions") / task_name / "configs" / f"{path}.yaml",
+                    Path("competitions") / task_name / "configs" / f"{path}.yml",
+                    Path("competitions") / task_name / f"{path}.yaml",
+                    Path("competitions") / task_name / f"{path}.yml",
+                    Path("competitions") / task_clean / "configs" / f"{path}.yaml",
+                    Path("competitions") / task_clean / "configs" / f"{path}.yml",
+                    Path("competitions") / task_clean / f"{path}.yaml",
+                    Path("competitions") / task_clean / f"{path}.yml",
+                ]
+            )
+        paths_to_try.extend(
+            [
+                Path("configs") / f"{path}.yaml",
+                Path("configs") / f"{path}.yml",
+            ]
+        )
+
+        found = False
+        for candidate in paths_to_try:
+            if candidate.exists():
+                p = candidate
+                found = True
+                break
+
+        if not found:
             raise FileNotFoundError(f"Config file not found: {path}")
 
     # Load YAML file config without strict schema

@@ -74,14 +74,21 @@ class Submitter:
         is_simulation = getattr(self.task, "is_simulation", False) or "pokemon" in competition
 
         if is_simulation:
-            # Locate kernel directory
-            kernel_dir = Path("competitions") / self.task.name / "kernel"
-            if not kernel_dir.exists():
-                kernel_dir = Path("competitions") / self.task.name.replace("-", "_") / "kernel"
+            # Locate the kernel directory. The pipeline is normally invoked from the
+            # competition directory (where kego.toml + outputs/ live), so "kernel/" is
+            # the primary location; the repo-root-relative variants are fallbacks for
+            # when the command is run from the workspace root instead.
+            candidates = [
+                Path("kernel"),
+                Path("competitions") / self.task.name / "kernel",
+                Path("competitions") / self.task.name.replace("-", "_") / "kernel",
+            ]
+            kernel_dir = next((c for c in candidates if (c / "kernel-metadata.json").exists()), None)
+            if kernel_dir is None:
+                tried = ", ".join(str(c / "kernel-metadata.json") for c in candidates)
+                return SubmitResult(path=path, status=f"failed: kernel-metadata.json not found (tried: {tried})")
 
             metadata_path = kernel_dir / "kernel-metadata.json"
-            if not metadata_path.exists():
-                return SubmitResult(path=path, status=f"failed: kernel-metadata.json not found at {metadata_path}")
 
             with open(metadata_path) as f:
                 metadata = json.load(f)

@@ -26,6 +26,40 @@ from kego.pipeline.task import Task, get_task
 from kego.pipeline.train import TrainContext, Trainer
 
 
+def _resolve_dashboard_address(ray_address: str | None = None) -> str:
+    """Return the HTTP Ray dashboard URL (``http://host:8265``).
+
+    Accepts a ``ray://`` client address, an explicit ``http(s)://`` dashboard
+    URL, or ``None`` (falls back to the default head node). A ``ray://`` address
+    is mapped to the dashboard port 8265 on the same host.
+    """
+    addr = ray_address or "ray://omarchyd:10001"
+    if addr.startswith(("http://", "https://")):
+        return addr
+    host = addr.split("://", 1)[-1].split(":")[0]
+    return f"http://{host}:8265"
+
+
+def _make_ray_job_client(dashboard_address: str):
+    """Build a ``JobSubmissionClient`` for the given http dashboard URL.
+
+    Ray's ``get_address_for_submission_client`` lets ``RAY_ADDRESS`` override the
+    passed address; if it is a ``ray://`` client address the submission client
+    routes through the (often unreachable) Ray Client port and times out. Clear
+    ``RAY_ADDRESS`` during construction so the explicit http dashboard URL wins.
+    """
+    import os
+
+    from ray.dashboard.modules.job.sdk import JobSubmissionClient
+
+    saved = os.environ.pop("RAY_ADDRESS", None)
+    try:
+        return JobSubmissionClient(dashboard_address)
+    finally:
+        if saved is not None:
+            os.environ["RAY_ADDRESS"] = saved
+
+
 @dataclass
 class RunOutcome:
     predictions: list[Predictions]
@@ -56,6 +90,98 @@ class Pipeline:
     def run(self) -> RunOutcome:
         """Full path: train grid (with cache) -> ensemble -> evaluate -> submit."""
         raise NotImplementedError
+
+    def train_agent(self, epochs: int | None = None, output_path: str | None = None, **kwargs) -> None:
+        """Run task-specific agent or model training."""
+        if not hasattr(self.task, "train"):
+            raise NotImplementedError(f"Task '{self.task.name}' does not implement a train method.")
+
+        from kego.pipeline.executor import RayExecutor
+
+        if isinstance(self.executor, RayExecutor):
+            import os
+            import subprocess
+            import time
+
+            try:
+                import ray  # noqa: F401
+            except ImportError:
+                raise ImportError(
+                    "Ray is not installed. Please install ray via 'pip install ray' to use the Ray executor."
+                ) from None
+
+            # 1. Determine Ray Dashboard address and connect (RAY_ADDRESS-safe).
+            dashboard_address = _resolve_dashboard_address(os.environ.get("RAY_ADDRESS"))
+            print(f"Connecting to Ray Dashboard at {dashboard_address}...")
+            client = _make_ray_job_client(dashboard_address)
+
+            # 2. Submit the job
+            remote_output = f"/home/kristian/projects/kego/{output_path}" if output_path else None
+            cmd = f"/home/kristian/projects/kego/.venv/bin/python -m kego.pipeline.cli train-agent --task {self.task.name}"
+            if epochs:
+                cmd += f" --epochs {epochs}"
+            if remote_output:
+                cmd += f" --output {remote_output}"
+
+            print(f"Submitting job to Ray cluster: {cmd}")
+            # Exclude other competitions and large folders to keep upload lightweight
+            excludes = [
+                ".git",
+                ".venv",
+                "**/__pycache__",
+                "data",
+                "model_data",
+                "outputs",
+                "tmp",
+            ]
+            try:
+                from pathlib import Path
+
+                for p in Path("competitions").iterdir():
+                    if p.is_dir() and p.name != self.task.name:
+                        excludes.append(f"competitions/{p.name}")
+            except Exception:  # noqa: S110
+                pass
+
+            # Ray job submission requires a working_dir to package local changes.
+            job_id = client.submit_job(entrypoint=cmd, runtime_env={"working_dir": ".", "excludes": excludes})
+            print(f"Job '{job_id}' submitted successfully. Tailing logs...")
+
+            # 3. Tail logs and wait for completion
+            last_log_len = 0
+            while True:
+                status_info = client.get_job_status(job_id)
+                try:
+                    logs = client.get_job_logs(job_id)
+                    if logs and len(logs) > last_log_len:
+                        print(logs[last_log_len:], end="", flush=True)
+                        last_log_len = len(logs)
+                except Exception:  # noqa: S110
+                    pass
+
+                if status_info.is_terminal():
+                    break
+                time.sleep(1)
+
+            status = client.get_job_status(job_id)
+            if status != "SUCCEEDED":
+                raise RuntimeError(f"Remote training job failed with status: {status}")
+
+            print("Remote job completed successfully.")
+
+            # 4. Download output file if specified
+            if output_path:
+                print(f"Downloading trained weights from omarchyd to local {output_path}...")
+                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                scp_cmd = ["scp", f"kristian@omarchyd:{remote_output}", output_path]
+                res = subprocess.run(scp_cmd)
+                if res.returncode == 0:
+                    print(f"Successfully downloaded weights to {output_path}")
+                else:
+                    print("Error: failed to download trained weights via scp.")
+            return
+
+        self.task.train(self.config, epochs=epochs, output_path=output_path, **kwargs)
 
     def ensemble(
         self,
@@ -104,39 +230,65 @@ class Pipeline:
         import json
         from pathlib import Path
 
+        # 1. Check local active runs
+        local_found = False
         active_runs_dir = Path(".kego/active_runs")
-        if not active_runs_dir.exists():
-            print("No active training runs found.")
+        if active_runs_dir.exists():
+            runs = list(active_runs_dir.glob("*.json"))
+            if runs:
+                local_found = True
+                print("Active Runs:")
+                print("=" * 80)
+                for run_file in runs:
+                    try:
+                        with open(run_file) as f:
+                            data = json.load(f)
+                        run_id = run_file.stem
+                        task = data.get("task", "unknown")
+                        config = data.get("config", "unknown")
+                        pid = data.get("pid", "unknown")
+                        progress = data.get("progress", "0/0")
+                        active_workers = data.get("active_workers", [])
+
+                        print(f"[Run {run_id}] - task: {task} | config: {config}")
+                        print(f"PID: {pid} | Progress: {progress}")
+                        if active_workers:
+                            print("Active Workers:")
+                            for w in active_workers:
+                                print(f"  - {w}")
+                        print("-" * 80)
+                    except Exception:  # noqa: S110
+                        pass
+                print("=" * 80)
+
+        # 2. Check remote Ray jobs
+        import os
+
+        dashboard_address = _resolve_dashboard_address(os.environ.get("RAY_ADDRESS"))
+        try:
+            client = _make_ray_job_client(dashboard_address)
+            jobs = client.list_jobs()
+            active_jobs = [j for j in jobs if not j.status.is_terminal()]
+        except Exception as e:
+            # Surface the failure instead of masking it as "no active runs" — an
+            # unreachable cluster is not the same as an idle one.
+            print(f"\nWarning: could not query Ray cluster at {dashboard_address}: {e}")
             return
 
-        runs = list(active_runs_dir.glob("*.json"))
-        if not runs:
-            print("No active training runs found.")
-            return
+        if active_jobs:
+            print("\nActive Remote Ray Jobs:")
+            print("=" * 80)
+            for job in active_jobs:
+                print(f"[Job {job.job_id}] - status: {job.status} | entrypoint: {job.entrypoint}")
+                if job.start_time:
+                    import datetime
 
-        print("Active Runs:")
-        print("=" * 80)
-        for run_file in runs:
-            try:
-                with open(run_file) as f:
-                    data = json.load(f)
-                run_id = run_file.stem
-                task = data.get("task", "unknown")
-                config = data.get("config", "unknown")
-                pid = data.get("pid", "unknown")
-                progress = data.get("progress", "0/0")
-                active_workers = data.get("active_workers", [])
-
-                print(f"[Run {run_id}] - task: {task} | config: {config}")
-                print(f"PID: {pid} | Progress: {progress}")
-                if active_workers:
-                    print("Active Workers:")
-                    for w in active_workers:
-                        print(f"  - {w}")
+                    start_dt = datetime.datetime.fromtimestamp(job.start_time / 1000.0)
+                    print(f"Started: {start_dt.isoformat()}")
                 print("-" * 80)
-            except Exception:  # noqa: S110
-                pass
-        print("=" * 80)
+            print("=" * 80)
+        elif not local_found:
+            print("No active training runs found.")
 
     def submissions(self) -> None:
         import shutil

@@ -1,0 +1,9 @@
+# competitions/pokemon-tcg-ai-battle/configs/mcts_vs_random.yaml
+task: pokemon-tcg-ai-battle
+
+battle:
+  agent1: "competitions/pokemon-tcg-ai-battle/mcts_agent.py"
+  agent2: "competitions/pokemon-tcg-ai-battle/main.py"
+  games: 10
+  deck1: "competitions/pokemon-tcg-ai-battle/abomasnow_deck.csv"
+  deck2: "data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission/deck.csv"

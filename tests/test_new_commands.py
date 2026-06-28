@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
@@ -56,9 +57,30 @@ def test_parser_new_commands():
     args = parser.parse_args(["submissions"])
     assert args.command == "submissions"
 
+    # 4. Test battle parser
+    args = parser.parse_args(["battle", "--agent1", "a1.py", "--agent2", "a2.py", "--games", "5"])
+    assert args.command == "battle"
+    assert args.agent1 == "a1.py"
+    assert args.agent2 == "a2.py"
+    assert args.games == 5
+
+    # 5. Test train-agent parser
+    args = parser.parse_args(["train-agent", "--epochs", "10", "--output", "my_model.pth"])
+    assert args.command == "train-agent"
+    assert args.epochs == 10
+    assert args.output == "my_model.pth"
+
 
 def test_status_execution(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
+    from kego.pipeline import runner
+
+    # Isolate from the real Ray cluster: pretend it is reachable with no jobs.
+    class FakeClient:
+        def list_jobs(self):
+            return []
+
+    monkeypatch.setattr(runner, "_make_ray_job_client", lambda _addr: FakeClient())
 
     # Mock task and config
     task = DummyTask()
@@ -195,3 +217,225 @@ def test_cache_prune_execution(tmp_path, monkeypatch, capsys):
         # Active file should still exist, stale file should be deleted
         assert active_file.exists()
         assert not stale_file.exists()
+
+
+def test_battle_execution(tmp_path, monkeypatch, capsys):
+    agent1_file = tmp_path / "agent1.py"
+    agent1_file.write_text("def agent(obs):\n    return [0]\ndef read_deck_csv():\n    return [1]*60\n")
+
+    agent2_file = tmp_path / "agent2.py"
+    agent2_file.write_text("def agent(obs):\n    return [0]\ndef read_deck_csv():\n    return [1]*60\n")
+
+    # Mock locate_cg_dir
+    with patch("kego.pipeline.battle.locate_cg_dir") as mock_locate:
+        mock_locate.return_value = tmp_path
+
+        # We need to mock cg.game functions
+        sys_modules_mock = {
+            "cg": MagicMock(),
+            "cg.api": MagicMock(),
+            "cg.game": MagicMock(),
+        }
+
+        with patch.dict("sys.modules", sys_modules_mock):
+            # Mock the behaviors of battle_start, battle_select, to_observation_class
+            from cg.game import battle_select, battle_start
+
+            # battle_start returns (obs_dict, start_data)
+            obs_dict_1 = {"current": {"yourIndex": 0, "result": -1}}
+            obs_dict_2 = {"current": {"yourIndex": 1, "result": 1}}  # agent 2 wins
+
+            battle_start.return_value = (obs_dict_1, MagicMock())
+            battle_select.side_effect = [obs_dict_2]
+
+            # Mock to_observation_class
+            from cg.api import to_observation_class
+
+            obs_mock_1 = MagicMock()
+            obs_mock_1.current.result = -1
+            obs_mock_1.select = MagicMock()
+
+            obs_mock_2 = MagicMock()
+            obs_mock_2.current.result = 1  # winner is agent 2 (which is Player 1 in first game)
+            obs_mock_2.select = MagicMock()
+
+            to_observation_class.side_effect = [obs_mock_1, obs_mock_2]
+
+            from kego.pipeline.battle import run_battle_benchmark
+
+            run_battle_benchmark(agent1_path=str(agent1_file), agent2_path=str(agent2_file), num_games=1)
+
+            captured = capsys.readouterr()
+            assert "Winner: Agent 2" in captured.out
+            assert "BENCHMARK RESULTS" in captured.out
+            assert "Agent 2" in captured.out
+
+
+def test_battle_config_load_execution(tmp_path, monkeypatch, capsys):
+    config_dir = tmp_path / "competitions" / "pokemon-tcg-ai-battle" / "configs"
+    config_dir.mkdir(parents=True)
+
+    agent1_file = tmp_path / "agent1.py"
+    agent1_file.write_text("def agent(obs):\n    return [0]\ndef read_deck_csv():\n    return [1]*60\n")
+
+    agent2_file = tmp_path / "agent2.py"
+    agent2_file.write_text("def agent(obs):\n    return [0]\ndef read_deck_csv():\n    return [1]*60\n")
+
+    yaml_content = f"""
+task: pokemon-tcg-ai-battle
+battle:
+  agent1: "{agent1_file.as_posix()}"
+  agent2: "{agent2_file.as_posix()}"
+  games: 2
+"""
+    config_file = config_dir / "battle_config.yaml"
+    config_file.write_text(yaml_content)
+
+    monkeypatch.chdir(tmp_path)
+
+    # Mock locate_cg_dir
+    with patch("kego.pipeline.battle.locate_cg_dir") as mock_locate:
+        mock_locate.return_value = tmp_path
+
+        # Mock cg.game functions
+        sys_modules_mock = {
+            "cg": MagicMock(),
+            "cg.api": MagicMock(),
+            "cg.game": MagicMock(),
+        }
+
+        with patch.dict("sys.modules", sys_modules_mock):
+            from cg.api import to_observation_class
+            from cg.game import battle_select, battle_start
+
+            obs_dict_1 = {"current": {"yourIndex": 0, "result": -1}}
+            obs_dict_2 = {"current": {"yourIndex": 1, "result": 0}}  # Agent 1 wins
+
+            battle_start.return_value = (obs_dict_1, MagicMock())
+            battle_select.return_value = obs_dict_2
+
+            obs_mock_1 = MagicMock()
+            obs_mock_1.current.result = -1
+            obs_mock_1.select = MagicMock()
+
+            obs_mock_2 = MagicMock()
+            obs_mock_2.current.result = 0  # winner is player 0
+            obs_mock_2.select = MagicMock()
+
+            to_observation_class.side_effect = [obs_mock_1, obs_mock_2, obs_mock_1, obs_mock_2]
+
+            from kego.pipeline.cli import main
+
+            main(["battle", "--config", "battle_config", "--task", "pokemon-tcg-ai-battle"])
+
+            captured = capsys.readouterr()
+            assert "Winner: Agent 1" in captured.out
+            assert "Agent 1" in captured.out
+            assert "Agent 2" in captured.out
+
+
+def test_train_agent_execution(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    # Register a mock task that implements train method
+    from kego.pipeline.task import register_task
+
+    @register_task("trainable-comp")
+    class TrainableTask:
+        name = "trainable-comp"
+        kaggle_slug = "trainable-comp"
+        target = "target"
+        id_col = "id"
+        metric_direction = "maximize"
+        is_simulation = True
+
+        def __init__(self):
+            self.trained = False
+            self.epochs = None
+            self.output_path = None
+
+        def train(self, config, epochs=None, output_path=None, **kwargs):
+            self.trained = True
+            self.epochs = epochs
+            self.output_path = output_path
+
+    task = TrainableTask()
+
+    from kego.pipeline.config import PipelineConfig
+    from kego.pipeline.runner import Pipeline
+
+    config = PipelineConfig(task="trainable-comp")
+    pipeline = Pipeline(config)
+    pipeline.task = task
+
+    pipeline.train_agent(epochs=5, output_path="out.pth")
+    assert task.trained
+    assert task.epochs == 5
+    assert task.output_path == "out.pth"
+
+
+# ---------------------------------------------------------------------------
+# Ray dashboard address resolution + status robustness
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_dashboard_address():
+    from kego.pipeline.runner import _resolve_dashboard_address
+
+    # ray:// client address -> http dashboard on :8265
+    assert _resolve_dashboard_address("ray://omarchyd:10001") == "http://omarchyd:8265"
+    # explicit http(s) dashboard passes through unchanged
+    assert _resolve_dashboard_address("http://host:8265") == "http://host:8265"
+    assert _resolve_dashboard_address("https://host:8265") == "https://host:8265"
+    # unset -> default head node http dashboard
+    assert _resolve_dashboard_address(None) == "http://omarchyd:8265"
+
+
+def test_ray_job_client_ignores_ray_address_env(monkeypatch):
+    """A ray:// RAY_ADDRESS must not override the explicit http dashboard URL.
+
+    Ray's get_address_for_submission_client always lets RAY_ADDRESS override the
+    passed address; if it is a ray:// client address the submission client routes
+    through the Ray Client port (often unreachable) and times out.
+    """
+    from kego.pipeline import runner
+
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, address):
+            seen["address"] = address
+            seen["ray_address_env"] = os.environ.get("RAY_ADDRESS")
+
+    monkeypatch.setattr("ray.dashboard.modules.job.sdk.JobSubmissionClient", FakeClient)
+    monkeypatch.setenv("RAY_ADDRESS", "ray://omarchyd:10001")
+
+    runner._make_ray_job_client("http://omarchyd:8265")
+
+    assert seen["address"] == "http://omarchyd:8265"
+    # During construction, RAY_ADDRESS must not be the ray:// override.
+    assert seen["ray_address_env"] != "ray://omarchyd:10001"
+    # The env var is restored after construction.
+    assert os.environ.get("RAY_ADDRESS") == "ray://omarchyd:10001"
+
+
+def test_status_surfaces_remote_query_error(tmp_path, monkeypatch, capsys):
+    """A failed cluster query must be reported, not silently shown as 'no runs'."""
+    monkeypatch.chdir(tmp_path)
+    from kego.pipeline import runner
+
+    pipeline = Pipeline(PipelineConfig(task="dummy-comp"))
+    pipeline.task = DummyTask()
+
+    def boom(_address):
+        raise ConnectionError("ray client connection timeout")
+
+    monkeypatch.setattr(runner, "_make_ray_job_client", boom)
+
+    pipeline.status()
+    out = capsys.readouterr().out
+
+    # The real error is surfaced (not swallowed by a bare except).
+    assert "ray client connection timeout" in out
+    # And it does NOT falsely assert an authoritative "no active runs".
+    assert "No active training runs found." not in out

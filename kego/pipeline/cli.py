@@ -56,6 +56,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("submissions", parents=[common], help="list submissions")
 
+    battle = sub.add_parser("battle", parents=[common], help="battle local pokemon agents against each other")
+    battle.add_argument("--agent1", help="path to first agent python file")
+    battle.add_argument("--agent2", help="path to second agent python file")
+    battle.add_argument("--games", type=int, help="number of games to play")
+    battle.add_argument("--deck1", help="optional path to deck CSV for agent 1")
+    battle.add_argument("--deck2", help="optional path to deck CSV for agent 2")
+
+    train_parser = sub.add_parser(
+        "train-agent", parents=[common], help="run task-specific simulation agent/policy training"
+    )
+    train_parser.add_argument("--epochs", type=int, help="number of training epochs or iterations")
+    train_parser.add_argument("--output", help="path to save the trained model/weights")
+
     return parser
 
 
@@ -106,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("Either --config or --model must be specified.")
 
     if args.config:
-        config = load_config(args.config, args.params)
+        config = load_config(args.config, args.params, task_name=task_name)
     else:
         config = PipelineConfig(task=task_name)
 
@@ -213,6 +226,63 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     elif args.command == "submissions":
         pipeline.submissions()
+        return 0
+    elif args.command == "battle":
+        # Resolve battle parameters: CLI arguments take precedence over config file values
+        agent1 = getattr(args, "agent1", None)
+        agent2 = getattr(args, "agent2", None)
+        games = getattr(args, "games", None)
+        deck1 = getattr(args, "deck1", None)
+        deck2 = getattr(args, "deck2", None)
+
+        if args.config:
+            battle_cfg = config.battle
+            if agent1 is None:
+                agent1 = battle_cfg.agent1
+            if agent2 is None:
+                agent2 = battle_cfg.agent2
+            if games is None:
+                games = battle_cfg.games
+            if deck1 is None:
+                deck1 = battle_cfg.deck1
+            if deck2 is None:
+                deck2 = battle_cfg.deck2
+
+        # Defaults
+        if games is None:
+            games = 10
+
+        if not agent1 or not agent2:
+            parser.error(
+                "Both --agent1 and --agent2 must be specified (either via CLI arguments or in the --config file)."
+            )
+
+        try:
+            from kego.pipeline.battle import run_battle_benchmark
+
+            run_battle_benchmark(
+                agent1_path=agent1,
+                agent2_path=agent2,
+                num_games=games,
+                deck1_path=deck1,
+                deck2_path=deck2,
+            )
+        except Exception as e:
+            print(f"Error running battle benchmark: {e}")
+            return 1
+        return 0
+
+    elif args.command == "train-agent":
+        epochs = getattr(args, "epochs", None)
+        output = getattr(args, "output", None)
+        try:
+            pipeline.train_agent(epochs=epochs, output_path=output)
+        except NotImplementedError as e:
+            print(f"Error: {e}")
+            return 1
+        except Exception as e:
+            print(f"Error during training: {e}")
+            return 1
         return 0
 
     return 0

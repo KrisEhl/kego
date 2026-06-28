@@ -1,0 +1,9 @@
+# competitions/pokemon-tcg-ai-battle/configs/rule_based_battle.yaml
+task: pokemon-tcg-ai-battle
+
+battle:
+  agent1: "competitions/pokemon-tcg-ai-battle/zacian_agent.py"
+  agent2: "competitions/pokemon-tcg-ai-battle/abomasnow_agent.py"
+  games: 30
+  deck1: "competitions/pokemon-tcg-ai-battle/heuristic_deck.csv"
+  deck2: "competitions/pokemon-tcg-ai-battle/abomasnow_deck.csv"

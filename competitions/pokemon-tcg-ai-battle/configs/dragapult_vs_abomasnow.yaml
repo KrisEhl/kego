@@ -1,0 +1,9 @@
+# competitions/pokemon-tcg-ai-battle/configs/dragapult_vs_abomasnow.yaml
+task: pokemon-tcg-ai-battle
+
+battle:
+  agent1: "competitions/pokemon-tcg-ai-battle/dragapult_agent.py"
+  agent2: "competitions/pokemon-tcg-ai-battle/abomasnow_agent.py"
+  games: 10
+  deck1: "competitions/pokemon-tcg-ai-battle/dragapult_deck.csv"
+  deck2: "competitions/pokemon-tcg-ai-battle/abomasnow_deck.csv"

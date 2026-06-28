@@ -1,0 +1,9 @@
+# competitions/pokemon-tcg-ai-battle/configs/heuristic_battle.yaml
+task: pokemon-tcg-ai-battle
+
+battle:
+  agent1: "competitions/pokemon-tcg-ai-battle/main.py"
+  agent2: "competitions/pokemon-tcg-ai-battle/zacian_agent.py"
+  games: 50
+  deck1: "data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission/deck.csv"
+  deck2: "competitions/pokemon-tcg-ai-battle/heuristic_deck.csv"
