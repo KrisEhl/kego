@@ -58,6 +58,9 @@ class PokemonTCGAIBattleTask:
         search_count = 10
         batched = False
         eval_opponents = None
+        selfplay_opponents = None
+        replay_buffer_size = 100000
+        train_steps = 100
         config_path = comp_dir / "kego.toml"
         if config_path.exists():
             try:
@@ -71,6 +74,9 @@ class PokemonTCGAIBattleTask:
                 search_count = train_cfg.get("search_count", search_count)
                 batched = train_cfg.get("batched", batched)
                 eval_opponents = train_cfg.get("eval_opponents", eval_opponents)
+                selfplay_opponents = train_cfg.get("selfplay_opponents", selfplay_opponents)
+                replay_buffer_size = train_cfg.get("replay_buffer_size", replay_buffer_size)
+                train_steps = train_cfg.get("train_steps", train_steps)
             except Exception:
                 pass
 
@@ -87,6 +93,9 @@ class PokemonTCGAIBattleTask:
             search_count=search_count,
             batched=batched,
             eval_opponents=eval_opponents,
+            selfplay_opponents=selfplay_opponents,
+            replay_buffer_size=replay_buffer_size,
+            train_steps=train_steps,
         )
 
     def make_submission(self, ids: np.ndarray, preds: np.ndarray) -> Path:

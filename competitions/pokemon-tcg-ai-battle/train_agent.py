@@ -20,6 +20,7 @@ cg_parent = locate_cg_dir()
 sys.path.insert(0, str(cg_parent))
 
 from agents.mcts import (
+    MODEL_ARGS,
     MyModel,
     SparseVector,
     get_decoder_input,
@@ -311,9 +312,6 @@ def random_agent(obs_dict: dict) -> list[int]:
     return random.sample(list(range(len(obs.select.option))), obs.select.maxCount)
 
 
-MODEL_ARGS = (128, 2, 256, 1, 1)
-
-
 def _worker_init():
     # Batch-1 inference gains nothing from intra-op threads; N workers each spawning
     # a full torch thread pool oversubscribes the cores and collapses throughput.
@@ -352,18 +350,33 @@ def _split_counts(total: int, parts: int) -> list[int]:
     return [base + (1 if i < rem else 0) for i in range(parts)]
 
 
-def _play_selfplay_game(sample_deck: list[int], model: MyModel, search_count: int) -> list[LearnSample]:
-    obs, _ = battle_start(sample_deck, sample_deck)
+def _collect_game(mcts_deck, model, search_count, opp_move, opp_deck, mcts_index) -> list[LearnSample]:
+    """Play one game and return MCTS-side training samples (bootstrapped value targets).
+
+    ``opp_move is None`` -> self-play (both seats are MCTS, both sides collected).
+    Otherwise MCTS plays seat ``mcts_index`` vs ``opp_move`` (only the MCTS side is
+    collected) — this is how the agent learns to beat the rule-agent pool.
+    """
+    self_play = opp_move is None
+    if self_play:
+        deck0 = deck1 = mcts_deck
+    else:
+        deck0, deck1 = (mcts_deck, opp_deck) if mcts_index == 0 else (opp_deck, mcts_deck)
+    obs, _ = battle_start(deck0, deck1)
     samples: list[list[LearnSample]] = [[], []]
     while obs["current"]["result"] < 0:
-        selected, sample = mcts_train_agent(obs, sample_deck, model, search_count)
-        samples[obs["current"]["yourIndex"]].append(sample)
+        cur = obs["current"]["yourIndex"]
+        if self_play or cur == mcts_index:
+            selected, sample = mcts_train_agent(obs, mcts_deck, model, search_count)
+            samples[cur].append(sample)
+        else:
+            selected = opp_move(obs)
         obs = battle_select(selected)
     battle_finish()
 
     result = obs["current"]["result"]
     out: list[LearnSample] = []
-    for i in range(2):
+    for i in (0, 1) if self_play else (mcts_index,):
         LAMBDA = 0.9
         value = 1.0 if i == result else -1.0
         for sample in reversed(samples[i]):
@@ -394,19 +407,25 @@ def _play_vs_game(mcts_deck, model, opp_deck, opp_move, your_index: int, search_
 
 
 def _selfplay_worker(payload):
-    """Worker entry: play ``n_games`` self-play games on a fresh CPU model.
-
-    Returns ``(samples, component_timings)`` so the parent can merge per-worker
-    timing (nn_eval / engine / mcts_move) back into the run-level report.
+    """Worker entry: play ``n_games`` games on a fresh CPU model, cycling through the
+    opponent pool (None = self-play, else a (kind, file, deck) spec). Returns
+    ``(samples, component_timings)`` so the parent can merge per-worker timing.
     """
-    state_dict, n_games, sample_deck, seed, search_count = payload
+    state_dict, n_games, sample_deck, seed, search_count, opp_pool = payload
     random.seed(seed)
     DEFAULT.reset()
     model = _build_cpu_model(state_dict)
     out: list[LearnSample] = []
     with torch.no_grad():
-        for _ in range(n_games):
-            out.extend(_play_selfplay_game(sample_deck, model, search_count))
+        for g in range(n_games):
+            spec = opp_pool[(seed + g) % len(opp_pool)]
+            if spec is None:
+                out.extend(_collect_game(sample_deck, model, search_count, None, sample_deck, 0))
+            else:
+                kind, opp_file, opp_deck_path = spec
+                opp_move = random_agent if kind == "random" else _opp_agent_fn(opp_file)
+                opp_deck = sample_deck if kind == "random" else load_deck(opp_deck_path)
+                out.extend(_collect_game(sample_deck, model, search_count, opp_move, opp_deck, g % 2))
     return out, DEFAULT.as_dict()
 
 
@@ -452,6 +471,9 @@ def run_training_loop(
     search_count: int = 10,
     batched: bool = False,
     eval_opponents: list[str] | None = None,
+    selfplay_opponents: list[str] | None = None,
+    replay_buffer_size: int = 100000,
+    train_steps: int = 100,
 ):
     import multiprocessing as mp
 
@@ -460,6 +482,24 @@ def run_training_loop(
     # best checkpoint so far. The best-checkpoint gate uses the rule-agent average.
     if eval_opponents is None:
         eval_opponents = ["random", "rule:zacian", "rule:abomasnow", "rule:dragapult", "rule:lucario", "self"]
+    # Opponents to GENERATE self-play data against. "self" = MCTS mirror (both seats
+    # collected); "rule:<name>" = learn to beat that heuristic (MCTS side collected).
+    if selfplay_opponents is None:
+        selfplay_opponents = ["self"]
+
+    def _resolve_pool(specs):
+        pool = []
+        for spec in specs:
+            if spec == "self":
+                pool.append(None)
+            elif spec == "random":
+                pool.append(("random", None, None))
+            elif spec.startswith("rule:"):
+                nm = spec.split(":", 1)[1]
+                pool.append(("rule", str(comp_dir / "agents" / f"{nm}.py"), str(comp_dir / "decks" / f"{nm}.csv")))
+        return pool or [None]
+
+    opp_pool = _resolve_pool(selfplay_opponents)
 
     # Toggle batched MCTS leaf evaluation; set before the worker pool so spawned
     # children (and the inline path) inherit it via the environment.
@@ -477,8 +517,15 @@ def run_training_loop(
 
     model = MyModel(*MODEL_ARGS).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    # Cosine LR decay over the run so late iterations settle instead of wandering.
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, iterations), eta_min=3e-5)
     loss_fn_enc = torch.nn.HuberLoss(delta=0.2)
     loss_fn_dec = torch.nn.HuberLoss(reduction="none", delta=0.1)
+
+    # Replay buffer: train on a sliding window of recent self-play instead of only the
+    # latest iteration's games — larger, more diverse batches => lower-variance updates
+    # and less forgetting (the main source of the win-rate wobble).
+    replay: list[LearnSample] = []
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -560,7 +607,7 @@ def run_training_loop(
             # 2. Self-Play data collection (parallel across workers)
             print(f"Collecting self-play training data ({self_play_games} games)...")
             payloads = [
-                (cpu_state, c, sample_deck, iter_idx * 9973 + i, search_count)
+                (cpu_state, c, sample_deck, iter_idx * 9973 + i, search_count, opp_pool)
                 for i, c in enumerate(_split_counts(self_play_games, num_workers))
                 if c
             ]
@@ -571,24 +618,24 @@ def run_training_loop(
                 sample_list.extend(samples)
                 run_timings.merge(tdict)
 
-            # 3. Model updates / Training
-            print(f"Training on {len(sample_list)} collected samples...")
+            # 3. Model updates / Training — replay buffer + random minibatches.
+            replay.extend(sample_list)
+            if len(replay) > replay_buffer_size:
+                replay = replay[-replay_buffer_size:]
+            print(f"Training on buffer ({len(replay)} samples, {train_steps} steps)...")
             _train_start = time.perf_counter()
             model.train()
-            random.shuffle(sample_list)
-            BATCH_SIZE = min(128, len(sample_list))
+            BATCH_SIZE = min(128, len(replay))
             if BATCH_SIZE > 0:
-                batch_count = len(sample_list) // BATCH_SIZE
                 sum_enc = sum_dec = 0.0
-                for batch_idx in range(batch_count):
+                for _ in range(train_steps):
+                    batch = random.sample(replay, BATCH_SIZE)
                     input_enc = LearnInput()
                     input_dec = LearnInput()
                     mask = []
                     label_enc = []
                     label_dec = []
-                    start = BATCH_SIZE * batch_idx
-                    for j in range(start, start + BATCH_SIZE):
-                        sample = sample_list[j]
+                    for sample in batch:
                         input_enc.add(sample.sv_enc)
                         input_dec.add(sample.sv_dec)
                         label_enc.append(sample.value)
@@ -624,9 +671,10 @@ def run_training_loop(
                     loss.backward()
                     optimizer.step()
                 print(
-                    f"Training epoch complete. avg loss: value={sum_enc / batch_count:.4f} "
-                    f"policy={sum_dec / batch_count:.4f}"
+                    f"Training complete. avg loss: value={sum_enc / train_steps:.4f} "
+                    f"policy={sum_dec / train_steps:.4f} | lr={scheduler.get_last_lr()[0]:.2e}"
                 )
+            scheduler.step()
             run_timings.add("train", time.perf_counter() - _train_start)
             run_timings.report(f"timings @ iter {iter_idx + 1}")
 

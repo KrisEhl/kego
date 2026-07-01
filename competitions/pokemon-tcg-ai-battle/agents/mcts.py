@@ -40,6 +40,11 @@ decoder_attack_offset = 14
 decoder_card_offset = decoder_attack_offset + attack_count
 decoder_size = decoder_card_offset + (1 + decoder_main_feature + 48) * card_count
 
+# (d_model, num_heads, d_feedforward, n_encoder_layers, n_decoder_layers).
+# Single source of truth: training (train_agent.py) and inference both build MyModel
+# from this, so checkpoints always match. num_heads must divide d_model.
+MODEL_ARGS = (256, 4, 512, 2, 2)
+
 
 class DecoderLayer(torch.nn.Module):
     def __init__(self, d_model: int, num_heads: int, d_feedforward: int):
@@ -372,7 +377,7 @@ class MCTSTransformerAgent(BaseAgent):
     def __init__(self, deck="abomasnow.csv", model_path=None):
         self.deck = self._load_deck(deck)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = MyModel(128, 2, 256, 1, 1).to(self.device)
+        self.model = MyModel(*MODEL_ARGS).to(self.device)
         self.model.eval()
 
         if model_path and os.path.exists(model_path):
@@ -384,7 +389,11 @@ class MCTSTransformerAgent(BaseAgent):
         elif model_path:
             print(f"[MCTSTransformerAgent] model_path not found: {model_path} (untrained weights)", flush=True)
 
-        self.SEARCH_COUNT = 10
+        # Inference search depth (override with MCTS_SEARCH_COUNT). More = stronger,
+        # slower. Inference has no training-time budget, so it can go much deeper than
+        # self-play's search_count.
+        self.SEARCH_COUNT = int(os.environ.get("MCTS_SEARCH_COUNT", "10"))
+        print(f"[MCTSTransformerAgent] SEARCH_COUNT={self.SEARCH_COUNT}", flush=True)
 
     def get_deck(self) -> list[int]:
         return self.deck
