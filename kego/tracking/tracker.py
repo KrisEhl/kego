@@ -7,6 +7,23 @@ store is unreachable, the tracker degrades to a silent no-op instead of raising.
 from __future__ import annotations
 
 
+def create_run(uri: str, experiment: str, run_name: str | None = None, tags: dict | None = None) -> str | None:
+    """Create an MLflow run (left RUNNING) and return its id, so a dispatched remote worker
+    can attach to it via ``KEGO_MLFLOW_RUN_ID``. Returns ``None`` if MLflow is unreachable."""
+    try:
+        from mlflow.tracking import MlflowClient
+
+        client = MlflowClient(tracking_uri=uri)
+        exp = client.get_experiment_by_name(experiment)
+        exp_id = exp.experiment_id if exp else client.create_experiment(experiment)
+        run_tags = dict(tags or {})
+        if run_name:
+            run_tags["mlflow.runName"] = run_name
+        return client.create_run(exp_id, tags=run_tags).info.run_id
+    except Exception:  # missing/unreachable MLflow -> caller falls back
+        return None
+
+
 class Tracker:
     def __init__(self, active: bool) -> None:
         self._active = active

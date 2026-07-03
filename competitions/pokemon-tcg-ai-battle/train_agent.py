@@ -571,7 +571,13 @@ def run_training_loop(
         "batched": str(batched),
         "model_args": str(MODEL_ARGS),
     }
-    _track = Tracker.open(_uri, experiment=_task, run_name=f"{_run_tags['machine']}-{output_file.stem}", tags=_run_tags)
+    # Attach to the dispatcher's run when dispatched (KEGO_MLFLOW_RUN_ID injected over SSH),
+    # else open a fresh run. set_tags after open so our tags land whether new or resumed.
+    _run_id = os.environ.get("KEGO_MLFLOW_RUN_ID")
+    _track = Tracker.open(
+        _uri, experiment=_task, run_id=_run_id, run_name=f"{_run_tags['machine']}-{output_file.stem}", tags=_run_tags
+    )
+    _track.set_tags(_run_tags)
     best_results: dict[str, float] = {}  # per-opponent WRs at the best gauntlet_avg, for registry tags
 
     # Self-play/eval run on CPU-only worker processes: batch-1 inference is far cheaper

@@ -68,6 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument("--epochs", type=int, help="number of training epochs or iterations")
     train_parser.add_argument("--output", help="path to save the trained model/weights")
+    train_parser.add_argument(
+        "--target", help="fleet machine name to dispatch to (rsync + SSH-launch); omit to run locally"
+    )
 
     models = sub.add_parser("models", parents=[common], help="show the model-registry leaderboard for a task")
     models.add_argument("--sort-by", default="gauntlet_avg", help="metric tag to rank agents by")
@@ -104,6 +107,57 @@ def detect_task() -> str:
             except Exception:  # noqa: S110
                 pass
     return "default"
+
+
+def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, output: str | None) -> int:
+    """Ship the local tree to fleet machine ``target`` and SSH-launch training there (§5.4)."""
+    from pathlib import Path
+
+    from kego.dispatch import DEFAULT_EXCLUDES, dispatch, other_competition_excludes
+    from kego.fleet import git_sha, load_fleet, machine_name
+    from kego.tracking import create_run, default_tracking_uri
+
+    repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+    fleet_path = repo_root / "fleet.toml"
+    if not fleet_path.exists():
+        print(f"No fleet.toml at {fleet_path}; cannot dispatch --target {target}.")
+        return 1
+    try:
+        machine = load_fleet(fleet_path).machine(target)
+    except KeyError as e:
+        print(f"Error: {e}")
+        return 1
+
+    uri = default_tracking_uri(fleet_path)
+    tags = {
+        "machine": machine.name,
+        "task": task_name,
+        "git_sha": git_sha(repo_root),
+        "dispatched_from": machine_name(),
+        "target": target,
+    }
+    run_id = create_run(uri, experiment=task_name, run_name=f"{machine.name}-{task_name}", tags=tags)
+    if not run_id:
+        print(
+            f"Could not create an MLflow run at {uri} (hub unreachable). Offline dispatch is a later phase; aborting."
+        )
+        return 1
+
+    cmd_args = ["train-agent", "--task", task_name]
+    if epochs:
+        cmd_args += ["--epochs", str(epochs)]
+    if output:
+        cmd_args += ["--output", output]
+
+    excludes = DEFAULT_EXCLUDES + other_competition_excludes(repo_root, keep=task_name)
+    print(f"Dispatching {task_name} to {machine.name} ({machine.ssh}) — run {run_id}")
+    try:
+        dispatch(machine, cmd_args, run_id=run_id, local_dir=str(repo_root), excludes=excludes)
+    except Exception as e:
+        print(f"Dispatch failed: {e}")
+        return 1
+    print(f"Launched on {machine.name}. Follow with:  kego ls  |  kego logs {run_id}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -293,6 +347,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "train-agent":
         epochs = getattr(args, "epochs", None)
         output = getattr(args, "output", None)
+        target = getattr(args, "target", None)
+        if target and target not in ("local", "cluster"):
+            return _dispatch_train_agent(task_name, target, epochs, output)
         try:
             pipeline.train_agent(epochs=epochs, output_path=output)
         except NotImplementedError as e:

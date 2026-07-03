@@ -6,10 +6,11 @@ from .mlflow import (
 )
 from .registry import format_leaderboard, leaderboard, register_checkpoint
 from .resolve import default_tracking_uri, resolve_tracking_uri
-from .tracker import Tracker
+from .tracker import Tracker, create_run
 
 __all__ = [
     "Tracker",
+    "create_run",
     "default_tracking_uri",
     "format_leaderboard",
     "get_completed_fingerprints",

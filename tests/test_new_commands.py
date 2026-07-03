@@ -450,3 +450,15 @@ def test_models_parser():
 
     args = parser.parse_args(["models", "--task", "x", "--sort-by", "elo"])
     assert args.sort_by == "elo"
+
+
+def test_train_agent_target_parser():
+    parser = build_parser()
+    args = parser.parse_args(["train-agent", "--task", "pkmn", "--target", "m5", "--epochs", "200"])
+    assert args.command == "train-agent"
+    assert args.target == "m5"
+    assert args.epochs == 200
+
+    # --target is optional (local run when omitted)
+    args = parser.parse_args(["train-agent", "--epochs", "5"])
+    assert args.target is None

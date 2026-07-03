@@ -100,3 +100,31 @@ def test_default_tracking_uri_offline_fallback(monkeypatch, tmp_path):
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
     uri = default_tracking_uri(fleet_path=tmp_path / "nope.toml")
     assert uri.startswith("sqlite:///")
+
+
+def test_create_run_returns_attachable_run_id(tmp_path):
+    import pytest
+
+    pytest.importorskip("mlflow")
+    from mlflow.tracking import MlflowClient
+
+    from kego.tracking import Tracker, create_run
+
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    rid = create_run(uri, "exp1", run_name="r1", tags={"machine": "m5"})
+    assert rid  # got a run id back
+
+    # a remote worker attaches to the same run via KEGO_MLFLOW_RUN_ID and logs into it
+    t = Tracker.open(uri, "exp1", run_id=rid)
+    t.log_metric("x", 1.0)
+    t.close()
+
+    run = MlflowClient(tracking_uri=uri).get_run(rid)
+    assert run.data.tags.get("machine") == "m5"
+    assert run.data.metrics.get("x") == 1.0
+
+
+def test_create_run_none_when_unreachable():
+    from kego.tracking import create_run
+
+    assert create_run("unsupported-scheme://nope", "exp", tags={}) is None

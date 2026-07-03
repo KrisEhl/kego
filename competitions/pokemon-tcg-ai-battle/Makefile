@@ -16,6 +16,13 @@ train-agent:
 train-agent-cluster:
 	uv run kego train-agent --executor ray --task $(TASK) --epochs $(EPOCHS) --output $(OUTPUT)
 
+# Dispatch training to a standalone fleet machine (rsync working tree + SSH-launch detached).
+#   make train-agent-fleet MACHINE=m5 EPOCHS=200
+# Follow with `kego ls` / `kego logs <run>`. Requires the machine in fleet.toml + the hub up.
+train-agent-fleet:
+	if [ -z "$(MACHINE)" ]; then echo "MACHINE is unset (e.g. MACHINE=m5)" && exit 1; fi
+	uv run kego train-agent --task $(TASK) --target $(MACHINE) --epochs $(EPOCHS) --output $(OUTPUT)
+
 # --- Ray cluster (the head runs on omarchyd; required before train-agent-cluster) ---
 # The head must run ON the head node, so these SSH in and reuse the canonical
 # competitions/playground targets. First run syncs the playground venv (has ray).
@@ -34,4 +41,4 @@ ray-status:
 ray-stop:
 	ssh $(RAY_HOST) 'bash -lc "cd $(RAY_PLAYGROUND) && make stop"'
 
-.PHONY: train-agent train-agent-cluster ray-head ray-status ray-stop
+.PHONY: train-agent train-agent-cluster train-agent-fleet ray-head ray-status ray-stop
