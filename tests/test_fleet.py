@@ -159,3 +159,27 @@ def test_detect_machine_gpu_with_gpus(monkeypatch, tmp_path):
     monkeypatch.setenv("KEGO_MACHINE", "boxB")
     m = detect_machine(repo=tmp_path, gpus=["rtx3090"])
     assert m.role == "gpu" and m.gpus == ("rtx3090",)
+
+
+def test_registration_summary_added_reminds_hostname():
+    from kego.fleet import Machine, registration_summary
+
+    m = Machine(name="boxA", ssh="kristianehlert@boxA", role="cpu", repo="/r")
+    msg = registration_summary(m, added=True)
+    assert "boxA" in msg and "kristianehlert@boxA" in msg
+    assert "Registered" in msg
+    assert "KEGO_MACHINE" in msg  # reminds how to override a wrong hostname
+
+
+def test_registration_summary_already_present():
+    from kego.fleet import Machine, registration_summary
+
+    msg = registration_summary(Machine(name="boxA", ssh="k@boxA", role="cpu", repo="/r"), added=False)
+    assert "boxA" in msg and "lready" in msg  # "Already"/"already"
+
+
+def test_registration_summary_shows_gpus():
+    from kego.fleet import Machine, registration_summary
+
+    msg = registration_summary(Machine(name="g", ssh="k@g", role="gpu", repo="/r", gpus=("rtx3090",)), added=True)
+    assert "gpu" in msg and "rtx3090" in msg

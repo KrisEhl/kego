@@ -119,6 +119,18 @@ def _machine_toml(m: Machine) -> str:
     return "\n".join(lines) + "\n"
 
 
+def registration_summary(machine: Machine, added: bool) -> str:
+    """A human reminder of what got registered, and how to fix a wrong hostname."""
+    role = machine.role + ("/" + ",".join(machine.gpus) if machine.gpus else "")
+    verb = "Registered" if added else "Already registered as"
+    return (
+        f"{verb} '{machine.name}' -> ssh {machine.ssh} ({role}) in fleet.toml\n"
+        f"Reminder: '{machine.name}' is this machine's auto-detected hostname. If the fleet "
+        f"reaches it by a different name (e.g. a Tailscale name), re-run with KEGO_MACHINE set "
+        f"or edit the name/ssh in fleet.toml."
+    )
+
+
 def register_self(fleet_path: str | Path, machine: Machine | None = None) -> bool:
     """Append this machine to ``fleet.toml`` unless an entry with its name already exists.
 
