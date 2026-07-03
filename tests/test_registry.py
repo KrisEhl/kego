@@ -1,6 +1,6 @@
 import pytest
 
-from kego.tracking import leaderboard
+from kego.tracking import leaderboard, register_checkpoint
 
 
 def test_leaderboard_ranks_by_elo_descending(tmp_path):
@@ -43,3 +43,31 @@ def test_leaderboard_empty_for_unknown_model(tmp_path):
     pytest.importorskip("mlflow")
     uri = f"sqlite:///{tmp_path / 'ml.db'}"
     assert leaderboard(uri, "nonexistent") == []
+
+
+def test_register_checkpoint_readable_via_leaderboard(tmp_path):
+    pytest.importorskip("mlflow")
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    ckpt = tmp_path / "model.pth"
+    ckpt.write_bytes(b"fake-weights")
+
+    version = register_checkpoint(uri, "pokemon", str(ckpt), tags={"elo": 1748, "machine": "m5"})
+
+    assert version == "1"
+    board = leaderboard(uri, "pokemon", sort_by="elo")
+    assert len(board) == 1
+    assert board[0]["version"] == "1"
+    assert board[0]["machine"] == "m5"
+    assert float(board[0]["elo"]) == 1748.0  # int tag coerced to a parseable string
+
+
+def test_register_checkpoint_increments_version(tmp_path):
+    pytest.importorskip("mlflow")
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    ckpt = tmp_path / "m.pth"
+    ckpt.write_bytes(b"w")
+
+    register_checkpoint(uri, "pokemon", str(ckpt), tags={"elo": 1600})
+    v2 = register_checkpoint(uri, "pokemon", str(ckpt), tags={"elo": 1700})
+
+    assert v2 == "2"
