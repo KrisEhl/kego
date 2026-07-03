@@ -111,3 +111,51 @@ def test_repo_fleet_toml_is_valid():
     assert fleet.machine("omarchyd").role == "hub"
     for m in fleet.machines:
         assert m.ssh and m.repo and m.role, f"{m.name} missing required field"
+
+
+def test_register_self_appends_new_machine(fleet_file):
+    from kego.fleet import Machine, load_fleet, register_self
+
+    new = Machine(name="wsl", ssh="k@wsl", role="gpu", repo="/home/k/kego", gpus=("rtx2080ti",))
+    added = register_self(fleet_file, new)
+    assert added is True
+    fleet = load_fleet(fleet_file)
+    assert {m.name for m in fleet.machines} == {"omarchyd", "m5", "wsl"}
+    m = fleet.machine("wsl")
+    assert m.ssh == "k@wsl" and m.role == "gpu" and m.repo == "/home/k/kego"
+    assert m.gpus == ("rtx2080ti",)
+
+
+def test_register_self_idempotent_on_existing_name(fleet_file):
+    from kego.fleet import Machine, load_fleet, register_self
+
+    added = register_self(fleet_file, Machine(name="m5", ssh="k@m5-new", role="cpu", repo="/x"))
+    assert added is False
+    assert len(load_fleet(fleet_file).machines) == 2
+
+
+def test_register_self_cpu_machine_omits_gpus(fleet_file):
+    from kego.fleet import Machine, load_fleet, register_self
+
+    register_self(fleet_file, Machine(name="lap", ssh="k@lap", role="cpu", repo="/r"))
+    m = load_fleet(fleet_file).machine("lap")
+    assert m.gpus == () and m.role == "cpu"
+
+
+def test_detect_machine_cpu_without_gpus(monkeypatch, tmp_path):
+    from kego.fleet import detect_machine
+
+    monkeypatch.setenv("KEGO_MACHINE", "boxA")
+    m = detect_machine(repo=tmp_path, gpus=[])
+    assert m.name == "boxA"
+    assert "@" in m.ssh
+    assert m.repo == str(tmp_path)
+    assert m.role == "cpu" and m.gpus == ()
+
+
+def test_detect_machine_gpu_with_gpus(monkeypatch, tmp_path):
+    from kego.fleet import detect_machine
+
+    monkeypatch.setenv("KEGO_MACHINE", "boxB")
+    m = detect_machine(repo=tmp_path, gpus=["rtx3090"])
+    assert m.role == "gpu" and m.gpus == ("rtx3090",)

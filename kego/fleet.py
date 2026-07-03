@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 import socket
 import subprocess
@@ -73,3 +74,60 @@ def load_fleet(path: str | Path) -> Fleet:
         for m in data.get("machine", [])
     )
     return Fleet(hub=hub, machines=machines)
+
+
+def _detect_gpus() -> list[str]:
+    """GPU slugs from ``nvidia-smi`` (e.g. ``rtx3090``); empty on CPU-only machines."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except Exception:
+        return []
+    slugs = []
+    for line in out.stdout.splitlines():
+        name = line.strip()
+        if name:
+            slugs.append(name.lower().replace("nvidia", "").replace("geforce", "").replace(" ", ""))
+    return slugs
+
+
+def detect_machine(repo: str | Path | None = None, gpus: list[str] | None = None) -> Machine:
+    """This machine's fleet entry, auto-detected: fleet name, ``user@host`` ssh target,
+    repo path (``repo`` or the cwd), and role/gpus (``gpu`` if any NVIDIA GPU is present)."""
+    if gpus is None:
+        gpus = _detect_gpus()
+    return Machine(
+        name=machine_name(),
+        ssh=f"{getpass.getuser()}@{socket.gethostname()}",
+        role="gpu" if gpus else "cpu",
+        repo=str(repo) if repo is not None else str(Path.cwd()),
+        gpus=tuple(gpus),
+    )
+
+
+def _machine_toml(m: Machine) -> str:
+    """Serialize a Machine as a ``[[machine]]`` TOML block (stdlib tomllib is read-only)."""
+    lines = ["", "[[machine]]", f'name = "{m.name}"', f'ssh = "{m.ssh}"', f'role = "{m.role}"', f'repo = "{m.repo}"']
+    if m.data:
+        lines.append(f'data = "{m.data}"')
+    if m.gpus:
+        lines.append("gpus = [" + ", ".join(f'"{g}"' for g in m.gpus) + "]")
+    return "\n".join(lines) + "\n"
+
+
+def register_self(fleet_path: str | Path, machine: Machine | None = None) -> bool:
+    """Append this machine to ``fleet.toml`` unless an entry with its name already exists.
+
+    Returns ``True`` if a new entry was appended, ``False`` if already registered. Machines
+    self-register (``make fleet-register``) instead of being hand-listed in the file.
+    """
+    machine = machine or detect_machine()
+    if any(m.name == machine.name for m in load_fleet(fleet_path).machines):
+        return False
+    path = Path(fleet_path)
+    path.write_text(path.read_text() + _machine_toml(machine))
+    return True

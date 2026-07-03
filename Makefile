@@ -32,6 +32,9 @@ setup-new-competition:
 	uv init --name ${KAGGLE_COMPETITION} --no-package --directory ${path_competition}
 
 
+fleet-register:
+	uv run python -c "from kego.fleet import detect_machine, register_self; m = detect_machine(); print(('registered ' if register_self('fleet.toml', m) else 'already present: ') + m.name + ' (' + m.ssh + ', ' + m.role + ('/' + ','.join(m.gpus) if m.gpus else '') + ')')"
+
 test:
 	uv run pytest tests/ -v
 
