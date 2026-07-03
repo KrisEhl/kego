@@ -65,3 +65,49 @@ def test_data_optional(fleet_file):
 def test_unknown_machine_raises(fleet_file):
     with pytest.raises(KeyError):
         load_fleet(fleet_file).machine("does-not-exist")
+
+
+def test_machine_name_from_env(monkeypatch):
+    from kego.fleet import machine_name
+
+    monkeypatch.setenv("KEGO_MACHINE", "m5")
+    assert machine_name() == "m5"
+
+
+def test_machine_name_falls_back_to_hostname(monkeypatch):
+    import socket
+
+    from kego.fleet import machine_name
+
+    monkeypatch.delenv("KEGO_MACHINE", raising=False)
+    assert machine_name() == socket.gethostname()
+
+
+def test_git_sha_for_this_repo():
+    from pathlib import Path
+
+    from kego.fleet import git_sha
+
+    sha = git_sha(Path(__file__).resolve().parents[1])
+    assert sha != "unknown"
+    assert 7 <= len(sha) <= 40
+
+
+def test_git_sha_unknown_outside_repo(tmp_path):
+    from kego.fleet import git_sha
+
+    assert git_sha(tmp_path) == "unknown"
+
+
+def test_repo_fleet_toml_is_valid():
+    """The shipped fleet.toml at repo root parses and defines the omarchyd hub."""
+    from pathlib import Path
+
+    from kego.fleet import load_fleet
+
+    fleet = load_fleet(Path(__file__).resolve().parents[1] / "fleet.toml")
+    assert fleet.hub.name == "omarchyd"
+    assert fleet.hub.mlflow.startswith("http")
+    assert fleet.machine("omarchyd").role == "hub"
+    for m in fleet.machines:
+        assert m.ssh and m.repo and m.role, f"{m.name} missing required field"

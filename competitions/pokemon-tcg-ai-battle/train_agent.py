@@ -187,32 +187,71 @@ def create_node_train(
     return node, sample
 
 
-def _expand_batch(root: Node, search_count: int, your_index: int, your_deck: list[int], model: MyModel) -> None:
-    """One batched MCTS wave: materialize the top-``search_count`` root children and
-    evaluate them all in a single forward (faithful for shallow search, where the
-    sequential loop mostly expands root's children anyway). Toggled by MCTS_BATCHED=1.
-    """
-    order = sorted(range(len(root.children)), key=lambda i: root.children[i].prob, reverse=True)
-    pending = []  # (node, actions, sv_enc, sv_dec, leaf_state)
-    for ci in order[:search_count]:
-        child = root.children[ci]
-        with timer("engine"):
-            search_state = search_step(root.state.searchId, child.select)
-        node = Node(root, search_state)
-        child.node = node
-        leaf = search_state.observation.current
-        if leaf.result >= 0:
-            node.value = 0.0 if leaf.result == 2 else (1.0 if leaf.result == your_index else -1.0)
-            node.backprop(node.value)
+def _select_child(current: Node, your_index: int):
+    """UCB-select the best child of ``current`` (None if it has none)."""
+    best, chosen = -1e18, None
+    c = 0.4 * math.sqrt(current.visit)
+    flip = current.state.observation.current.yourIndex != your_index
+    for child in current.children:
+        if child.node is None:
+            q = current.total / current.visit
+            visit = 0
         else:
-            actions = _enumerate_actions(search_state.observation)
-            sv_enc = get_encoder_input(search_state.observation, your_deck)
-            sv_dec = get_decoder_input(search_state.observation, actions)
-            pending.append((node, actions, sv_enc, sv_dec, leaf))
+            q = child.node.total / child.node.visit
+            visit = child.node.visit
+        if flip:
+            q = -q
+        u = q + c * child.prob / (1 + visit)
+        if u > best:
+            best, chosen = u, child
+    return chosen
+
+
+def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list[int], model: MyModel) -> None:
+    """Tree-parallel MCTS wave: select up to ``n_leaves`` leaves by UCB descent (with a
+    virtual loss so selections diversify and go DEEP), materialize them, evaluate them all
+    in ONE batched forward, then backprop with the virtual loss removed. Gives real search
+    depth AND batched inference (a move needs ~2 forwards instead of ~n_leaves)."""
+    VLOSS = 1.0
+    pending = []  # (leaf_node, path, actions, sv_enc, sv_dec, leaf_state)
+    for _ in range(n_leaves):
+        current = root
+        path = [root]
+        while current.children:
+            child = _select_child(current, your_index)
+            if child is None:
+                break
+            if child.node is None:  # unexpanded -> this is our leaf to evaluate
+                with timer("engine"):
+                    search_state = search_step(current.state.searchId, child.select)
+                node = Node(current, search_state)
+                child.node = node
+                path.append(node)
+                leaf = search_state.observation.current
+                if leaf.result >= 0:  # terminal: value known, no NN needed
+                    node.value = 0.0 if leaf.result == 2 else (1.0 if leaf.result == your_index else -1.0)
+                    node.backprop(node.value)
+                else:
+                    actions = _enumerate_actions(search_state.observation)
+                    sv_enc = get_encoder_input(search_state.observation, your_deck)
+                    sv_dec = get_decoder_input(search_state.observation, actions)
+                    pending.append((node, path, actions, sv_enc, sv_dec, leaf))
+                    for pn in path:  # virtual loss so the next selection avoids this path
+                        pn.visit += 1
+                        pn.total -= VLOSS
+                break
+            current = child.node  # descend into an already-expanded child
+            path.append(current)
+            if current.state.observation.current.result >= 0:
+                current.backprop(current.value)
+                break
     if pending:
-        for (node, actions, _se, _sd, leaf), (value, policy) in zip(
-            pending, eval_nn_batch([(p[2], p[3]) for p in pending], model)
+        for (node, path, actions, _se, _sd, leaf), (value, policy) in zip(
+            pending, eval_nn_batch([(p[3], p[4]) for p in pending], model)
         ):
+            for pn in path:  # remove virtual loss before the real backprop
+                pn.visit -= 1
+                pn.total += VLOSS
             v = -value if leaf.yourIndex != your_index else value
             node.value = v
             node.backprop(v)
@@ -243,27 +282,14 @@ def mcts_train_agent(
 
     do_batched = os.environ.get("MCTS_BATCHED") == "1" and bool(root.children)
     if do_batched:
-        _expand_batch(root, search_count, your_index, your_deck, model)
+        _leaf_batch_wave(root, search_count, your_index, your_deck, model)
 
     for _ in range(0 if do_batched else search_count):
         current = root
         while True:
-            value = -1e9
-            c = 0.4 * math.sqrt(current.visit)
-            for child in current.children:
-                visit = 0
-                if child.node is None:
-                    v = current.total / current.visit
-                else:
-                    v = child.node.total / child.node.visit
-                    visit = child.node.visit
-                if current.state.observation.current.yourIndex != your_index:
-                    v = -v
-                v += c * child.prob / (1 + visit)
-                if value < v:
-                    value = v
-                    next_node = child
-
+            next_node = _select_child(current, your_index)
+            if next_node is None:
+                break
             if next_node.node is None:
                 with timer("engine"):
                     search_state = search_step(current.state.searchId, next_node.select)
@@ -275,21 +301,16 @@ def mcts_train_agent(
                     current.backprop(current.value)
                     break
 
+    # Both paths produce real visit counts now, so select the most-visited (robust) child.
     max_child = None
     max_visit = -1
-    best_value = -1e9
     min_value = 10.0
     for child in root.children:
         if child.node is not None:
-            v = child.node.total / child.node.visit
-            if do_batched:
-                # batched leaves all have visit==1, so rank by value, not visit count
-                if best_value < v:
-                    best_value = v
-                    max_child = child
-            elif max_visit < child.node.visit:
+            if max_visit < child.node.visit:
                 max_child = child
                 max_visit = child.node.visit
+            v = child.node.total / child.node.visit
             if min_value > v:
                 min_value = v
 
@@ -532,6 +553,27 @@ def run_training_loop(
 
     run_timings = Timings()  # cumulative wall-clock per phase + merged worker components
 
+    # Fleet tracking: log live metrics to the central MLflow (or an offline sqlite fallback)
+    # and register the best checkpoint in the model registry. Crash-safe — a no-op if MLflow
+    # is unreachable, so training never blocks on telemetry. See the fleet-fabric spec.
+    from kego.fleet import git_sha, machine_name
+    from kego.tracking import Tracker, default_tracking_uri, register_checkpoint
+
+    _uri = default_tracking_uri()
+    _task = "pokemon-tcg-ai-battle"
+    _repo_root = Path(__file__).resolve().parents[2]
+    _run_tags = {
+        "machine": machine_name(),
+        "git_sha": git_sha(_repo_root),
+        "task": _task,
+        "search_count": str(search_count),
+        "self_play_games": str(self_play_games),
+        "batched": str(batched),
+        "model_args": str(MODEL_ARGS),
+    }
+    _track = Tracker.open(_uri, experiment=_task, run_name=f"{_run_tags['machine']}-{output_file.stem}", tags=_run_tags)
+    best_results: dict[str, float] = {}  # per-opponent WRs at the best gauntlet_avg, for registry tags
+
     # Self-play/eval run on CPU-only worker processes: batch-1 inference is far cheaper
     # on CPU than via per-call GPU launches/syncs, and the games are independent. The
     # cg engine keeps global state, so each game needs its own process (not thread).
@@ -597,10 +639,15 @@ def run_training_loop(
             # 1. Evaluation gauntlet (throttled by eval_every); keep the best by rule avg.
             if eval_games > 0 and iter_idx % eval_every == 0:
                 print("Evaluating gauntlet (random / rule agents / self)...")
-                _, avg = _gauntlet(cpu_state, best_state, 7000 + iter_idx * 131)
+                results, avg = _gauntlet(cpu_state, best_state, 7000 + iter_idx * 131)
+                _track.log_metric("gauntlet_avg", avg, step=iter_idx)
+                _track.log_metric("progress_pct", 100.0 * (iter_idx + 1) / iterations, step=iter_idx)
+                for _name, _wr in results.items():
+                    _track.log_metric(f"wr_{_name}", _wr, step=iter_idx)
                 if avg > best_score:
                     best_score = avg
                     best_state = cpu_state
+                    best_results = results
                     torch.save(model.state_dict(), str(output_file))
                     print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
 
@@ -670,6 +717,9 @@ def run_training_loop(
                     sum_dec += float(loss_dec.detach())
                     loss.backward()
                     optimizer.step()
+                _track.log_metric("loss_value", sum_enc / train_steps, step=iter_idx)
+                _track.log_metric("loss_policy", sum_dec / train_steps, step=iter_idx)
+                _track.log_metric("lr", scheduler.get_last_lr()[0], step=iter_idx)
                 print(
                     f"Training complete. avg loss: value={sum_enc / train_steps:.4f} "
                     f"policy={sum_dec / train_steps:.4f} | lr={scheduler.get_last_lr()[0]:.2e}"
@@ -682,16 +732,35 @@ def run_training_loop(
         if eval_games > 0:
             print("\nFinal gauntlet on trained model...")
             final_state = _transport_state(model)
-            _, avg = _gauntlet(final_state, best_state, 999983)
+            results, avg = _gauntlet(final_state, best_state, 999983)
             if avg > best_score:
                 best_score = avg
                 best_state = final_state
+                best_results = results
                 torch.save(model.state_dict(), str(output_file))
                 print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
     finally:
         if pool is not None:
             pool.close()
             pool.join()
+        # Register the best checkpoint (best-checkpointing already wrote it to output_file).
+        # Skipped when we never evaluated (best_score < 0) — nothing to rank. Best-effort:
+        # a registry outage must not fail an otherwise-good training run.
+        if best_score >= 0:
+            try:
+                register_checkpoint(
+                    _uri,
+                    _task,
+                    str(output_file),
+                    tags={
+                        **_run_tags,
+                        "gauntlet_avg": round(best_score, 2),
+                        **{f"wr_{n}": round(w, 2) for n, w in best_results.items()},
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  (registry unavailable, checkpoint not registered: {exc})")
+        _track.close()
 
     # If we never evaluated (eval_games=0), fall back to saving the final model.
     if best_score < 0:

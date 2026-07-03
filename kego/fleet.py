@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
+import os
+import socket
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import tomllib
+
+
+def machine_name() -> str:
+    """This machine's fleet name: the ``KEGO_MACHINE`` env (set by the dispatcher) or the hostname."""
+    return os.environ.get("KEGO_MACHINE") or socket.gethostname()
+
+
+def git_sha(path: str | Path) -> str:
+    """Short git SHA of the repo at ``path``, or ``"unknown"`` if it is not a git repo."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--short", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return out.stdout.strip()
+    except Exception:
+        return "unknown"
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,53 @@
+# Fleet registry — machines that train kego agents, and the central hub they report to.
+# See docs/superpowers/specs/2026-07-03-fleet-training-fabric-design.md for the schema.
+#
+# The dispatcher rsyncs the local repo to each machine's `repo`, runs training over SSH
+# (`ssh`), and every run logs to the hub MLflow. When the hub is unreachable a machine
+# tracks to a local sqlite store and reconciles later with `kego sync`.
+#
+# ssh targets are Tailscale hostnames (all machines share the tailnet). Confirm the
+# usernames/hostnames and the linux-laptop GPU model against the actual boxes before
+# using the dispatcher — the hub block below is what Phase 0 (`kego models`) relies on.
+
+[hub]
+name = "omarchyd"
+mlflow = "http://192.168.178.32:5000"
+
+# Hub + GPU head node: RTX 3090 (heavy_gpu) + RTX 2080 Ti. Runs the MLflow server.
+[[machine]]
+name = "omarchyd"
+ssh = "kristian@omarchyd"
+role = "hub"
+repo = "/home/kristian/projects/kego"
+data = "/home/kristian/projects/kego/data"
+gpus = ["rtx3090", "rtx2080ti"]
+
+# This machine — Apple Silicon MacBook Pro, CPU self-play only (no CUDA).
+[[machine]]
+name = "macbook-pro"
+ssh = "kristianehlert@kristians-macbook-pro"
+role = "cpu"
+repo = "/Users/kristianehlert/projects/kego"
+
+# MacBook Pro M5, 48 GB — CPU self-play (fast cores, no CUDA).
+[[machine]]
+name = "m5"
+ssh = "kristian@m5"
+role = "cpu"
+repo = "/Users/kristian/projects/kego"
+
+# Windows WSL box with an RTX 2080 Ti. Needs mirrored networking for Ray, but the
+# fleet runs standalone-per-machine over SSH so plain WSL SSH is enough.
+[[machine]]
+name = "wsl-2080ti"
+ssh = "kristian@wsl-2080ti"
+role = "gpu"
+repo = "/home/kristian/projects/kego"
+gpus = ["rtx2080ti"]
+
+# Linux laptop with a small NVIDIA GPU. Set the exact model once confirmed.
+[[machine]]
+name = "linux-laptop"
+ssh = "kristian@linux-laptop"
+role = "gpu"
+repo = "/home/kristian/projects/kego"

@@ -1,0 +1,138 @@
+"""Integration tests for the pokemon MCTS self-play (sequential + leaf-batched).
+
+These need the competition's `cg` game engine (shipped in the competition data). If it
+isn't importable (e.g. CI without the data), the whole module is skipped.
+"""
+
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+import pytest
+
+torch = pytest.importorskip("torch")
+
+COMP = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle"
+
+
+@pytest.fixture(scope="module")
+def tm():
+    """Load competitions/.../train_agent.py the way task.py does (registers it in
+    sys.modules). Skips if the cg engine / decks aren't present."""
+    if not (COMP / "train_agent.py").exists():
+        pytest.skip("pokemon competition not present")
+    spec = importlib.util.spec_from_file_location("train_agent", str(COMP / "train_agent.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["train_agent"] = mod
+    try:
+        spec.loader.exec_module(mod)  # runs locate_cg_dir() + imports cg
+    except Exception as e:  # cg engine unavailable, missing data, etc.
+        pytest.skip(f"pokemon MCTS env unavailable: {e}")
+    return mod
+
+
+@pytest.fixture(scope="module")
+def model(tm):
+    torch.manual_seed(0)
+    m = tm.MyModel(*tm.MODEL_ARGS)
+    m.eval()
+    return m
+
+
+@pytest.fixture(scope="module")
+def deck(tm):
+    return tm.load_deck(str(COMP / "decks" / "abomasnow.csv"))
+
+
+def _self_play(tm, model, deck, search_count):
+    with torch.no_grad():
+        return tm._collect_game(deck, model, search_count, None, deck, 0)
+
+
+@pytest.mark.parametrize("batched", ["1", "0"])
+def test_selfplay_game_completes_and_produces_samples(tm, model, deck, batched):
+    """A full self-play game runs to completion and yields valid training samples,
+    in both leaf-batched (MCTS_BATCHED=1) and sequential (=0) modes."""
+    os.environ["MCTS_BATCHED"] = batched
+    samples = _self_play(tm, model, deck, search_count=6)
+    assert len(samples) > 0
+    for s in samples:
+        assert -1.0 <= s.value <= 1.0  # bootstrapped value target stays in range
+        assert len(s.policy) == len(s.sv_dec.offset)  # one policy entry per candidate action
+
+
+def test_mcts_move_returns_valid_selection(tm, model, deck):
+    """mcts_train_agent returns a concrete move (list of selection indices) + a sample."""
+    os.environ["MCTS_BATCHED"] = "1"
+    from cg.game import battle_start
+
+    obs, _ = battle_start(deck, deck)
+    with torch.no_grad():
+        selected, sample = tm.mcts_train_agent(obs, deck, model, 6)
+    assert isinstance(selected, list) and len(selected) > 0
+    assert all(isinstance(i, int) for i in selected)
+    assert sample is not None
+
+
+def test_eval_nn_batch_matches_individual(tm, model, deck):
+    """The batched evaluator must return the same value/policy as evaluating each input
+    individually — this is where offset/mask/reshape bugs would show up."""
+    os.environ["MCTS_BATCHED"] = "0"
+    samples = _self_play(tm, model, deck, search_count=6)
+    svs = [(s.sv_enc, s.sv_dec) for s in samples[:8]]
+    assert len(svs) >= 2  # need a real batch
+    with torch.no_grad():
+        batched = tm.eval_nn_batch(svs, model)
+        for (v_b, p_b), (sv_enc, sv_dec) in zip(batched, svs):
+            v_i, p_i = tm.eval_nn_train(sv_enc, sv_dec, model)
+            assert abs(v_b - v_i) < 1e-4
+            assert len(p_b) == len(p_i)
+            assert all(abs(a - b) < 1e-4 for a, b in zip(p_b, p_i))
+
+
+def test_leaf_batching_uses_fewer_forwards_per_move(tm, model, deck):
+    """Leaf-batching should do far fewer NN forwards per move than sequential (~2 vs
+    ~search_count+1) — the whole point of the optimization."""
+    from kego.timing import DEFAULT
+
+    ratios = {}
+    for batched in ("1", "0"):
+        os.environ["MCTS_BATCHED"] = batched
+        DEFAULT.reset()
+        _self_play(tm, model, deck, search_count=8)
+        moves = DEFAULT.count.get("mcts_move", 0)
+        nn = DEFAULT.count.get("nn_eval", 0)
+        assert moves > 0
+        ratios[batched] = nn / moves
+
+    assert ratios["1"] < ratios["0"]  # batched does fewer forwards per move
+    assert ratios["1"] < 4.0  # ~2 forwards/move (root + one batched wave)
+
+
+def test_training_logs_and_registers_best(tm, deck, tmp_path, monkeypatch):
+    pytest.importorskip("mlflow")
+    from kego.tracking import leaderboard
+
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    monkeypatch.setenv("KEGO_MLFLOW", uri)
+    monkeypatch.setenv("KEGO_MACHINE", "test-box")
+
+    tm.run_training_loop(
+        iterations=1,
+        eval_games=2,
+        self_play_games=4,
+        output_path=str(tmp_path / "m.pth"),
+        num_workers=2,
+        eval_every=1,
+        search_count=4,
+        batched=True,
+        selfplay_opponents=["self"],
+        eval_opponents=["random"],
+    )
+
+    board = leaderboard(uri, "pokemon-tcg-ai-battle", sort_by="gauntlet_avg")
+    assert len(board) >= 1
+    assert board[0]["machine"] == "test-box"
+    assert "gauntlet_avg" in board[0]
+    assert board[0]["git_sha"] != ""
