@@ -11,14 +11,14 @@ agent_file = "agents/abomasnow.py"
 deck_file = "decks/abomasnow.csv"
 
 [train]
-# SCALED config (option 1): bigger net (MODEL_ARGS in agents/mcts.py) + deeper SEQUENTIAL
-# self-play search for better targets + more data/steps. Slower per iter; run many epochs
-# on the cluster: `make train-agent-cluster EPOCHS=200`. Revert batched=true for fast iteration.
+# SCALED config (option 1): bigger net (MODEL_ARGS in agents/mcts.py) + deep search for
+# better targets. Leaf-batched MCTS (batched=true) gives real depth AND ~2 forwards/move
+# (~30x faster than sequential), so deep search is now cheap. `make train-agent-cluster EPOCHS=200`.
 eval_games = 16         # games PER opponent; gate = avg over 4 rule agents (~64 games)
 self_play_games = 48    # 3 per worker on 16 workers
-eval_every = 10         # iters are slower now; eval gauntlet less often
+eval_every = 5          # gauntlet every N iters
 search_count = 25       # deeper search => better value/policy TARGETS (the real bottleneck)
-batched = false         # SEQUENTIAL search has real depth (batched is breadth-only); needed for good targets
+batched = true          # leaf-batching: UCB descent + virtual loss, batched eval (depth + speed)
 num_workers = 16        # cap below cores to avoid memory-bandwidth contention
 # Opponents: "random" floor, "rule:<name>" heuristic meta deck, "self" = best checkpoint.
 # Best checkpoint is gated on the average win-rate vs the rule agents.

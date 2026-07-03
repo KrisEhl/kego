@@ -16,4 +16,22 @@ train-agent:
 train-agent-cluster:
 	uv run kego train-agent --executor ray --task $(TASK) --epochs $(EPOCHS) --output $(OUTPUT)
 
-.PHONY: train-agent train-agent-cluster
+# --- Ray cluster (the head runs on omarchyd; required before train-agent-cluster) ---
+# The head must run ON the head node, so these SSH in and reuse the canonical
+# competitions/playground targets. First run syncs the playground venv (has ray).
+RAY_HOST       ?= kristian@omarchyd
+RAY_PLAYGROUND ?= /home/kristian/projects/kego/competitions/playground
+
+# Start the Ray head on the cluster (run after a cluster restart).
+ray-head:
+	ssh $(RAY_HOST) 'bash -lc "cd $(RAY_PLAYGROUND) && make start-head"'
+
+# Show the Ray cluster status (nodes, resources).
+ray-status:
+	ssh $(RAY_HOST) 'bash -lc "cd $(RAY_PLAYGROUND) && uv run ray status"'
+
+# Stop Ray on the cluster head.
+ray-stop:
+	ssh $(RAY_HOST) 'bash -lc "cd $(RAY_PLAYGROUND) && make stop"'
+
+.PHONY: train-agent train-agent-cluster ray-head ray-status ray-stop
