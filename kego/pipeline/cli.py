@@ -69,6 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--epochs", type=int, help="number of training epochs or iterations")
     train_parser.add_argument("--output", help="path to save the trained model/weights")
 
+    models = sub.add_parser("models", parents=[common], help="show the model-registry leaderboard for a task")
+    models.add_argument("--sort-by", default="gauntlet_avg", help="metric tag to rank agents by")
+
     return parser
 
 
@@ -114,6 +117,21 @@ def main(argv: list[str] | None = None) -> int:
     from kego.pipeline.runner import Pipeline
 
     task_name = getattr(args, "task", None) or detect_task()
+
+    if args.command == "models":
+        from kego.tracking import default_tracking_uri, format_leaderboard, leaderboard
+
+        uri = default_tracking_uri()
+        rows = leaderboard(uri, task_name, sort_by=args.sort_by)
+        seen: set[str] = set()
+        cols = [
+            c
+            for c in [args.sort_by, "gauntlet_avg", "elo", "machine", "git_sha", "version"]
+            if not (c in seen or seen.add(c))
+        ]
+        print(f"{task_name} — {len(rows)} agents · tracking {uri}")
+        print(format_leaderboard(rows, cols))
+        return 0
 
     if args.command == "run" and not args.config and not getattr(args, "model", None):
         parser.error("Either --config or --model must be specified.")

@@ -74,3 +74,29 @@ def test_tracker_open_failure_returns_safe_noop():
     t.log_metric("x", 1.0)
     t.set_tags({"k": "v"})
     t.close()
+
+
+def test_default_tracking_uri_prefers_env(monkeypatch):
+    from kego.tracking import default_tracking_uri
+
+    monkeypatch.setenv("KEGO_MLFLOW", "http://central:5000")
+    assert default_tracking_uri(fleet_path="/nonexistent.toml") == "http://central:5000"
+
+
+def test_default_tracking_uri_uses_fleet_hub(monkeypatch, tmp_path):
+    from kego.tracking import default_tracking_uri
+
+    monkeypatch.delenv("KEGO_MLFLOW", raising=False)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    fp = tmp_path / "fleet.toml"
+    fp.write_text('[hub]\nname = "omarchyd"\nmlflow = "http://hub:5000"\n')
+    assert default_tracking_uri(fleet_path=fp) == "http://hub:5000"
+
+
+def test_default_tracking_uri_offline_fallback(monkeypatch, tmp_path):
+    from kego.tracking import default_tracking_uri
+
+    monkeypatch.delenv("KEGO_MLFLOW", raising=False)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    uri = default_tracking_uri(fleet_path=tmp_path / "nope.toml")
+    assert uri.startswith("sqlite:///")

@@ -50,3 +50,18 @@ def leaderboard(uri: str, name: str, sort_by: str = "elo", desc: bool = True) ->
             return -math.inf
 
     return sorted(rows, key=key, reverse=desc)
+
+
+def format_leaderboard(rows: list[dict], columns: list[str]) -> str:
+    """Render leaderboard ``rows`` (already sorted) as an aligned table with a rank column;
+    missing cells show ``-``."""
+    if not rows:
+        return "(no models registered)"
+    headers = ["rank", *columns]
+    table = [[str(i), *(str(row.get(c, "-")) for c in columns)] for i, row in enumerate(rows, 1)]
+    widths = [max(len(headers[j]), *(len(r[j]) for r in table)) for j in range(len(headers))]
+
+    def line(cells: list[str]) -> str:
+        return "  ".join(c.ljust(widths[j]) for j, c in enumerate(cells))
+
+    return "\n".join([line(headers), *(line(r) for r in table)])

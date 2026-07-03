@@ -71,3 +71,32 @@ def test_register_checkpoint_increments_version(tmp_path):
     v2 = register_checkpoint(uri, "pokemon", str(ckpt), tags={"elo": 1700})
 
     assert v2 == "2"
+
+
+def test_format_leaderboard_has_header_and_ranked_rows():
+    from kego.tracking import format_leaderboard
+
+    rows = [
+        {"version": "2", "gauntlet_avg": "71.2", "machine": "wsl"},
+        {"version": "1", "gauntlet_avg": "58.0", "machine": "m5"},
+    ]
+    out = format_leaderboard(rows, columns=["gauntlet_avg", "machine", "version"])
+    lines = out.splitlines()
+    assert "rank" in lines[0] and "gauntlet_avg" in lines[0]
+    assert lines[1].split()[0] == "1"  # first data row is rank 1
+    assert "wsl" in lines[1]
+    assert lines[2].split()[0] == "2"
+    assert "m5" in lines[2]
+
+
+def test_format_leaderboard_missing_key_shows_dash():
+    from kego.tracking import format_leaderboard
+
+    out = format_leaderboard([{"version": "1", "machine": "m5"}], columns=["gauntlet_avg", "machine"])
+    assert "-" in out.splitlines()[1]
+
+
+def test_format_leaderboard_empty():
+    from kego.tracking import format_leaderboard
+
+    assert "no models" in format_leaderboard([], columns=["gauntlet_avg"]).lower()

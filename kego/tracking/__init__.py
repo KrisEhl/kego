@@ -4,12 +4,14 @@ from .mlflow import (
     load_predictions_from_mlflow,
     load_predictions_from_runs,
 )
-from .registry import leaderboard, register_checkpoint
-from .resolve import resolve_tracking_uri
+from .registry import format_leaderboard, leaderboard, register_checkpoint
+from .resolve import default_tracking_uri, resolve_tracking_uri
 from .tracker import Tracker
 
 __all__ = [
     "Tracker",
+    "default_tracking_uri",
+    "format_leaderboard",
     "get_completed_fingerprints",
     "leaderboard",
     "load_predictions_from_ensemble",

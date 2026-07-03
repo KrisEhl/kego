@@ -439,3 +439,14 @@ def test_status_surfaces_remote_query_error(tmp_path, monkeypatch, capsys):
     assert "ray client connection timeout" in out
     # And it does NOT falsely assert an authoritative "no active runs".
     assert "No active training runs found." not in out
+
+
+def test_models_parser():
+    parser = build_parser()
+    args = parser.parse_args(["models", "--task", "pokemon-tcg-ai-battle"])
+    assert args.command == "models"
+    assert args.task == "pokemon-tcg-ai-battle"
+    assert args.sort_by == "gauntlet_avg"  # default ranking metric (Phase 0, pre-league)
+
+    args = parser.parse_args(["models", "--task", "x", "--sort-by", "elo"])
+    assert args.sort_by == "elo"

@@ -3,7 +3,23 @@ else fall back to a local sqlite store (reconciled later with ``kego sync``)."""
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from pathlib import Path
+
+
+def default_tracking_uri(fleet_path: str | Path | None = None) -> str:
+    """The MLflow URI a CLI command should use: ``KEGO_MLFLOW``/``MLFLOW_TRACKING_URI`` env,
+    else the fleet ``[hub].mlflow``, else the local offline sqlite store."""
+    explicit = os.environ.get("KEGO_MLFLOW") or os.environ.get("MLFLOW_TRACKING_URI")
+    if explicit:
+        return explicit
+    fp = Path(fleet_path) if fleet_path else Path.cwd() / "fleet.toml"
+    if fp.exists():
+        from kego.fleet import load_fleet
+
+        return load_fleet(fp).hub.mlflow
+    return f"sqlite:///{Path.home() / '.kego' / 'offline.db'}"
 
 
 def resolve_tracking_uri(
