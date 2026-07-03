@@ -25,7 +25,7 @@ gpus = ["rtx3090", "rtx2080ti"]
 
 # This machine — Apple Silicon MacBook Pro, CPU self-play only (no CUDA).
 [[machine]]
-name = "macbook-pro"
+name = "kristians-macbook-pro"
 ssh = "kristianehlert@kristians-macbook-pro"
 role = "cpu"
 repo = "/Users/kristianehlert/projects/kego"

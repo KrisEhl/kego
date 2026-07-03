@@ -77,10 +77,50 @@ def test_machine_name_from_env(monkeypatch):
 def test_machine_name_falls_back_to_hostname(monkeypatch):
     import socket
 
+    import kego.fleet
     from kego.fleet import machine_name
 
     monkeypatch.delenv("KEGO_MACHINE", raising=False)
+    monkeypatch.setattr(kego.fleet, "_tailscale_name", lambda: None)  # no Tailscale
     assert machine_name() == socket.gethostname()
+
+
+def test_tailscale_short_extracts_first_label():
+    from kego.fleet import _tailscale_short
+
+    assert _tailscale_short("kristians-macbook-pro.tail1234.ts.net.") == "kristians-macbook-pro"
+    assert _tailscale_short("") == ""
+
+
+def test_machine_name_prefers_tailscale(monkeypatch):
+    import kego.fleet
+    from kego.fleet import machine_name
+
+    monkeypatch.delenv("KEGO_MACHINE", raising=False)
+    monkeypatch.setattr(kego.fleet, "_tailscale_name", lambda: "boxTS")
+    assert machine_name() == "boxTS"
+
+
+def test_machine_name_env_overrides_tailscale(monkeypatch):
+    import kego.fleet
+    from kego.fleet import machine_name
+
+    monkeypatch.setenv("KEGO_MACHINE", "m5")
+    monkeypatch.setattr(kego.fleet, "_tailscale_name", lambda: "boxTS")
+    assert machine_name() == "m5"
+
+
+def test_detect_machine_uses_tailscale_ssh_host(monkeypatch, tmp_path):
+    import getpass
+
+    import kego.fleet
+    from kego.fleet import detect_machine
+
+    monkeypatch.delenv("KEGO_MACHINE", raising=False)
+    monkeypatch.setattr(kego.fleet, "_tailscale_name", lambda: "boxTS")
+    m = detect_machine(repo=tmp_path, gpus=[])
+    assert m.name == "boxTS"
+    assert m.ssh == f"{getpass.getuser()}@boxTS"
 
 
 def test_git_sha_for_this_repo():

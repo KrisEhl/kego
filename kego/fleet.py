@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import getpass
+import json
 import os
 import socket
 import subprocess
@@ -12,9 +13,33 @@ from pathlib import Path
 import tomllib
 
 
+def _tailscale_short(dns: str) -> str:
+    """A Tailscale DNSName's short MagicDNS label: ``host.tailnet.ts.net.`` -> ``host``."""
+    return dns.strip(".").split(".")[0]
+
+
+def _tailscale_name() -> str | None:
+    """This machine's Tailscale MagicDNS name (e.g. ``kristians-macbook-pro``), or ``None``
+    if Tailscale is not installed/running. The whole fleet shares a tailnet, so this is the
+    name other machines actually reach it by."""
+    try:
+        out = subprocess.run(
+            ["tailscale", "status", "--json"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        )
+        dns = json.loads(out.stdout).get("Self", {}).get("DNSName", "")
+    except Exception:
+        return None
+    return _tailscale_short(dns) or None
+
+
 def machine_name() -> str:
-    """This machine's fleet name: the ``KEGO_MACHINE`` env (set by the dispatcher) or the hostname."""
-    return os.environ.get("KEGO_MACHINE") or socket.gethostname()
+    """This machine's fleet name: the ``KEGO_MACHINE`` env (set by the dispatcher), else the
+    Tailscale MagicDNS name, else the OS hostname."""
+    return os.environ.get("KEGO_MACHINE") or _tailscale_name() or socket.gethostname()
 
 
 def git_sha(path: str | Path) -> str:
@@ -100,9 +125,10 @@ def detect_machine(repo: str | Path | None = None, gpus: list[str] | None = None
     repo path (``repo`` or the cwd), and role/gpus (``gpu`` if any NVIDIA GPU is present)."""
     if gpus is None:
         gpus = _detect_gpus()
+    host = _tailscale_name() or socket.gethostname()
     return Machine(
         name=machine_name(),
-        ssh=f"{getpass.getuser()}@{socket.gethostname()}",
+        ssh=f"{getpass.getuser()}@{host}",
         role="gpu" if gpus else "cpu",
         repo=str(repo) if repo is not None else str(Path.cwd()),
         gpus=tuple(gpus),
@@ -125,9 +151,9 @@ def registration_summary(machine: Machine, added: bool) -> str:
     verb = "Registered" if added else "Already registered as"
     return (
         f"{verb} '{machine.name}' -> ssh {machine.ssh} ({role}) in fleet.toml\n"
-        f"Reminder: '{machine.name}' is this machine's auto-detected hostname. If the fleet "
-        f"reaches it by a different name (e.g. a Tailscale name), re-run with KEGO_MACHINE set "
-        f"or edit the name/ssh in fleet.toml."
+        f"Reminder: '{machine.name}' was auto-detected (Tailscale MagicDNS name if available, "
+        f"else the OS hostname). If that isn't how the fleet reaches this machine, re-run with "
+        f"KEGO_MACHINE set or edit the name/ssh in fleet.toml."
     )
 
 
