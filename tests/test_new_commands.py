@@ -443,13 +443,15 @@ def test_status_surfaces_remote_query_error(tmp_path, monkeypatch, capsys):
 
 def test_models_parser():
     parser = build_parser()
+
     args = parser.parse_args(["models", "--task", "pokemon-tcg-ai-battle"])
     assert args.command == "models"
-    assert args.task == "pokemon-tcg-ai-battle"
-    assert args.sort_by == "gauntlet_avg"  # default ranking metric (Phase 0, pre-league)
+    assert args.sort_by == "elo"  # default now ranks by league Elo
+    assert args.breakdown is False
 
-    args = parser.parse_args(["models", "--task", "x", "--sort-by", "elo"])
-    assert args.sort_by == "elo"
+    args = parser.parse_args(["models", "--task", "x", "--sort-by", "gauntlet_avg", "-b"])
+    assert args.sort_by == "gauntlet_avg"
+    assert args.breakdown is True
 
 
 def test_train_agent_target_parser():
