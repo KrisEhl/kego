@@ -61,6 +61,24 @@ def _make_ray_job_client(dashboard_address: str):
             os.environ["RAY_ADDRESS"] = saved
 
 
+def _parse_etime(etime_str: str) -> int:
+    etime_str = etime_str.strip()
+    days = 0
+    if "-" in etime_str:
+        days_part, etime_str = etime_str.split("-", 1)
+        days = int(days_part)
+    parts = etime_str.split(":")
+    if len(parts) == 3:
+        h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+    elif len(parts) == 2:
+        h = 0
+        m, s = int(parts[0]), int(parts[1])
+    else:
+        h, m = 0, 0
+        s = int(parts[0])
+    return days * 86400 + h * 3600 + m * 60 + s
+
+
 def _poll_machine(machine: Machine) -> dict:
     import re
     import subprocess
@@ -80,13 +98,12 @@ else
     echo "GPU: N/A"
 fi
 echo "PROCS:"
-ps -eo pid,cmd 2>/dev/null | grep -E 'train-agent|train_agent' | grep -v grep || true
+ps -eo pid,etime,cmd 2>/dev/null | grep -E 'train-agent|train_agent' | grep -v grep || true
 echo "LOGS:"
 ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
     TAIL_LINES=$(tail -n 50 "$logpath" 2>/dev/null)
 
     ITER_REGEX="--- Iteration ([0-9]+)/([0-9]+) ---"
-    TIMINGS_REGEX="\[timings @ iter ([0-9]+)\] total tracked ([0-9.]+)s"
     EVAL_REGEX="Evaluating gauntlet"
     PLAY_REGEX="Collecting self-play"
     BUFFER_REGEX="Training on buffer"
@@ -96,8 +113,6 @@ ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
 
     CURRENT_ITER=""
     TOTAL_ITER=""
-    TRACKED_ITER=""
-    TRACKED_TIME=""
     STEP=""
     DONE_MSG=""
 
@@ -114,9 +129,6 @@ ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
         elif [[ "$line" =~ $COMPLETE_REGEX ]]; then
             LOSS_PART="${BASH_REMATCH[1]}"
             STEP="Training complete (${LOSS_PART%% |*})"
-        elif [[ "$line" =~ $TIMINGS_REGEX ]]; then
-            TRACKED_ITER="${BASH_REMATCH[1]}"
-            TRACKED_TIME="${BASH_REMATCH[2]}"
         elif [[ "$line" =~ $DONE_REGEX ]]; then
             DONE_MSG="Done (best avg: ${BASH_REMATCH[1]})"
         elif [[ "$line" =~ $ERROR_REGEX ]]; then
@@ -124,42 +136,9 @@ ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
         fi
     done <<< "$TAIL_LINES"
 
-    ETA_STR=""
-    if [ -n "$CURRENT_ITER" ] && [ -n "$TOTAL_ITER" ] && [ -n "$TRACKED_ITER" ] && [ -n "$TRACKED_TIME" ]; then
-        REM_ITER=$(($TOTAL_ITER - $CURRENT_ITER))
-        if [ "$REM_ITER" -gt 0 ] && [ "$TRACKED_ITER" -gt 0 ]; then
-            AVG_TIME=$(awk -v t="$TRACKED_TIME" -v i="$TRACKED_ITER" "BEGIN {print t / i}")
-            ETA_SECS=$(awk -v r="$REM_ITER" -v a="$AVG_TIME" "BEGIN {printf \"%.0f\", r * a}")
-            H=$(($ETA_SECS / 3600))
-            M=$((($ETA_SECS % 3600) / 60))
-            if [ "$H" -gt 0 ]; then
-                ETA_STR=", ${H}h ${M}m remaining"
-            else
-                ETA_STR=", ${M}m remaining"
-            fi
-        fi
-    fi
-
-    PROGRESS=""
-    if [ -n "$DONE_MSG" ]; then
-        PROGRESS="$DONE_MSG"
-    elif [ -n "$CURRENT_ITER" ]; then
-        ITER="Iter $CURRENT_ITER/$TOTAL_ITER"
-        if [ -n "$STEP" ]; then
-            PROGRESS="$ITER - $STEP$ETA_STR"
-        else
-            PROGRESS="$ITER$ETA_STR"
-        fi
-    else
-        LAST_LINE=$(tail -n 1 "$logpath" 2>/dev/null | xargs)
-        if [ -n "$LAST_LINE" ]; then
-            PROGRESS="$LAST_LINE"
-        else
-            PROGRESS="No logs yet"
-        fi
-    fi
-
-    echo "  LOG: $(basename "$logpath") | LAST: $PROGRESS"
+    FILENAME=$(basename "$logpath")
+    RUN_ID="${FILENAME%.log}"
+    echo "LOG_PARSED: run_id=$RUN_ID | curr=$CURRENT_ITER | total=$TOTAL_ITER | step=$STEP | done=$DONE_MSG"
 done
 """
     ssh_cmd = ["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes", machine.ssh, remote_script]
@@ -174,7 +153,7 @@ done
         cpu_util = "unknown"
         gpu = "N/A"
         procs = []
-        logs = {}
+        parsed_logs = {}
 
         lines = res.stdout.splitlines()
         mode = None
@@ -210,29 +189,68 @@ done
             elif mode == "procs":
                 if line.strip():
                     procs.append(line.strip())
-            elif mode == "logs":
-                if line.startswith("  LOG:"):
-                    parts = line.split("| LAST:", 1)
-                    log_name = parts[0].replace("  LOG:", "").strip()
-                    run_id = log_name.replace(".log", "")
-                    last_line = parts[1].strip() if len(parts) > 1 else ""
-                    logs[run_id] = last_line
+            elif line.startswith("LOG_PARSED:"):
+                payload = line.split(":", 1)[1].strip()
+                log_parts = [p.strip() for p in payload.split("|")]
+                log_data = {}
+                for part in log_parts:
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        log_data[k.strip()] = v.strip()
+                if "run_id" in log_data:
+                    parsed_logs[log_data["run_id"]] = log_data
 
         running_runs = []
         seen_run_ids = set()
         seen_cmds = set()
         for proc in procs:
-            parts = proc.split(None, 1)
-            if len(parts) < 2:
+            parts = proc.strip().split(None, 2)
+            if len(parts) < 3:
                 continue
-            pid, cmd = parts[0], parts[1]
+            pid, etime, cmd = parts[0], parts[1], parts[2]
+
             run_ids = re.findall(r"[a-f0-9]{32}", cmd)
             if run_ids:
                 run_id = run_ids[0]
                 if run_id not in seen_run_ids:
                     seen_run_ids.add(run_id)
-                    last_log = logs.get(run_id, "No logs yet")
-                    running_runs.append((pid, run_id, last_log))
+
+                    log_data = parsed_logs.get(run_id, {})
+                    curr = log_data.get("curr", "")
+                    total = log_data.get("total", "")
+                    step = log_data.get("step", "")
+                    done = log_data.get("done", "")
+
+                    eta_str = ""
+                    if curr and total:
+                        try:
+                            curr_val = int(curr)
+                            total_val = int(total)
+                            if curr_val > 0 and total_val > curr_val:
+                                elapsed_secs = _parse_etime(etime)
+                                avg_iter_time = elapsed_secs / curr_val
+                                rem_iters = total_val - curr_val
+                                eta_secs = int(rem_iters * avg_iter_time)
+                                h = eta_secs // 3600
+                                m = (eta_secs % 3600) // 60
+                                if h > 0:
+                                    eta_str = f", {h}h {m}m remaining"
+                                else:
+                                    eta_str = f", {m}m remaining"
+                        except Exception:  # noqa: S110
+                            pass
+
+                    if done:
+                        progress_desc = done
+                    elif curr:
+                        progress_desc = f"Iter {curr}/{total}"
+                        if step:
+                            progress_desc += f" - {step}"
+                        progress_desc += eta_str
+                    else:
+                        progress_desc = "Running"
+
+                    running_runs.append((pid, run_id, progress_desc))
             else:
                 if not any(x in cmd for x in ["uv run kego", "/bin/kego"]):
                     cmd_norm = cmd[:25]
