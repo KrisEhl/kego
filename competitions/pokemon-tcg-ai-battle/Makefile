@@ -56,7 +56,7 @@ models:
 #   make leaderboard GAMES=4 SEARCH_COUNT=10 WORKERS=8 DEBUG=1
 GAMES        ?= 200
 SEARCH_COUNT ?= 10
-WORKERS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+WORKERS      ?= $(shell n=$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4); if [ "$$n" -gt 2 ]; then echo $$((n - 2)); else echo 1; fi)
 DEBUG        ?= 0
 
 # Toggle verbose logging based on DEBUG
