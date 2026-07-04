@@ -100,3 +100,48 @@ def test_format_leaderboard_empty():
     from kego.tracking import format_leaderboard
 
     assert "no models" in format_leaderboard([], columns=["gauntlet_avg"]).lower()
+
+
+def test_write_and_read_ratings_round_trip(tmp_path):
+    pytest.importorskip("mlflow")
+    from kego.tracking import read_ratings, register_checkpoint, write_ratings
+
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    ckpt = tmp_path / "m.pth"
+    ckpt.write_bytes(b"w")
+    register_checkpoint(uri, "pokemon", str(ckpt), tags={"gauntlet_avg": 90.2})
+
+    write_ratings(uri, "pokemon", {"1": {"elo": 1748.04, "elo_rd": 41.2, "games": 140}})
+
+    ratings = read_ratings(uri, "pokemon")
+    assert ratings["1"]["elo"] == 1748.0
+    assert ratings["1"]["elo_rd"] == 41.2
+    assert ratings["1"]["games"] == 140
+
+
+def test_write_ratings_preserves_training_tags(tmp_path):
+    pytest.importorskip("mlflow")
+    from kego.tracking import leaderboard, register_checkpoint, write_ratings
+
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    ckpt = tmp_path / "m.pth"
+    ckpt.write_bytes(b"w")
+    register_checkpoint(uri, "pokemon", str(ckpt), tags={"gauntlet_avg": 90.2, "wr_random": 100})
+
+    write_ratings(uri, "pokemon", {"1": {"elo": 1600.0, "elo_rd": 200.0, "games": 8}})
+
+    row = leaderboard(uri, "pokemon", sort_by="elo")[0]
+    assert row["gauntlet_avg"] == "90.2"  # training tag untouched
+    assert row["wr_random"] == "100"
+    assert row["rating_status"] == "rated"
+
+
+def test_read_ratings_skips_unrated(tmp_path):
+    pytest.importorskip("mlflow")
+    from kego.tracking import read_ratings, register_checkpoint
+
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    ckpt = tmp_path / "m.pth"
+    ckpt.write_bytes(b"w")
+    register_checkpoint(uri, "pokemon", str(ckpt), tags={"gauntlet_avg": 90.2})
+    assert read_ratings(uri, "pokemon") == {}

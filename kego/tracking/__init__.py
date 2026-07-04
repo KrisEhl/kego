@@ -4,7 +4,7 @@ from .mlflow import (
     load_predictions_from_mlflow,
     load_predictions_from_runs,
 )
-from .registry import format_leaderboard, leaderboard, register_checkpoint
+from .registry import format_leaderboard, leaderboard, read_ratings, register_checkpoint, write_ratings
 from .resolve import default_tracking_uri, resolve_tracking_uri
 from .tracker import Tracker, create_run
 
@@ -18,6 +18,8 @@ __all__ = [
     "load_predictions_from_ensemble",
     "load_predictions_from_mlflow",
     "load_predictions_from_runs",
+    "read_ratings",
     "register_checkpoint",
     "resolve_tracking_uri",
+    "write_ratings",
 ]

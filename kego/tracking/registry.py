@@ -58,6 +58,32 @@ def leaderboard(uri: str, name: str, sort_by: str = "elo", desc: bool = True) ->
     return sorted(rows, key=key, reverse=desc)
 
 
+def read_ratings(uri: str, name: str) -> dict[str, dict]:
+    """version -> {"elo", "elo_rd", "games"} for versions already carrying an ``elo`` tag."""
+    out: dict[str, dict] = {}
+    for row in leaderboard(uri, name, sort_by="version"):
+        if "elo" not in row:
+            continue
+        out[row["version"]] = {
+            "elo": float(row["elo"]),
+            "elo_rd": float(row.get("elo_rd", 350.0)),
+            "games": int(float(row.get("games", 0))),
+        }
+    return out
+
+
+def write_ratings(uri: str, name: str, ratings: dict[str, dict]) -> None:
+    """Write ``elo``/``elo_rd``/``games``/``rating_status`` tags onto each registry version."""
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient(tracking_uri=uri)
+    for version, r in ratings.items():
+        client.set_model_version_tag(name, str(version), "elo", str(round(r["elo"], 1)))
+        client.set_model_version_tag(name, str(version), "elo_rd", str(round(r["elo_rd"], 1)))
+        client.set_model_version_tag(name, str(version), "games", str(int(r["games"])))
+        client.set_model_version_tag(name, str(version), "rating_status", "rated")
+
+
 def format_leaderboard(rows: list[dict], columns: list[str]) -> str:
     """Render leaderboard ``rows`` (already sorted) as an aligned table with a rank column;
     missing cells show ``-``."""
