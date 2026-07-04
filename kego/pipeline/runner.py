@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from kego.fleet import Machine
 from kego.pipeline.config import PipelineConfig
 from kego.pipeline.ensemble import EnsembleResult
 from kego.pipeline.evaluate import EvalReport
@@ -65,7 +66,14 @@ def _poll_machine(machine: Machine) -> dict:
     import subprocess
 
     remote_script = """
+if [ "$(uname)" = "Darwin" ]; then
+    CPU_UTIL=$(top -l 1 | awk '/CPU usage/ {print $3}' | tr -d '%')
+else
+    CPU_UTIL=$(top -bn1 | grep -i '%Cpu(s)' | awk '{for(i=1;i<=NF;i++) if($i ~ /id/) print 100 - $(i-1)}')
+fi
+echo "CPU_UTIL: $CPU_UTIL%"
 echo "LOAD: $(cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null || echo 'unknown')"
+echo "CORES: $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 'unknown')"
 if command -v nvidia-smi >/dev/null 2>&1; then
     echo "GPU: $(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1)"
 else
@@ -86,6 +94,8 @@ done
             return {"name": machine.name, "status": "Offline", "error": res.stderr.strip() or "Connection failed"}
 
         load = "unknown"
+        cores = "unknown"
+        cpu_util = "unknown"
         gpu = "N/A"
         procs = []
         logs = {}
@@ -99,6 +109,10 @@ done
                     load = " ".join(load_parts[:3])
                 else:
                     load = " ".join(load_parts) or "unknown"
+            elif line.startswith("CORES:"):
+                cores = line.split(":", 1)[1].strip()
+            elif line.startswith("CPU_UTIL:"):
+                cpu_util = line.split(":", 1)[1].strip()
             elif line.startswith("GPU:"):
                 val = line.split(":", 1)[1].strip()
                 if val and val != "N/A":
@@ -140,18 +154,21 @@ done
                 cmd = " ".join(proc.split()[1:])
                 running_runs.append((pid, cmd[:25], ""))
 
-        return {
-            "name": machine.name,
-            "status": "Online",
-            "role": machine.role,
-            "load": load,
-            "gpu": gpu,
-            "runs": running_runs,
-        }
+        load_val = f"{load} ({cores}c)" if cores != "unknown" else load
+        cpu_val = f"{cpu_util} / {load_val}" if cpu_util != "unknown" else load_val
     except subprocess.TimeoutExpired:
         return {"name": machine.name, "status": "Offline", "error": "Timeout"}
     except Exception as e:
         return {"name": machine.name, "status": "Offline", "error": str(e)}
+    else:
+        return {
+            "name": machine.name,
+            "status": "Online",
+            "role": machine.role,
+            "load": cpu_val,
+            "gpu": gpu,
+            "runs": running_runs,
+        }
 
 
 @dataclass
@@ -383,10 +400,10 @@ class Pipeline:
             jobs = client.list_jobs()
             active_jobs = [j for j in jobs if not j.status.is_terminal()]
             ray_queried = True
-        except Exception as e:
-            # Surface the failure instead of masking it as "no active runs" — an
-            # unreachable cluster is not the same as an idle one.
-            print(f"\nWarning: could not query Ray cluster at {dashboard_address}: {e}")
+        except Exception:
+            # Surface that Ray is offline, and guide how to start it.
+            print(f"\nRay Cluster: Offline (unreachable at {dashboard_address})")
+            print("  -> To start the cluster head, run:  make ray-head")
 
         if ray_queried and active_jobs:
             print("\nActive Remote Ray Jobs:")
@@ -413,11 +430,11 @@ class Pipeline:
                 fleet = load_fleet(fleet_path)
                 if fleet.machines:
                     print("\nFleet Status:")
-                    print("=" * 110)
+                    print("=" * 124)
                     print(
-                        f"{'Machine':<25} {'Status':<8} {'Role':<6} {'Load Average':<18} {'GPU Util/Mem':<18} {'Active Runs / Latest Log'}"
+                        f"{'Machine':<25} {'Status':<8} {'Role':<6} {'CPU Util/Load (Cores)':<32} {'GPU Util/Mem':<18} {'Active Runs / Latest Log'}"
                     )
-                    print("-" * 110)
+                    print("-" * 124)
 
                     import concurrent.futures
 
@@ -434,7 +451,7 @@ class Pipeline:
                             runs = res.get("runs", [])
 
                             if not runs:
-                                print(f"{name:<25} {status_str:<8} {role:<6} {load:<18} {gpu:<18} None")
+                                print(f"{name:<25} {status_str:<8} {role:<6} {load:<32} {gpu:<18} None")
                             else:
                                 first = True
                                 for pid, run_desc, last_log in runs:
@@ -446,15 +463,15 @@ class Pipeline:
                                     log_info = f" -> {last_log}" if last_log else ""
                                     if first:
                                         print(
-                                            f"{name:<25} {status_str:<8} {role:<6} {load:<18} {gpu:<18} {run_info}{log_info}"
+                                            f"{name:<25} {status_str:<8} {role:<6} {load:<32} {gpu:<18} {run_info}{log_info}"
                                         )
                                         first = False
                                     else:
-                                        print(f"{'':<25} {'':<8} {'':<6} {'':<18} {'':<18} {run_info}{log_info}")
+                                        print(f"{'':<25} {'':<8} {'':<6} {'':<32} {'':<18} {run_info}{log_info}")
                         else:
                             err = res.get("error", "Offline")
-                            print(f"{name:<25} {status_str:<8} {'-':<6} {'-':<18} {'-':<18} ({err})")
-                    print("=" * 110)
+                            print(f"{name:<25} {status_str:<8} {'-':<6} {'-':<32} {'-':<18} ({err})")
+                    print("=" * 124)
             except Exception as e:
                 print(f"\nWarning: could not query fleet status from {fleet_path}: {e}")
 
