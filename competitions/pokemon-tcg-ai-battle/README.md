@@ -2,7 +2,7 @@
 - [~] Track 1 - Search/data efficiency ablation: deeper MCTS targets with fewer optimizer steps.
 - [ ] Track 2 - League evaluation: compare registered checkpoints with enough games to distinguish Elo from saturated gauntlet score.
 - [~] Track 3 - Self-play diversity ablation: increase generated games per iteration before changing model architecture.
-- [ ] Track 4 - Architecture ablation: test smaller/faster or deeper encoder only after search/data runs are ranked.
+- [~] Track 4 - Architecture ablation: test smaller/faster or deeper encoder only after search/data runs are ranked.
 
 ## Results log
 | Run | Model | Win rate / Elo | Notes |
@@ -13,6 +13,7 @@
 | Registry v4 | MCTS Transformer duplicate baseline-ish seed | gauntlet_avg 62.25 | Finished DESKTOP seed-variance run; registered without league Elo yet. |
 | search40_train100 | MCTS Transformer `(256, 4, 512, 2, 2)` | TBD | In progress: `search_count=40`, `train_steps=100`, `self_play_games=48`, batched MCTS. Tests whether deeper targets beat extra gradient steps. |
 | selfplay96_train100 | MCTS Transformer `(256, 4, 512, 2, 2)` | TBD | In progress: `search_count=25`, `train_steps=100`, `self_play_games=96`, batched MCTS. Tests whether more diverse targets beat extra gradient steps. |
+| small192_selfplay48_train100 | MCTS Transformer `(192, 4, 384, 2, 2)` | TBD | In progress: `search_count=25`, `train_steps=100`, `self_play_games=48`, batched MCTS. Tests whether a smaller/faster model is sufficient. |
 
 ## Dead ends
 | Approach | Result | Why it failed |

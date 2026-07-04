@@ -11,10 +11,10 @@ agent_file = "agents/abomasnow.py"
 deck_file = "decks/abomasnow.csv"
 
 [train]
-# Self-play diversity ablation: keep baseline search depth, generate more games,
-# and spend fewer repeated optimizer steps per iteration.
+# Small-model ablation: keep baseline search/data scale but reduce model width
+# in agents/mcts.py to test whether capacity is the bottleneck.
 eval_games = 16         # games PER opponent; gate = avg over 4 rule agents (~64 games)
-self_play_games = 96    # 6 per worker on 16 workers
+self_play_games = 48    # 3 per worker on 16 workers
 eval_every = 5          # gauntlet every N iters
 search_count = 25       # baseline search depth for comparison against search40_train100
 batched = true          # leaf-batching: UCB descent + virtual loss, batched eval (depth + speed)
@@ -27,4 +27,4 @@ eval_opponents = ["random", "rule:zacian", "rule:abomasnow", "rule:dragapult", "
 # The "rule:<name>" option exists for careful curriculum/small-dose experiments, not bulk.
 selfplay_opponents = ["self"]
 replay_buffer_size = 200000   # larger sliding window of recent self-play (less wobble/forgetting)
-train_steps = 100             # fewer optimizer steps to shift wall-clock toward data diversity
+train_steps = 100             # fewer optimizer steps to shift wall-clock toward architecture testing
