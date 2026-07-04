@@ -230,12 +230,36 @@ def main():
     # 3. Define the participants
     participants = {}
 
-    for name, path in model_checkpoints.items():
-        participants[name] = {
+    for v in versions:
+        v_name = f"Registry v{v.version}"
+        if v_name in model_checkpoints:
+            deck_name = v.tags.get("deck", "abomasnow") if v.tags else "abomasnow"
+            participants[v_name] = {
+                "type": "mcts",
+                "file": "competitions/pokemon-tcg-ai-battle/agents/mcts.py",
+                "deck": f"competitions/pokemon-tcg-ai-battle/decks/{deck_name}.csv",
+                "model_path": model_checkpoints[v_name],
+            }
+
+    # Check for local checkpoints as well
+    local_mcts = comp_dir / "outputs" / "mcts.pth"
+    if local_mcts.exists():
+        local_deck = "decks/abomasnow.csv"
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore
+        try:
+            with open(comp_dir / "kego.toml", "rb") as f:
+                toml_data = tomllib.load(f)
+            local_deck = toml_data.get("competition", {}).get("deck_file", local_deck)
+        except Exception:
+            pass
+        participants["Local (outputs/mcts.pth)"] = {
             "type": "mcts",
             "file": "competitions/pokemon-tcg-ai-battle/agents/mcts.py",
-            "deck": "competitions/pokemon-tcg-ai-battle/decks/abomasnow.csv",
-            "model_path": path,
+            "deck": str(comp_dir / local_deck),
+            "model_path": str(local_mcts),
         }
 
     rule_agents = {

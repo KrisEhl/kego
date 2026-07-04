@@ -495,6 +495,7 @@ def run_training_loop(
     selfplay_opponents: list[str] | None = None,
     replay_buffer_size: int = 100000,
     train_steps: int = 100,
+    deck_file: str | None = None,
 ):
     import multiprocessing as mp
 
@@ -526,7 +527,9 @@ def run_training_loop(
     # children (and the inline path) inherit it via the environment.
     os.environ["MCTS_BATCHED"] = "1" if batched else "0"
 
-    deck_path = comp_dir / "decks" / "abomasnow.csv"
+    if deck_file is None:
+        deck_file = "decks/abomasnow.csv"
+    deck_path = comp_dir / deck_file
     sample_deck = load_deck(str(deck_path))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -777,6 +780,7 @@ def run_training_loop(
                     str(output_file),
                     tags={
                         **_run_tags,
+                        "deck": deck_path.stem,
                         "gauntlet_avg": round(best_score, 2),
                         **{f"wr_{n}": round(w, 2) for n, w in best_results.items()},
                     },

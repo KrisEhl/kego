@@ -62,6 +62,7 @@ class PokemonTCGAIBattleTask:
         replay_buffer_size = 100000
         train_steps = 100
         config_path = comp_dir / "kego.toml"
+        deck_file = "decks/abomasnow.csv"
         if config_path.exists():
             try:
                 with open(config_path, "rb") as f:
@@ -77,6 +78,9 @@ class PokemonTCGAIBattleTask:
                 selfplay_opponents = train_cfg.get("selfplay_opponents", selfplay_opponents)
                 replay_buffer_size = train_cfg.get("replay_buffer_size", replay_buffer_size)
                 train_steps = train_cfg.get("train_steps", train_steps)
+
+                comp_cfg = toml_data.get("competition", {})
+                deck_file = comp_cfg.get("deck_file", deck_file)
             except Exception:
                 pass
 
@@ -96,6 +100,7 @@ class PokemonTCGAIBattleTask:
             selfplay_opponents=selfplay_opponents,
             replay_buffer_size=replay_buffer_size,
             train_steps=train_steps,
+            deck_file=deck_file,
         )
 
     def make_submission(self, ids: np.ndarray, preds: np.ndarray) -> Path:
