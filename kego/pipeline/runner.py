@@ -27,6 +27,20 @@ from kego.pipeline.task import Task, get_task
 from kego.pipeline.train import TrainContext, Trainer
 
 
+def _is_port_open(address: str, timeout: float = 0.2) -> bool:
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(address)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 8265
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
 def _resolve_dashboard_address(ray_address: str | None = None) -> str:
     """Return the HTTP Ray dashboard URL (``http://host:8265``).
 
@@ -141,10 +155,10 @@ ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
     echo "LOG_PARSED: run_id=$RUN_ID | curr=$CURRENT_ITER | total=$TOTAL_ITER | step=$STEP | done=$DONE_MSG"
 done
 """
-    ssh_cmd = ["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes", machine.ssh, remote_script]
+    ssh_cmd = ["ssh", "-o", "ConnectTimeout=1", "-o", "BatchMode=yes", machine.ssh, remote_script]
 
     try:
-        res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=5)
+        res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=2.5)
         if res.returncode != 0:
             return {"name": machine.name, "status": "Offline", "error": res.stderr.strip() or "Connection failed"}
 
@@ -498,13 +512,18 @@ class Pipeline:
         dashboard_address = _resolve_dashboard_address(os.environ.get("RAY_ADDRESS"))
         ray_queried = False
         active_jobs = []
-        try:
-            client = _make_ray_job_client(dashboard_address)
-            jobs = client.list_jobs()
-            active_jobs = [j for j in jobs if not j.status.is_terminal()]
-            ray_queried = True
-        except Exception:
-            # Surface that Ray is offline, and guide how to start it.
+        if _is_port_open(dashboard_address, timeout=0.2):
+            try:
+                client = _make_ray_job_client(dashboard_address)
+                jobs = client.list_jobs()
+                active_jobs = [j for j in jobs if not j.status.is_terminal()]
+                ray_queried = True
+            except Exception:
+                # Surface that Ray is offline, and guide how to start it.
+                print(f"\nRay Cluster: Offline (unreachable at {dashboard_address})")
+                print("  -> To start the cluster head, run:  make ray-head")
+        else:
+            # Surface that Ray is offline immediately without blocking.
             print(f"\nRay Cluster: Offline (unreachable at {dashboard_address})")
             print("  -> To start the cluster head, run:  make ray-head")
 
