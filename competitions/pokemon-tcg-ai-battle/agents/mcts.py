@@ -43,7 +43,7 @@ decoder_size = decoder_card_offset + (1 + decoder_main_feature + 48) * card_coun
 # (d_model, num_heads, d_feedforward, n_encoder_layers, n_decoder_layers).
 # Single source of truth: training (train_agent.py) and inference both build MyModel
 # from this, so checkpoints always match. num_heads must divide d_model.
-MODEL_ARGS = (256, 4, 512, 2, 2)
+MODEL_ARGS = (192, 4, 384, 2, 2)
 
 
 class DecoderLayer(torch.nn.Module):
@@ -380,14 +380,14 @@ class MCTSTransformerAgent(BaseAgent):
         self.model = MyModel(*MODEL_ARGS).to(self.device)
         self.model.eval()
 
-        if model_path and os.path.exists(model_path):
+        if model_path:
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"[MCTSTransformerAgent] model_path not found: {model_path}")
             try:
                 self.model.load_state_dict(torch.load(model_path, map_location=self.device))
                 print(f"[MCTSTransformerAgent] loaded weights from {model_path}", flush=True)
             except Exception as e:
-                print(f"[MCTSTransformerAgent] FAILED to load {model_path}: {e}", flush=True)
-        elif model_path:
-            print(f"[MCTSTransformerAgent] model_path not found: {model_path} (untrained weights)", flush=True)
+                raise ValueError(f"[MCTSTransformerAgent] FAILED to load weights from {model_path}: {e}") from e
 
         # Inference search depth (override with MCTS_SEARCH_COUNT). More = stronger,
         # slower. Inference has no training-time budget, so it can go much deeper than
