@@ -234,9 +234,9 @@ done
                                 h = eta_secs // 3600
                                 m = (eta_secs % 3600) // 60
                                 if h > 0:
-                                    eta_str = f", {h}h {m}m remaining"
+                                    eta_str = f"{h}h {m}m"
                                 else:
-                                    eta_str = f", {m}m remaining"
+                                    eta_str = f"{m}m"
                         except Exception:  # noqa: S110
                             pass
 
@@ -246,17 +246,16 @@ done
                         progress_desc = f"Iter {curr}/{total}"
                         if step:
                             progress_desc += f" - {step}"
-                        progress_desc += eta_str
                     else:
                         progress_desc = "Running"
 
-                    running_runs.append((pid, run_id, progress_desc))
+                    running_runs.append((pid, run_id, progress_desc, eta_str))
             else:
                 if not any(x in cmd for x in ["uv run kego", "/bin/kego"]):
                     cmd_norm = cmd[:25]
                     if cmd_norm not in seen_cmds:
                         seen_cmds.add(cmd_norm)
-                        running_runs.append((pid, cmd[:25], ""))
+                        running_runs.append((pid, cmd[:25], "", ""))
 
         load_val = f"{load} ({cores}c)" if cores != "unknown" else load
         cpu_val = f"{cpu_util} / {load_val}" if cpu_util != "unknown" else load_val
@@ -534,11 +533,11 @@ class Pipeline:
                 fleet = load_fleet(fleet_path)
                 if fleet.machines:
                     print("\nFleet Status:")
-                    print("=" * 124)
+                    print("=" * 132)
                     print(
-                        f"{'Machine':<25} {'Status':<8} {'Role':<6} {'CPU Util/Load (Cores)':<32} {'GPU Util/Mem':<18} {'Active Runs / Latest Log'}"
+                        f"{'Machine':<25} {'Status':<8} {'Role':<6} {'CPU Util/Load (Cores)':<32} {'GPU Util/Mem':<18} {'ETA':<15} {'Active Runs / Latest Log'}"
                     )
-                    print("-" * 124)
+                    print("-" * 132)
 
                     import concurrent.futures
 
@@ -555,27 +554,30 @@ class Pipeline:
                             runs = res.get("runs", [])
 
                             if not runs:
-                                print(f"{name:<25} {status_str:<8} {role:<6} {load:<32} {gpu:<18} None")
+                                print(f"{name:<25} {status_str:<8} {role:<6} {load:<32} {gpu:<18} {'-':<15} None")
                             else:
                                 first = True
-                                for pid, run_desc, last_log in runs:
+                                for pid, run_desc, last_log, eta in runs:
                                     run_info = (
                                         f"PID {pid} ({run_desc[:8]}...)"
                                         if len(run_desc) == 32
                                         else f"PID {pid} ({run_desc})"
                                     )
                                     log_info = f" -> {last_log}" if last_log else ""
+                                    eta_val = eta if eta else "-"
                                     if first:
                                         print(
-                                            f"{name:<25} {status_str:<8} {role:<6} {load:<32} {gpu:<18} {run_info}{log_info}"
+                                            f"{name:<25} {status_str:<8} {role:<6} {load:<32} {gpu:<18} {eta_val:<15} {run_info}{log_info}"
                                         )
                                         first = False
                                     else:
-                                        print(f"{'':<25} {'':<8} {'':<6} {'':<32} {'':<18} {run_info}{log_info}")
+                                        print(
+                                            f"{'':<25} {'':<8} {'':<6} {'':<32} {'':<18} {eta_val:<15} {run_info}{log_info}"
+                                        )
                         else:
                             err = res.get("error", "Offline")
-                            print(f"{name:<25} {status_str:<8} {'-':<6} {'-':<32} {'-':<18} ({err})")
-                    print("=" * 124)
+                            print(f"{name:<25} {status_str:<8} {'-':<6} {'-':<32} {'-':<18} {'-':<15} ({err})")
+                    print("=" * 132)
             except Exception as e:
                 print(f"\nWarning: could not query fleet status from {fleet_path}: {e}")
 
