@@ -17,10 +17,10 @@ train-agent-cluster:
 	uv run kego train-agent --executor ray --task $(TASK) --epochs $(EPOCHS) --output $(OUTPUT)
 
 # Dispatch training to a standalone fleet machine (rsync working tree + SSH-launch detached).
-#   make train-agent-fleet MACHINE=m5 EPOCHS=200
-# Follow with `kego ls` / `kego logs <run>`. Requires the machine in fleet.toml + the hub up.
+#   make train-agent-fleet MACHINE=omarchyl EPOCHS=200
+# Follow with `kego status` or monitor in MLflow. Requires the machine in fleet.toml.
 train-agent-fleet:
-	if [ -z "$(MACHINE)" ]; then echo "MACHINE is unset (e.g. MACHINE=m5)" && exit 1; fi
+	if [ -z "$(MACHINE)" ]; then echo "MACHINE is unset (e.g. MACHINE=omarchyl)" && exit 1; fi
 	uv run kego train-agent --task $(TASK) --target $(MACHINE) --epochs $(EPOCHS) --output $(OUTPUT)
 
 # --- Ray cluster (the head runs on omarchyd; required before train-agent-cluster) ---
