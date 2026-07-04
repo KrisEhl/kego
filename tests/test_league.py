@@ -49,4 +49,4 @@ def test_rate_round_uses_prior_rating_for_known_player():
     prior = {"v1": Rating(1700.0, 60.0)}
     results = {"v1": [("zacian", 0.0)] * 2}  # v1 unexpectedly loses to a weaker anchor
     out = rate_round(prior, results, anchors)
-    assert out["v1"].elo < 1700.0
+    assert 1500.0 < out["v1"].elo < 1700.0  # used prior 1700/60 (a default-fallback would crash to ~1132)
