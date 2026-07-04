@@ -35,10 +35,13 @@ def main():
         sys.exit(1)
 
     try:
-        import tomli
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore
 
         with open(kego_toml_path, "rb") as f:
-            cfg = tomli.load(f)
+            cfg = tomllib.load(f)
         comp_cfg = cfg.get("competition", {})
         kaggle_user = comp_cfg.get("kaggle_user")
     except Exception as e:
