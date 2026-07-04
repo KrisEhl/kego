@@ -14,6 +14,7 @@
 | search40_train100 | MCTS Transformer `(256, 4, 512, 2, 2)` | TBD | In progress: `search_count=40`, `train_steps=100`, `self_play_games=48`, batched MCTS. Tests whether deeper targets beat extra gradient steps. |
 | selfplay96_train100 | MCTS Transformer `(256, 4, 512, 2, 2)` | TBD | In progress: `search_count=25`, `train_steps=100`, `self_play_games=96`, batched MCTS. Tests whether more diverse targets beat extra gradient steps. |
 | small192_selfplay48_train100 | MCTS Transformer `(192, 4, 384, 2, 2)` | TBD | In progress: `search_count=25`, `train_steps=100`, `self_play_games=48`, batched MCTS. Tests whether a smaller/faster model is sufficient. |
+| small192_dragapult_train100 | MCTS Transformer `(192, 4, 384, 2, 2)` on Dragapult deck | TBD | In progress: CPU probe on `mn-exjk9p93n75h`, `search_count=25`, `train_steps=100`, `self_play_games=48`, 100 epochs. Tests deck sensitivity. |
 
 ## Dead ends
 | Approach | Result | Why it failed |

@@ -8,17 +8,17 @@ inference_notebook = ""
 checkpoint_dir = "outputs"
 primary_metric = "win_rate"
 agent_file = "agents/abomasnow.py"
-deck_file = "decks/abomasnow.csv"
+deck_file = "decks/dragapult.csv"
 
 [train]
-# Small-model ablation: keep baseline search/data scale but reduce model width
-# in agents/mcts.py to test whether capacity is the bottleneck.
+# Dragapult deck probe: keep the small-model baseline scale and switch the
+# training deck to test whether deck choice is a bigger lever than model tuning.
 eval_games = 16         # games PER opponent; gate = avg over 4 rule agents (~64 games)
 self_play_games = 48    # 3 per worker on 16 workers
 eval_every = 5          # gauntlet every N iters
 search_count = 25       # baseline search depth for comparison against search40_train100
 batched = true          # leaf-batching: UCB descent + virtual loss, batched eval (depth + speed)
-num_workers = 16        # cap below cores to avoid memory-bandwidth contention
+num_workers = 12        # CPU probe host has 14 cores; leave headroom for system/MLflow
 # Opponents: "random" floor, "rule:<name>" heuristic meta deck, "self" = best checkpoint.
 # Best checkpoint is gated on the average win-rate vs the rule agents.
 eval_opponents = ["random", "rule:zacian", "rule:abomasnow", "rule:dragapult", "rule:lucario", "self"]
