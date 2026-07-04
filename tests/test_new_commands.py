@@ -66,12 +66,35 @@ def test_parser_new_commands():
 
     # 5. Test train-agent parser
     args = parser.parse_args(
-        ["train-agent", "--epochs", "10", "--output", "my_model.pth", "--init-checkpoint", "registry:12"]
+        [
+            "train-agent",
+            "--epochs",
+            "10",
+            "--output",
+            "my_model.pth",
+            "--init-checkpoint",
+            "registry:12",
+            "--deck-file",
+            "decks/dragapult.csv",
+            "--self-play-games",
+            "96",
+            "--search-count",
+            "40",
+            "--train-steps",
+            "80",
+            "--num-workers",
+            "12",
+        ]
     )
     assert args.command == "train-agent"
     assert args.epochs == 10
     assert args.output == "my_model.pth"
     assert args.init_checkpoint == "registry:12"
+    assert args.deck_file == "decks/dragapult.csv"
+    assert args.self_play_games == 96
+    assert args.search_count == 40
+    assert args.train_steps == 80
+    assert args.num_workers == 12
 
 
 def test_status_execution(tmp_path, monkeypatch, capsys):
@@ -374,11 +397,25 @@ def test_train_agent_execution(tmp_path, monkeypatch):
     pipeline = Pipeline(config)
     pipeline.task = task
 
-    pipeline.train_agent(epochs=5, output_path="out.pth", init_checkpoint="registry:12")
+    pipeline.train_agent(
+        epochs=5,
+        output_path="out.pth",
+        init_checkpoint="registry:12",
+        deck_file="decks/lucario.csv",
+        self_play_games=72,
+        search_count=32,
+        train_steps=80,
+        num_workers=10,
+    )
     assert task.trained
     assert task.epochs == 5
     assert task.output_path == "out.pth"
     assert task.kwargs["init_checkpoint"] == "registry:12"
+    assert task.kwargs["deck_file"] == "decks/lucario.csv"
+    assert task.kwargs["self_play_games"] == 72
+    assert task.kwargs["search_count"] == 32
+    assert task.kwargs["train_steps"] == 80
+    assert task.kwargs["num_workers"] == 10
 
 
 # ---------------------------------------------------------------------------
@@ -465,12 +502,37 @@ def test_models_parser():
 def test_train_agent_target_parser():
     parser = build_parser()
     args = parser.parse_args(
-        ["train-agent", "--task", "pkmn", "--target", "m5", "--epochs", "200", "--init-checkpoint", "registry:7"]
+        [
+            "train-agent",
+            "--task",
+            "pkmn",
+            "--target",
+            "m5",
+            "--epochs",
+            "200",
+            "--init-checkpoint",
+            "registry:7",
+            "--deck-file",
+            "decks/lucario.csv",
+            "--self-play-games",
+            "72",
+            "--search-count",
+            "35",
+            "--train-steps",
+            "80",
+            "--num-workers",
+            "10",
+        ]
     )
     assert args.command == "train-agent"
     assert args.target == "m5"
     assert args.epochs == 200
     assert args.init_checkpoint == "registry:7"
+    assert args.deck_file == "decks/lucario.csv"
+    assert args.self_play_games == 72
+    assert args.search_count == 35
+    assert args.train_steps == 80
+    assert args.num_workers == 10
 
     # --target is optional (local run when omitted)
     args = parser.parse_args(["train-agent", "--epochs", "5"])
