@@ -11,13 +11,12 @@ agent_file = "agents/abomasnow.py"
 deck_file = "decks/abomasnow.csv"
 
 [train]
-# SCALED config (option 1): bigger net (MODEL_ARGS in agents/mcts.py) + deep search for
-# better targets. Leaf-batched MCTS (batched=true) gives real depth AND ~2 forwards/move
-# (~30x faster than sequential), so deep search is now cheap. `make train-agent-cluster EPOCHS=200`.
+# Search efficiency ablation: spend more on MCTS targets and less on repeated
+# optimizer steps. Leaf-batched MCTS keeps deeper search practical.
 eval_games = 16         # games PER opponent; gate = avg over 4 rule agents (~64 games)
 self_play_games = 48    # 3 per worker on 16 workers
 eval_every = 5          # gauntlet every N iters
-search_count = 25       # deeper search => better value/policy TARGETS (the real bottleneck)
+search_count = 40       # deeper search => better value/policy TARGETS (the real bottleneck)
 batched = true          # leaf-batching: UCB descent + virtual loss, batched eval (depth + speed)
 num_workers = 16        # cap below cores to avoid memory-bandwidth contention
 # Opponents: "random" floor, "rule:<name>" heuristic meta deck, "self" = best checkpoint.
@@ -28,4 +27,4 @@ eval_opponents = ["random", "rule:zacian", "rule:abomasnow", "rule:dragapult", "
 # The "rule:<name>" option exists for careful curriculum/small-dose experiments, not bulk.
 selfplay_opponents = ["self"]
 replay_buffer_size = 200000   # larger sliding window of recent self-play (less wobble/forgetting)
-train_steps = 200             # more gradient steps per iter (random minibatches from the buffer)
+train_steps = 100             # fewer optimizer steps to shift wall-clock toward target quality
