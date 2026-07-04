@@ -5,11 +5,11 @@ import random
 import torch
 
 try:
-    from agents.base import BaseAgent
-    from agents.base import get_card as get_card_helper
-except ImportError:
     from base_agent import BaseAgent
     from base_agent import get_card as get_card_helper
+except ImportError:
+    from agents.base import BaseAgent
+    from agents.base import get_card as get_card_helper
 from cg.api import (
     Card,
     Observation,
@@ -471,13 +471,27 @@ class MCTSTransformerAgent(BaseAgent):
 _agent_instance = None
 
 
+def _default_model_path() -> str | None:
+    explicit = os.environ.get("MCTS_MODEL_PATH")
+    if explicit:
+        return explicit
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base_dir, "mcts.pth"),
+        os.path.join(os.getcwd(), "mcts.pth"),
+        "/kaggle_simulations/agent/mcts.pth",
+    ]
+    return next((p for p in candidates if os.path.exists(p)), None)
+
+
 def agent(obs_dict: dict) -> list[int]:
     global _agent_instance
     if _agent_instance is None:
         # MCTS_MODEL_PATH / MCTS_DECK let callers (e.g. the tournament) plug in a
-        # trained checkpoint + deck; unset => untrained weights on the default deck.
+        # trained checkpoint + deck; unset in Kaggle => packaged mcts.pth + deck.csv.
         _agent_instance = MCTSTransformerAgent(
-            deck=os.environ.get("MCTS_DECK", "abomasnow.csv"),
-            model_path=os.environ.get("MCTS_MODEL_PATH"),
+            deck=os.environ.get("MCTS_DECK", "deck.csv"),
+            model_path=_default_model_path(),
         )
     return _agent_instance.act(obs_dict)

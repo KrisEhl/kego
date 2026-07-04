@@ -178,7 +178,14 @@ def test_pokemon_tcg_ai_battle_make_submission(tmp_path, monkeypatch):
     """Test that the PokemonTCGAIBattleTask.make_submission correctly reads kego.toml,
     checks file existence, and packages agents/base.py as base_agent.py alongside
     renaming the configured agent and deck files to main.py and deck.csv."""
-    from task import PokemonTCGAIBattleTask
+    import importlib.util
+
+    task_path = Path(__file__).resolve().parents[1] / "competitions/pokemon-tcg-ai-battle/task.py"
+    spec = importlib.util.spec_from_file_location("pokemon_tcg_task", task_path)
+    task_module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(task_module)
+    PokemonTCGAIBattleTask = task_module.PokemonTCGAIBattleTask
 
     task = PokemonTCGAIBattleTask()
 
@@ -225,7 +232,7 @@ deck_file = "decks/mock_deck.csv"
     import numpy as np
 
     # Mock Path inside task.py to return tmp_path as repo_root
-    with patch("task.Path") as mock_path_class:
+    with patch.object(task_module, "Path") as mock_path_class:
 
         def path_mock_factory(*args, **kwargs):
             if args and "__file__" in str(args[0]):
@@ -270,9 +277,32 @@ deck_file = "decks/mock_deck.csv"
         notebook_content = notebook_path.read_text()
         assert "main_py_content =" in notebook_content
         assert "print('mock agent')" in notebook_content
+        assert 'os.walk("/kaggle/input")' in notebook_content
         assert (
             "base_agent_content" in notebook_content
             or "base_agent_py_content" in notebook_content
             or "base_py_content" in notebook_content
         )
         assert "print('base agent')" in notebook_content
+
+
+def test_pokemon_mcts_submission_agent_auto_loads_packaged_weights():
+    """Kaggle calls ``agent()`` without our local league's explicit model_path.
+    The submitted MCTS agent must therefore discover packaged mcts.pth itself."""
+    mcts_path = Path(__file__).resolve().parents[1] / "competitions/pokemon-tcg-ai-battle/agents/mcts.py"
+    content = mcts_path.read_text()
+
+    assert "def _default_model_path()" in content
+    assert 'os.path.join(base_dir, "mcts.pth")' in content
+    assert '"/kaggle_simulations/agent/mcts.pth"' in content
+    assert 'deck=os.environ.get("MCTS_DECK", "deck.csv")' in content
+    assert "model_path=_default_model_path()" in content
+
+
+def test_submit_leader_uses_registry_deck_tag():
+    submit_leader = Path(__file__).resolve().parents[1] / "competitions/pokemon-tcg-ai-battle/submit_leader.py"
+    content = submit_leader.read_text()
+
+    assert 'deck_name = leader.get("deck", "abomasnow")' in content
+    assert 'deck_file = "decks/{deck_name}.csv"' in content
+    assert 'deck_file = "decks/abomasnow.csv"' not in content

@@ -80,6 +80,7 @@ def main():
     git_sha = leader.get("git_sha", "unknown")
     machine = leader.get("machine", "unknown")
     model_args_raw = leader.get("model_args")
+    deck_name = leader.get("deck", "abomasnow")
     model_args = None
     if model_args_raw:
         try:
@@ -96,6 +97,7 @@ def main():
     print(f"  Elo:     {elo}")
     print(f"  Machine: {machine}")
     print(f"  Git SHA: {git_sha}")
+    print(f"  Deck:    {deck_name}")
     if model_args:
         print(f"  Model Args: {model_args}")
 
@@ -182,10 +184,10 @@ def main():
     with open(kego_toml_path) as f:
         content = f.read()
     content = re.sub(r'agent_file\s*=\s*".*"', 'agent_file = "agents/mcts.py"', content)
-    content = re.sub(r'deck_file\s*=\s*".*"', 'deck_file = "decks/abomasnow.csv"', content)
+    content = re.sub(r'deck_file\s*=\s*".*"', f'deck_file = "decks/{deck_name}.csv"', content)
     with open(kego_toml_path, "w") as f:
         f.write(content)
-    print("Updated kego.toml to use agents/mcts.py")
+    print(f"Updated kego.toml to use agents/mcts.py with decks/{deck_name}.csv")
 
     # 8. Update MODEL_ARGS in agents/mcts.py to match the leader's configuration
     if model_args:

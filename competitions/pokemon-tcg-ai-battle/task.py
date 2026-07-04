@@ -251,8 +251,9 @@ except Exception as e:
     print(f"Error copying cg: {{e}}")
 
 # Create submission.tar.gz
-# If there is a model weights file in the input directory, copy it
-for root, dirs, files in os.walk(INPUT_DIR):
+# If there is a model weights file in the competition input or attached weight
+# dataset, copy it into the submission archive.
+for root, dirs, files in os.walk("/kaggle/input"):
     for file in files:
         if file in ("mcts.pth", "mcts_model.pth"):
             shutil.copy(os.path.join(root, file), os.path.join(WORKING_DIR, "mcts.pth"))

@@ -20,6 +20,8 @@
 | Approach | Result | Why it failed |
 |---|---|---|
 | Duplicate long training with same config on omarchyl | Killed at progress_pct 45.5, gauntlet_avg 54.25 | Low information gain versus using the machine for a controlled ablation; near-finished DESKTOP run kept for seed-variance signal. |
+| Pre-2026-07-04 `submit-leader` packaging | Kaggle LB below hardcoded agents despite strong local league | Submitted `main.py` did not auto-load packaged `mcts.pth`; kernel also only searched the competition input path, missing attached weight datasets. |
 
 ## Operational notes
 - Continue training by setting `[train].init_checkpoint` to a local `.pth` path or `registry:<version>`. This warm-starts model weights only; optimizer, LR scheduler, replay buffer, and epoch offset start fresh.
+- Before spending a Kaggle submission, build `submission.tar.gz`, extract it locally, confirm `main.py` loads packaged `mcts.pth` with no `MCTS_MODEL_PATH`, and run smoke games against the rule agents.
