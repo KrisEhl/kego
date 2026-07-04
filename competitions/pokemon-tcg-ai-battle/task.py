@@ -88,6 +88,7 @@ class PokemonTCGAIBattleTask:
 
         iterations = epochs if epochs is not None else 3
         out_path = output_path if output_path is not None else "outputs/mcts_model.pth"
+        init_checkpoint = kwargs.get("init_checkpoint", init_checkpoint)
 
         train_module.run_training_loop(
             iterations=iterations,

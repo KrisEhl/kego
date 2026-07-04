@@ -5,23 +5,29 @@
 TASK    ?= pokemon-tcg-ai-battle
 EPOCHS  ?= 1
 OUTPUT  ?= outputs/mcts.pth
+INIT    ?=
+
+INIT_FLAG =
+ifneq ($(INIT),)
+  INIT_FLAG = --init-checkpoint $(INIT)
+endif
 
 # Train the agent locally (serial executor).
 #   make train-agent EPOCHS=10 OUTPUT=outputs/mcts.pth
 train-agent:
-	uv run kego train-agent --task $(TASK) --epochs $(EPOCHS) --output $(OUTPUT)
+	uv run kego train-agent --task $(TASK) --epochs $(EPOCHS) --output $(OUTPUT) $(INIT_FLAG)
 
 # Train on the Ray cluster (submits via the Ray executor, tails logs, scp's weights back).
 #   make train-agent-cluster EPOCHS=50
 train-agent-cluster:
-	uv run kego train-agent --executor ray --task $(TASK) --epochs $(EPOCHS) --output $(OUTPUT)
+	uv run kego train-agent --executor ray --task $(TASK) --epochs $(EPOCHS) --output $(OUTPUT) $(INIT_FLAG)
 
 # Dispatch training to a standalone fleet machine (rsync working tree + SSH-launch detached).
 #   make train-agent-fleet MACHINE=omarchyl EPOCHS=200
 # Follow with `kego status` or monitor in MLflow. Requires the machine in fleet.toml.
 train-agent-fleet:
 	if [ -z "$(MACHINE)" ]; then echo "MACHINE is unset (e.g. MACHINE=omarchyl)" && exit 1; fi
-	uv run kego train-agent --task $(TASK) --target $(MACHINE) --epochs $(EPOCHS) --output $(OUTPUT)
+	uv run kego train-agent --task $(TASK) --target $(MACHINE) --epochs $(EPOCHS) --output $(OUTPUT) $(INIT_FLAG)
 
 # --- Ray cluster (the head runs on omarchyd; required before train-agent-cluster) ---
 # The head must run ON the head node, so these SSH in and reuse the canonical

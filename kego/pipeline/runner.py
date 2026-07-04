@@ -323,6 +323,7 @@ class Pipeline:
         """Run task-specific agent or model training."""
         if not hasattr(self.task, "train"):
             raise NotImplementedError(f"Task '{self.task.name}' does not implement a train method.")
+        init_checkpoint = kwargs.get("init_checkpoint")
 
         from kego.pipeline.executor import RayExecutor
 
@@ -364,6 +365,8 @@ class Pipeline:
                 cmd += f" --epochs {epochs}"
             if remote_output:
                 cmd += f" --output {remote_output}"
+            if init_checkpoint:
+                cmd += f" --init-checkpoint {init_checkpoint}"
 
             print(f"Submitting job to Ray cluster (working_dir={repo_root}): {cmd}")
             # Keep the upload light: drop VCS/venv/data/caches and every competition

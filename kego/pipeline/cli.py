@@ -68,6 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train_parser.add_argument("--epochs", type=int, help="number of training epochs or iterations")
     train_parser.add_argument("--output", help="path to save the trained model/weights")
+    train_parser.add_argument("--init-checkpoint", help="warm-start from a local .pth path or registry:<version>")
     train_parser.add_argument(
         "--target", help="fleet machine name to dispatch to (rsync + SSH-launch); omit to run locally"
     )
@@ -115,7 +116,9 @@ def detect_task() -> str:
     return "default"
 
 
-def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, output: str | None) -> int:
+def _dispatch_train_agent(
+    task_name: str, target: str, epochs: int | None, output: str | None, init_checkpoint: str | None
+) -> int:
     """Ship the local tree to fleet machine ``target`` and SSH-launch training there (§5.4)."""
     from pathlib import Path
 
@@ -154,6 +157,8 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
         cmd_args += ["--epochs", str(epochs)]
     if output:
         cmd_args += ["--output", output]
+    if init_checkpoint:
+        cmd_args += ["--init-checkpoint", init_checkpoint]
 
     excludes = DEFAULT_EXCLUDES + other_competition_excludes(repo_root, keep=task_name)
     print(f"Dispatching {task_name} to {machine.name} ({machine.ssh}) — run {run_id}")
@@ -355,11 +360,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "train-agent":
         epochs = getattr(args, "epochs", None)
         output = getattr(args, "output", None)
+        init_checkpoint = getattr(args, "init_checkpoint", None)
         target = getattr(args, "target", None)
         if target and target not in ("local", "cluster"):
-            return _dispatch_train_agent(task_name, target, epochs, output)
+            return _dispatch_train_agent(task_name, target, epochs, output, init_checkpoint)
         try:
-            pipeline.train_agent(epochs=epochs, output_path=output)
+            pipeline.train_agent(epochs=epochs, output_path=output, init_checkpoint=init_checkpoint)
         except NotImplementedError as e:
             print(f"Error: {e}")
             return 1
