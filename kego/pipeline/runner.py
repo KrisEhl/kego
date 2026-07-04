@@ -60,6 +60,100 @@ def _make_ray_job_client(dashboard_address: str):
             os.environ["RAY_ADDRESS"] = saved
 
 
+def _poll_machine(machine: Machine) -> dict:
+    import re
+    import subprocess
+
+    remote_script = """
+echo "LOAD: $(cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null || echo 'unknown')"
+if command -v nvidia-smi >/dev/null 2>&1; then
+    echo "GPU: $(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1)"
+else
+    echo "GPU: N/A"
+fi
+echo "PROCS:"
+ps -eo pid,cmd 2>/dev/null | grep -E 'train_agent|kego' | grep -v grep || true
+echo "LOGS:"
+ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
+    echo "  LOG: $(basename "$logpath") | LAST: $(tail -n 1 "$logpath" 2>/dev/null)"
+done
+"""
+    ssh_cmd = ["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes", machine.ssh, remote_script]
+
+    try:
+        res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=5)
+        if res.returncode != 0:
+            return {"name": machine.name, "status": "Offline", "error": res.stderr.strip() or "Connection failed"}
+
+        load = "unknown"
+        gpu = "N/A"
+        procs = []
+        logs = {}
+
+        lines = res.stdout.splitlines()
+        mode = None
+        for line in lines:
+            if line.startswith("LOAD:"):
+                load_parts = line.split(":", 1)[1].strip().split()
+                if len(load_parts) >= 3:
+                    load = " ".join(load_parts[:3])
+                else:
+                    load = " ".join(load_parts) or "unknown"
+            elif line.startswith("GPU:"):
+                val = line.split(":", 1)[1].strip()
+                if val and val != "N/A":
+                    parts = [p.strip() for p in val.split(",")]
+                    if len(parts) >= 3:
+                        util, used_mb, total_mb = parts[:3]
+                        try:
+                            used_gb = float(used_mb) / 1024.0
+                            total_gb = float(total_mb) / 1024.0
+                            gpu = f"{util}% ({used_gb:.1f}/{total_gb:.1f} GB)"
+                        except ValueError:
+                            gpu = val
+                    else:
+                        gpu = val
+            elif line.startswith("PROCS:"):
+                mode = "procs"
+            elif line.startswith("LOGS:"):
+                mode = "logs"
+            elif mode == "procs":
+                if line.strip():
+                    procs.append(line.strip())
+            elif mode == "logs":
+                if line.startswith("  LOG:"):
+                    parts = line.split("| LAST:", 1)
+                    log_name = parts[0].replace("  LOG:", "").strip()
+                    run_id = log_name.replace(".log", "")
+                    last_line = parts[1].strip() if len(parts) > 1 else ""
+                    logs[run_id] = last_line
+
+        running_runs = []
+        for proc in procs:
+            pid = proc.split()[0]
+            run_ids = re.findall(r"[a-f0-9]{32}", proc)
+            if run_ids:
+                run_id = run_ids[0]
+                last_log = logs.get(run_id, "No logs yet")
+                running_runs.append((pid, run_id, last_log))
+            else:
+                cmd = " ".join(proc.split()[1:])
+                running_runs.append((pid, cmd[:25], ""))
+
+        return {
+            "name": machine.name,
+            "status": "Online",
+            "role": machine.role,
+            "load": load,
+            "gpu": gpu,
+            "runs": running_runs,
+        }
+    except subprocess.TimeoutExpired:
+        return {"name": machine.name, "status": "Offline", "error": "Timeout"}
+    except Exception as e:
+        return {"name": machine.name, "status": "Offline", "error": str(e)}
+
+
 @dataclass
 class RunOutcome:
     predictions: list[Predictions]
@@ -282,17 +376,19 @@ class Pipeline:
         import os
 
         dashboard_address = _resolve_dashboard_address(os.environ.get("RAY_ADDRESS"))
+        ray_queried = False
+        active_jobs = []
         try:
             client = _make_ray_job_client(dashboard_address)
             jobs = client.list_jobs()
             active_jobs = [j for j in jobs if not j.status.is_terminal()]
+            ray_queried = True
         except Exception as e:
             # Surface the failure instead of masking it as "no active runs" — an
             # unreachable cluster is not the same as an idle one.
             print(f"\nWarning: could not query Ray cluster at {dashboard_address}: {e}")
-            return
 
-        if active_jobs:
+        if ray_queried and active_jobs:
             print("\nActive Remote Ray Jobs:")
             print("=" * 80)
             for job in active_jobs:
@@ -304,8 +400,63 @@ class Pipeline:
                     print(f"Started: {start_dt.isoformat()}")
                 print("-" * 80)
             print("=" * 80)
-        elif not local_found:
+        elif ray_queried and not local_found:
             print("No active training runs found.")
+
+        # 3. Check Fleet Status (from fleet.toml)
+        repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+        fleet_path = repo_root / "fleet.toml"
+        if fleet_path.exists():
+            from kego.fleet import load_fleet
+
+            try:
+                fleet = load_fleet(fleet_path)
+                if fleet.machines:
+                    print("\nFleet Status:")
+                    print("=" * 110)
+                    print(
+                        f"{'Machine':<25} {'Status':<8} {'Role':<6} {'Load Average':<18} {'GPU Util/Mem':<18} {'Active Runs / Latest Log'}"
+                    )
+                    print("-" * 110)
+
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(fleet.machines)) as executor:
+                        results = list(executor.map(_poll_machine, fleet.machines))
+
+                    for res in results:
+                        name = res["name"]
+                        status_str = res["status"]
+                        if status_str == "Online":
+                            role = res.get("role", "cpu")
+                            load = res.get("load", "-")
+                            gpu = res.get("gpu", "-")
+                            runs = res.get("runs", [])
+
+                            if not runs:
+                                print(f"{name:<25} {status_str:<8} {role:<6} {load:<18} {gpu:<18} None")
+                            else:
+                                first = True
+                                for pid, run_desc, last_log in runs:
+                                    run_info = (
+                                        f"PID {pid} ({run_desc[:8]}...)"
+                                        if len(run_desc) == 32
+                                        else f"PID {pid} ({run_desc})"
+                                    )
+                                    log_info = f" -> {last_log}" if last_log else ""
+                                    if first:
+                                        print(
+                                            f"{name:<25} {status_str:<8} {role:<6} {load:<18} {gpu:<18} {run_info}{log_info}"
+                                        )
+                                        first = False
+                                    else:
+                                        print(f"{'':<25} {'':<8} {'':<6} {'':<18} {'':<18} {run_info}{log_info}")
+                        else:
+                            err = res.get("error", "Offline")
+                            print(f"{name:<25} {status_str:<8} {'-':<6} {'-':<18} {'-':<18} ({err})")
+                    print("=" * 110)
+            except Exception as e:
+                print(f"\nWarning: could not query fleet status from {fleet_path}: {e}")
 
     def submissions(self) -> None:
         import shutil

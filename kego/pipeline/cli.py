@@ -162,7 +162,8 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
     except Exception as e:
         print(f"Dispatch failed: {e}")
         return 1
-    print(f"Launched on {machine.name}. Follow with:  kego ls  |  kego logs {run_id}")
+    print(f"Launched on {machine.name}. Track metrics in MLflow at: {uri}")
+    print(f"To view remote logs, run:  ssh {machine.ssh} 'cat ~/.kego/logs/{run_id}.log'")
     return 0
 
 

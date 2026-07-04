@@ -48,18 +48,28 @@ def rsync_command(local_dir: str | Path, machine: Machine, excludes: Sequence[st
 
 def remote_launch_command(machine: Machine, cmd_args: Sequence[str], run_id: str, log_dir: str = "~/.kego/logs") -> str:
     """A detached remote command: cd into the repo, pin the MLflow run, nohup the kego
-    command into a per-run log. Progress is followed via ``kego ls`` / ``kego logs``."""
+    command into a per-run log. Progress is monitored via the MLflow dashboard or by
+    tailing the remote log file."""
+    task_dir = ""
+    if "--task" in cmd_args:
+        try:
+            idx = list(cmd_args).index("--task")
+            if idx + 1 < len(cmd_args):
+                task_dir = f"/competitions/{cmd_args[idx + 1]}"
+        except ValueError:
+            pass
+
     kego_cmd = "uv run kego " + " ".join(shlex.quote(a) for a in cmd_args)
     log = f"{log_dir}/{run_id}.log"
     return (
-        f"mkdir -p {log_dir} && cd {shlex.quote(machine.repo)} && "
+        f"mkdir -p {log_dir} && cd {shlex.quote(machine.repo)}{task_dir} && "
         f"KEGO_MLFLOW_RUN_ID={run_id} nohup {kego_cmd} > {log} 2>&1 &"
     )
 
 
 def ssh_command(machine: Machine, remote_cmd: str) -> list[str]:
     """Wrap a remote command in a login shell over SSH (login shell => uv/PATH available)."""
-    return ["ssh", machine.ssh, "bash", "-lc", remote_cmd]
+    return ["ssh", machine.ssh, f"bash -lc {shlex.quote(remote_cmd)}"]
 
 
 def dispatch(
