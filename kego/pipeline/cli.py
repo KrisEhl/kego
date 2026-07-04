@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
             wr_cols = sorted({k for r in rows for k in r if k.startswith("wr_")})
             base = [args.sort_by, "gauntlet_avg", *wr_cols, "version"]
         else:
-            base = [args.sort_by, "elo_rd", "games", "gauntlet_avg", "deck", "machine", "git_sha", "version"]
+            base = [args.sort_by, "elo_rd", "games", "gauntlet_avg", "deck", "epoch", "machine", "git_sha", "version"]
         cols = [c for c in base if not (c in seen or seen.add(c))]
         print(f"{task_name} — {len(rows)} agents · tracking {uri}")
         print(format_leaderboard(rows, cols))

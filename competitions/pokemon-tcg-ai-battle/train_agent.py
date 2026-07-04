@@ -662,8 +662,8 @@ def run_training_loop(
             print(f"\n--- Iteration {iter_idx + 1}/{iterations} ---")
             cpu_state = _transport_state(model)
 
-            # 1. Evaluation gauntlet (throttled by eval_every); keep the best by rule avg.
-            if eval_games > 0 and iter_idx % eval_every == 0:
+            # 1. Evaluation gauntlet (throttled by eval_every, forced at checkpoint intervals); keep the best by rule avg.
+            if eval_games > 0 and (iter_idx % eval_every == 0 or (iter_idx + 1) % 50 == 0):
                 print("Evaluating gauntlet (random / rule agents / self)...")
                 results, avg = _gauntlet(cpu_state, best_state, 7000 + iter_idx * 131)
                 _track.log_metric("gauntlet_avg", avg, step=iter_idx)
@@ -753,6 +753,35 @@ def run_training_loop(
             scheduler.step()
             run_timings.add("train", time.perf_counter() - _train_start)
             run_timings.report(f"timings @ iter {iter_idx + 1}")
+
+            # Save and register intermediate checkpoint every 50 iterations
+            checkpoint_interval = 50
+            if (iter_idx + 1) % checkpoint_interval == 0:
+                iter_output_file = output_file.parent / f"{output_file.stem}_iter{iter_idx + 1}.pth"
+                torch.save(model.state_dict(), str(iter_output_file))
+                print(f"  -> Intermediate checkpoint saved to {iter_output_file}")
+                try:
+                    iter_score = (
+                        avg
+                        if (
+                            eval_games > 0 and (iter_idx % eval_every == 0 or (iter_idx + 1) % checkpoint_interval == 0)
+                        )
+                        else best_score
+                    )
+                    register_checkpoint(
+                        _uri,
+                        _task,
+                        str(iter_output_file),
+                        tags={
+                            **_run_tags,
+                            "epoch": str(iter_idx + 1),
+                            "deck": deck_path.stem,
+                            "gauntlet_avg": round(iter_score, 2) if iter_score >= 0 else 0.0,
+                        },
+                    )
+                    print("  -> Registered intermediate checkpoint as registry model version.")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  (Registry unavailable, intermediate checkpoint not registered: {exc})")
 
         # Final gauntlet on the fully-trained model (pool still open); keep it if best.
         if eval_games > 0:
