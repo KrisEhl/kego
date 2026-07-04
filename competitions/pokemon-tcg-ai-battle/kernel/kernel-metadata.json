@@ -8,7 +8,11 @@
   "enable_gpu": "false",
   "enable_tpu": "false",
   "enable_internet": "false",
-  "competition_sources": ["pokemon-tcg-ai-battle"],
-  "dataset_sources": [],
+  "competition_sources": [
+    "pokemon-tcg-ai-battle"
+  ],
+  "dataset_sources": [
+    "aldisued/kego-tcg-weights"
+  ],
   "kernel_sources": []
 }

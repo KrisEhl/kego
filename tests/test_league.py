@@ -1,4 +1,7 @@
+import importlib.util
 import math
+from pathlib import Path
+from types import SimpleNamespace
 
 from kego.tracking.league import Rating, expected_score, rate_round, results_from_winmatrix, update_player
 
@@ -50,3 +53,30 @@ def test_rate_round_uses_prior_rating_for_known_player():
     results = {"v1": [("zacian", 0.0)] * 2}  # v1 unexpectedly loses to a weaker anchor
     out = rate_round(prior, results, anchors)
     assert 1500.0 < out["v1"].elo < 1700.0  # used prior 1700/60 (a default-fallback would crash to ~1132)
+
+
+def test_download_checkpoint_uses_version_checkpoint_filename(tmp_path):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    artifact_dir = tmp_path / "artifact" / "checkpoint"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "mcts.pth").write_bytes(b"old")
+    expected = artifact_dir / "mcts_model_iter50.pth"
+    expected.write_bytes(b"new")
+
+    class Client:
+        def download_artifacts(self, run_id, artifact_path, dst_path):
+            assert run_id == "run1"
+            assert artifact_path == "checkpoint"
+            return str(artifact_dir)
+
+    version = SimpleNamespace(
+        run_id="run1",
+        source=f"file://{artifact_dir}",
+        tags={"checkpoint_filename": expected.name},
+    )
+
+    assert Path(module.download_checkpoint(Client(), version, str(tmp_path / "cache"), debug=True)) == expected

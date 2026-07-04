@@ -65,10 +65,13 @@ def test_parser_new_commands():
     assert args.games == 5
 
     # 5. Test train-agent parser
-    args = parser.parse_args(["train-agent", "--epochs", "10", "--output", "my_model.pth"])
+    args = parser.parse_args(
+        ["train-agent", "--epochs", "10", "--output", "my_model.pth", "--init-checkpoint", "registry:12"]
+    )
     assert args.command == "train-agent"
     assert args.epochs == 10
     assert args.output == "my_model.pth"
+    assert args.init_checkpoint == "registry:12"
 
 
 def test_status_execution(tmp_path, monkeypatch, capsys):
@@ -80,6 +83,7 @@ def test_status_execution(tmp_path, monkeypatch, capsys):
         def list_jobs(self):
             return []
 
+    monkeypatch.setattr(runner, "_is_port_open", lambda _address, timeout=0.2: True)
     monkeypatch.setattr(runner, "_make_ray_job_client", lambda _addr: FakeClient())
 
     # Mock task and config
@@ -353,11 +357,13 @@ def test_train_agent_execution(tmp_path, monkeypatch):
             self.trained = False
             self.epochs = None
             self.output_path = None
+            self.kwargs = None
 
         def train(self, config, epochs=None, output_path=None, **kwargs):
             self.trained = True
             self.epochs = epochs
             self.output_path = output_path
+            self.kwargs = kwargs
 
     task = TrainableTask()
 
@@ -368,10 +374,11 @@ def test_train_agent_execution(tmp_path, monkeypatch):
     pipeline = Pipeline(config)
     pipeline.task = task
 
-    pipeline.train_agent(epochs=5, output_path="out.pth")
+    pipeline.train_agent(epochs=5, output_path="out.pth", init_checkpoint="registry:12")
     assert task.trained
     assert task.epochs == 5
     assert task.output_path == "out.pth"
+    assert task.kwargs["init_checkpoint"] == "registry:12"
 
 
 # ---------------------------------------------------------------------------
@@ -430,6 +437,7 @@ def test_status_surfaces_remote_query_error(tmp_path, monkeypatch, capsys):
     def boom(_address):
         raise ConnectionError("ray client connection timeout")
 
+    monkeypatch.setattr(runner, "_is_port_open", lambda _address, timeout=0.2: True)
     monkeypatch.setattr(runner, "_make_ray_job_client", boom)
 
     pipeline.status()
@@ -456,10 +464,13 @@ def test_models_parser():
 
 def test_train_agent_target_parser():
     parser = build_parser()
-    args = parser.parse_args(["train-agent", "--task", "pkmn", "--target", "m5", "--epochs", "200"])
+    args = parser.parse_args(
+        ["train-agent", "--task", "pkmn", "--target", "m5", "--epochs", "200", "--init-checkpoint", "registry:7"]
+    )
     assert args.command == "train-agent"
     assert args.target == "m5"
     assert args.epochs == 200
+    assert args.init_checkpoint == "registry:7"
 
     # --target is optional (local run when omitted)
     args = parser.parse_args(["train-agent", "--epochs", "5"])

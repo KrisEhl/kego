@@ -54,7 +54,7 @@ models:
 # Run a round-robin round, update each registered agent's league Elo, and write it back
 # to the registry (so `make models` reflects the new games). More rounds = sharper ratings.
 #   make leaderboard GAMES=4 SEARCH_COUNT=10 WORKERS=8 DEBUG=1
-GAMES        ?= 4
+GAMES        ?= 200
 SEARCH_COUNT ?= 10
 WORKERS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 DEBUG        ?= 0

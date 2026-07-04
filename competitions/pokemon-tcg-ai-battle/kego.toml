@@ -7,8 +7,8 @@ pattern = "simulation"
 inference_notebook = ""
 checkpoint_dir = "outputs"
 primary_metric = "win_rate"
-agent_file = "agents/abomasnow.py"
-deck_file = "decks/dragapult.csv"
+agent_file = "agents/mcts.py"
+deck_file = "decks/abomasnow.csv"
 
 [train]
 # Dragapult deck probe: keep the small-model baseline scale and switch the

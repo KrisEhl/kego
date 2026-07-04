@@ -43,7 +43,7 @@ decoder_size = decoder_card_offset + (1 + decoder_main_feature + 48) * card_coun
 # (d_model, num_heads, d_feedforward, n_encoder_layers, n_decoder_layers).
 # Single source of truth: training (train_agent.py) and inference both build MyModel
 # from this, so checkpoints always match. num_heads must divide d_model.
-MODEL_ARGS = (192, 4, 384, 2, 2)
+MODEL_ARGS = (256, 4, 512, 2, 2)
 
 
 class DecoderLayer(torch.nn.Module):
@@ -376,7 +376,9 @@ def create_node(
 class MCTSTransformerAgent(BaseAgent):
     def __init__(self, deck="abomasnow.csv", model_path=None, model_args=None):
         self.deck = self._load_deck(deck)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        )
         self.model_args = tuple(model_args or MODEL_ARGS)
         self.model = MyModel(*self.model_args).to(self.device)
         self.model.eval()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 
 def register_checkpoint(uri: str, name: str, checkpoint_path: str, tags: dict) -> str:
@@ -19,7 +20,7 @@ def register_checkpoint(uri: str, name: str, checkpoint_path: str, tags: dict) -
     except Exception:  # not found -> create it
         client.create_registered_model(name)
 
-    str_tags = {k: str(v) for k, v in tags.items()}
+    str_tags = {**{k: str(v) for k, v in tags.items()}, "checkpoint_filename": Path(checkpoint_path).name}
     run = mlflow.active_run()
     owns_run = run is None
     if owns_run:

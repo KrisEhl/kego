@@ -521,9 +521,10 @@ class Pipeline:
                 jobs = client.list_jobs()
                 active_jobs = [j for j in jobs if not j.status.is_terminal()]
                 ray_queried = True
-            except Exception:
+            except Exception as e:
                 # Surface that Ray is offline, and guide how to start it.
                 print(f"\nRay Cluster: Offline (unreachable at {dashboard_address})")
+                print(f"  -> {e}")
                 print("  -> To start the cluster head, run:  make ray-head")
         else:
             # Surface that Ray is offline immediately without blocking.

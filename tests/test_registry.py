@@ -58,7 +58,20 @@ def test_register_checkpoint_readable_via_leaderboard(tmp_path):
     assert len(board) == 1
     assert board[0]["version"] == "1"
     assert board[0]["machine"] == "m5"
+    assert board[0]["checkpoint_filename"] == "model.pth"
     assert float(board[0]["elo"]) == 1748.0  # int tag coerced to a parseable string
+
+
+def test_register_checkpoint_filename_tag_uses_actual_file(tmp_path):
+    pytest.importorskip("mlflow")
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    ckpt = tmp_path / "mcts_model_iter50.pth"
+    ckpt.write_bytes(b"w")
+
+    register_checkpoint(uri, "pokemon", str(ckpt), tags={"checkpoint_filename": "wrong.pth"})
+
+    row = leaderboard(uri, "pokemon", sort_by="version")[0]
+    assert row["checkpoint_filename"] == "mcts_model_iter50.pth"
 
 
 def test_register_checkpoint_increments_version(tmp_path):

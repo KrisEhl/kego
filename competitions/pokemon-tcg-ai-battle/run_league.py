@@ -140,7 +140,8 @@ def _run_single_game_indexed(payload_and_idx):
 
 
 def download_checkpoint(client, v, local_dir, debug):
-    checkpoint_path = os.path.join(local_dir, "mcts.pth")
+    checkpoint_name = v.tags.get("checkpoint_filename", "mcts.pth") if v.tags else "mcts.pth"
+    checkpoint_path = os.path.join(local_dir, checkpoint_name)
     if os.path.exists(checkpoint_path):
         return checkpoint_path
 
@@ -154,16 +155,21 @@ def download_checkpoint(client, v, local_dir, debug):
                 downloaded = client.download_artifacts(v.run_id, "checkpoint", dst_path=local_dir)
 
         if os.path.isdir(downloaded):
-            p = os.path.join(downloaded, "mcts.pth")
+            p = os.path.join(downloaded, checkpoint_name)
             if os.path.exists(p):
                 return p
+            pths = [
+                os.path.join(root, f) for root, _dirs, files in os.walk(downloaded) for f in files if f.endswith(".pth")
+            ]
+            if len(pths) == 1:
+                return pths[0]
         elif os.path.exists(downloaded):
             return downloaded
     except Exception as e:
         if debug:
             print(f"  MLflow client download failed: {e}. Trying SCP fallback...")
 
-    remote_src = f"{v.source}/mcts.pth"
+    remote_src = f"{v.source}/{checkpoint_name}"
     if remote_src.startswith("file://"):
         remote_src = remote_src[7:]
 

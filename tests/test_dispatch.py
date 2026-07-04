@@ -24,10 +24,12 @@ def test_remote_launch_command_sets_run_id_and_detaches():
     from kego.dispatch import remote_launch_command
 
     m = Machine(name="m5", ssh="k@m5", role="cpu", repo="/home/k/kego")
-    rc = remote_launch_command(m, ["train-agent", "--task", "pkmn", "--epochs", "200"], run_id="abc123")
+    rc = remote_launch_command(
+        m, ["train-agent", "--task", "pkmn", "--epochs", "200", "--init-checkpoint", "registry:12"], run_id="abc123"
+    )
     assert "cd /home/k/kego" in rc
     assert "KEGO_MLFLOW_RUN_ID=abc123" in rc
-    assert "uv run kego train-agent --task pkmn --epochs 200" in rc
+    assert "uv run kego train-agent --task pkmn --epochs 200 --init-checkpoint registry:12" in rc
     assert "nohup" in rc and "abc123.log" in rc and rc.rstrip().endswith("&")
 
 
@@ -35,7 +37,7 @@ def test_ssh_command_wraps_remote_in_login_shell():
     from kego.dispatch import ssh_command
 
     m = Machine(name="m5", ssh="k@m5", role="cpu", repo="/r")
-    assert ssh_command(m, "echo hi") == ["ssh", "k@m5", "bash", "-lc", "echo hi"]
+    assert ssh_command(m, "echo hi") == ["ssh", "k@m5", "bash -lc 'echo hi'"]
 
 
 def test_other_competition_excludes_keeps_active_only(tmp_path):

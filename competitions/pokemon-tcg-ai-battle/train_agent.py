@@ -390,7 +390,10 @@ def _resolve_init_checkpoint(spec: str, task: str, comp_dir: Path) -> Path:
         model_version = client.get_model_version(task, version)
         cache_dir = comp_dir / "outputs" / "init_checkpoints" / f"registry_v{version}"
         downloaded = Path(client.download_artifacts(model_version.run_id, "checkpoint", dst_path=str(cache_dir)))
+        wanted = model_version.tags.get("checkpoint_filename")
         candidates = [downloaded] if downloaded.suffix == ".pth" else sorted(downloaded.rglob("*.pth"))
+        if wanted:
+            candidates = [p for p in candidates if p.name == wanted]
         if not candidates:
             raise FileNotFoundError(f"No .pth checkpoint found in registry:{version} artifact {downloaded}")
         return candidates[0]
@@ -582,7 +585,9 @@ def run_training_loop(
     deck_path = comp_dir / deck_file
     sample_deck = load_deck(str(deck_path))
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    )
     if num_workers is None:
         num_workers = max(1, (os.cpu_count() or 2) - 2)
     # No point spawning more workers than games in a phase.
