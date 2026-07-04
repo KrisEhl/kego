@@ -569,6 +569,7 @@ def run_training_loop(
         "machine": machine_name(),
         "git_sha": git_sha(_repo_root),
         "task": _task,
+        "deck": deck_path.stem,
         "search_count": str(search_count),
         "self_play_games": str(self_play_games),
         "batched": str(batched),
@@ -595,6 +596,8 @@ def run_training_loop(
             "replay_buffer_size": replay_buffer_size,
             "train_steps": train_steps,
             "model_args": MODEL_ARGS,
+            "deck": deck_path.stem,
+            "deck_file": deck_file,
             "output_path": output_path,
         }
     )
