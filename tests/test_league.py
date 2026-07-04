@@ -80,3 +80,59 @@ def test_download_checkpoint_uses_version_checkpoint_filename(tmp_path):
     )
 
     assert Path(module.download_checkpoint(Client(), version, str(tmp_path / "cache"), debug=True)) == expected
+
+
+def test_download_checkpoint_uses_cached_single_pth_without_filename_tag(tmp_path):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    expected = cache / "mcts_small192_selfplay48_train100.pth"
+    expected.write_bytes(b"w")
+    version = SimpleNamespace(run_id="run1", source="/remote/checkpoint", tags={})
+
+    assert Path(module.download_checkpoint(object(), version, str(cache), debug=False)) == expected
+
+
+def test_download_checkpoint_discovers_remote_pth_before_scp(tmp_path, monkeypatch):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Client:
+        def download_artifacts(self, run_id, artifact_path, dst_path):
+            raise RuntimeError("mlflow artifact path is stale")
+
+    version = SimpleNamespace(
+        run_id="run1",
+        source="/home/kristian/mlflow/artifacts/50/run1/artifacts/checkpoint",
+        tags={"machine": "omarchyl"},
+    )
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "ssh":
+            return SimpleNamespace(
+                returncode=0,
+                stdout="/home/kristian/mlflow/artifacts/50/run1/artifacts/checkpoint/mcts_selfplay96_train100.pth\n",
+                stderr="",
+            )
+        assert cmd[0] == "scp"
+        dest = Path(cmd[-1])
+        dest.write_bytes(b"weights")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    out = Path(module.download_checkpoint(Client(), version, str(tmp_path / "cache"), debug=False))
+
+    assert out.name == "mcts_selfplay96_train100.pth"
+    assert out.read_bytes() == b"weights"
+    assert calls[0][:4] == ["ssh", "-o", "BatchMode=yes", "-o"]
+    assert calls[1][0] == "scp"

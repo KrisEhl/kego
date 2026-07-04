@@ -3,6 +3,7 @@ import ast
 import contextlib
 import multiprocessing as mp
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -139,11 +140,70 @@ def _run_single_game_indexed(payload_and_idx):
     return idx, res
 
 
+def _select_checkpoint(path: str, wanted: str | None) -> str | None:
+    p = Path(path)
+    if p.is_file() and p.suffix == ".pth" and (wanted is None or p.name == wanted):
+        return str(p)
+    if not p.is_dir():
+        return None
+    pths = sorted(p.rglob("*.pth"))
+    if wanted:
+        return next((str(candidate) for candidate in pths if candidate.name == wanted), None)
+    if len(pths) == 1:
+        return str(pths[0])
+    return next((str(candidate) for candidate in pths if candidate.name == "mcts.pth"), None)
+
+
+def _fleet_ssh_targets(machine_tag: str) -> list[str]:
+    fallback = {
+        "omarchyd": "kristian@omarchyd",
+        "omarchyl": "kristian@omarchyl",
+        "DESKTOP-68OIS2S": "kristian@DESKTOP-68OIS2S",
+        "mn-exjk9p93n75h": "kristian.ehlert@mn-exjk9p93n75h",
+    }
+    try:
+        from kego.fleet import load_fleet
+
+        machines = {m.name: m.ssh for m in load_fleet(repo_root / "fleet.toml").machines}
+    except Exception:
+        machines = fallback
+    ordered = []
+    if machine_tag and machine_tag in machines:
+        ordered.append(machines[machine_tag])
+    if "omarchyd" in machines and "omarchyd" != machine_tag:
+        ordered.append(machines["omarchyd"])
+    ordered.extend(ssh for name, ssh in machines.items() if name not in {machine_tag, "omarchyd"})
+    return list(dict.fromkeys(ordered))
+
+
+def _remote_checkpoint_path(ssh_target: str, source: str, wanted: str | None, debug: bool) -> str | None:
+    remote_root = source[7:] if source.startswith("file://") else source
+    if remote_root.endswith(".pth"):
+        check = f"test -f {shlex.quote(remote_root)} && printf '%s\\n' {shlex.quote(remote_root)}"
+    elif wanted:
+        candidate = f"{remote_root.rstrip('/')}/{wanted}"
+        check = f"test -f {shlex.quote(candidate)} && printf '%s\\n' {shlex.quote(candidate)}"
+    else:
+        check = (
+            f"find {shlex.quote(remote_root)} -maxdepth 2 -type f -name '*.pth' "
+            "-printf '%T@ %p\\n' 2>/dev/null | sort -nr | head -1 | cut -d' ' -f2-"
+        )
+    res = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", ssh_target, check],
+        capture_output=True,
+        text=True,
+    )
+    if debug and res.returncode != 0:
+        print(f"  SSH find on {ssh_target} failed: {res.stderr.strip()}")
+    remote_path = res.stdout.strip().splitlines()[0] if res.returncode == 0 and res.stdout.strip() else ""
+    return remote_path or None
+
+
 def download_checkpoint(client, v, local_dir, debug):
-    checkpoint_name = v.tags.get("checkpoint_filename", "mcts.pth") if v.tags else "mcts.pth"
-    checkpoint_path = os.path.join(local_dir, checkpoint_name)
-    if os.path.exists(checkpoint_path):
-        return checkpoint_path
+    wanted = v.tags.get("checkpoint_filename") if v.tags else None
+    cached = _select_checkpoint(local_dir, wanted)
+    if cached:
+        return cached
 
     os.makedirs(local_dir, exist_ok=True)
 
@@ -154,39 +214,31 @@ def download_checkpoint(client, v, local_dir, debug):
             with open(os.devnull, "w") as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
                 downloaded = client.download_artifacts(v.run_id, "checkpoint", dst_path=local_dir)
 
-        if os.path.isdir(downloaded):
-            p = os.path.join(downloaded, checkpoint_name)
-            if os.path.exists(p):
-                return p
-            pths = [
-                os.path.join(root, f) for root, _dirs, files in os.walk(downloaded) for f in files if f.endswith(".pth")
-            ]
-            if len(pths) == 1:
-                return pths[0]
-        elif os.path.exists(downloaded):
-            return downloaded
+        selected = _select_checkpoint(downloaded, wanted)
+        if selected:
+            return selected
     except Exception as e:
         if debug:
             print(f"  MLflow client download failed: {e}. Trying SCP fallback...")
 
-    remote_src = f"{v.source}/{checkpoint_name}"
-    if remote_src.startswith("file://"):
-        remote_src = remote_src[7:]
+    machine_tag = (v.tags or {}).get("machine", "")
+    for ssh_target in _fleet_ssh_targets(machine_tag):
+        remote_path = _remote_checkpoint_path(ssh_target, v.source, wanted, debug)
+        if not remote_path:
+            if debug:
+                print(f"  No checkpoint found under {v.source} on {ssh_target}; trying next...")
+            continue
+        checkpoint_path = os.path.join(local_dir, os.path.basename(remote_path))
+        if debug:
+            print(f"  SCP downloading from {ssh_target}:{remote_path} ...")
+        cmd = ["scp", f"{ssh_target}:{remote_path}", checkpoint_path]
+        res = subprocess.run(cmd, capture_output=not debug)
+        if res.returncode == 0 and os.path.exists(checkpoint_path):
+            return checkpoint_path
+        elif debug:
+            print(f"  SCP from {ssh_target} failed, trying next...")
 
-    if debug:
-        print(f"  SCP downloading from kristian@omarchyd:{remote_src} ...")
-
-    cmd = ["scp", f"kristian@omarchyd:{remote_src}", checkpoint_path]
-
-    if debug:
-        res = subprocess.run(cmd, capture_output=False)
-    else:
-        res = subprocess.run(cmd, capture_output=True)
-
-    if res.returncode == 0 and os.path.exists(checkpoint_path):
-        return checkpoint_path
-    else:
-        raise RuntimeError("Failed to download checkpoint via MLflow and SCP.")
+    raise RuntimeError("Failed to download checkpoint via MLflow and SCP from any fleet machine.")
 
 
 def main():
@@ -361,6 +413,11 @@ def main():
 
     print(f"\nStarting round-robin league between {n_participants} participants ({len(tasks)} games total)...")
     print(f"Running games in parallel across {args.workers} workers (MCTS SEARCH_COUNT={args.search_count})...")
+    if not tasks:
+        print("No games requested; participant dry-run only. No Elo ratings written.")
+        for name in participant_names:
+            print(f"  - {name}")
+        return
 
     # Set up child process environments
     os.environ["PYTHONPATH"] = os.pathsep.join(
