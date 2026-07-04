@@ -65,7 +65,7 @@ def _poll_machine(machine: Machine) -> dict:
     import re
     import subprocess
 
-    remote_script = """
+    remote_script = r"""
 if [ "$(uname)" = "Darwin" ]; then
     CPU_UTIL=$(top -l 1 | awk '/CPU usage/ {print $3}' | tr -d '%')
 else
@@ -83,7 +83,49 @@ echo "PROCS:"
 ps -eo pid,cmd 2>/dev/null | grep -E 'train-agent|train_agent' | grep -v grep || true
 echo "LOGS:"
 ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
-    echo "  LOG: $(basename "$logpath") | LAST: $(tail -n 1 "$logpath" 2>/dev/null)"
+    TAIL_LINES=$(tail -n 30 "$logpath" 2>/dev/null)
+    ITER=""
+    STEP=""
+    DONE_MSG=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ---[[:space:]]*Iteration[[:space:]]*([0-9]+/[0-9]+)[[:space:]]*--- ]]; then
+            ITER="Iter ${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ Evaluating[[:space:]]+gauntlet ]]; then
+            STEP="Evaluating gauntlet"
+        elif [[ "$line" =~ Collecting[[:space:]]+self-play[[:space:]]+training[[:space:]]+data ]]; then
+            STEP="Collecting self-play data"
+        elif [[ "$line" =~ Training[[:space:]]+on[[:space:]]+buffer ]]; then
+            STEP="Training on buffer"
+        elif [[ "$line" =~ Training[[:space:]]+complete\.[[:space:]]+avg[[:space:]]+loss:[[:space:]]+(.*) ]]; then
+            LOSS_PART="${BASH_REMATCH[1]}"
+            STEP="Training complete (${LOSS_PART%% |*})"
+        elif [[ "$line" =~ Done\.[[:space:]]+Best[[:space:]]+rule-agent[[:space:]]+avg:[[:space:]]+(.*) ]]; then
+            DONE_MSG="Done (best avg: ${BASH_REMATCH[1]})"
+        elif [[ "$line" =~ Error[[:space:]]+during[[:space:]]+training:[[:space:]]+(.*) ]]; then
+            DONE_MSG="Error: ${BASH_REMATCH[1]}"
+        fi
+    done <<< "$TAIL_LINES"
+
+    PROGRESS=""
+    if [ -n "$DONE_MSG" ]; then
+        PROGRESS="$DONE_MSG"
+    elif [ -n "$ITER" ]; then
+        if [ -n "$STEP" ]; then
+            PROGRESS="$ITER - $STEP"
+        else
+            PROGRESS="$ITER"
+        fi
+    else
+        LAST_LINE=$(tail -n 1 "$logpath" 2>/dev/null | xargs)
+        if [ -n "$LAST_LINE" ]; then
+            PROGRESS="$LAST_LINE"
+        else
+            PROGRESS="No logs yet"
+        fi
+    fi
+
+    echo "  LOG: $(basename "$logpath") | LAST: $PROGRESS"
 done
 """
     ssh_cmd = ["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes", machine.ssh, remote_script]
