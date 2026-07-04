@@ -14,14 +14,6 @@
 name = "omarchyd"
 mlflow = "http://192.168.178.32:5000"
 
-# Hub + GPU head node: RTX 3090 (heavy_gpu) + RTX 2080 Ti. Runs the MLflow server.
-[[machine]]
-name = "omarchyd"
-ssh = "kristian@omarchyd"
-role = "hub"
-repo = "/home/kristian/projects/kego"
-data = "/home/kristian/projects/kego/data"
-gpus = ["rtx3090", "rtx2080ti"]
 
 # This machine — Apple Silicon MacBook Pro, CPU self-play only (no CUDA).
 [[machine]]
@@ -38,30 +30,6 @@ ssh = "kristian@DESKTOP-68OIS2S"
 role = "gpu"
 repo = "/home/kristian/projects/kego"
 gpus = ["rtx2080ti"]
-
-# Machines below register themselves via `make fleet-register` (ssh names unconfirmed):
-#
-# MacBook Pro M5, 48 GB — CPU self-play (fast cores, no CUDA).
-# [[machine]]
-# name = "m5"
-# ssh = "kristian@m5"
-# role = "cpu"
-# repo = "/Users/kristian/projects/kego"
-#
-# Windows WSL box with an RTX 2080 Ti.
-# [[machine]]
-# name = "wsl-2080ti"
-# ssh = "kristian@wsl-2080ti"
-# role = "gpu"
-# repo = "/home/kristian/projects/kego"
-# gpus = ["rtx2080ti"]
-#
-# Linux laptop with a small NVIDIA GPU.
-# [[machine]]
-# name = "linux-laptop"
-# ssh = "kristian@linux-laptop"
-# role = "gpu"
-# repo = "/home/kristian/projects/kego"
 
 [[machine]]
 name = "omarchyl"
