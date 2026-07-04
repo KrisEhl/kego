@@ -374,10 +374,11 @@ def create_node(
 
 
 class MCTSTransformerAgent(BaseAgent):
-    def __init__(self, deck="abomasnow.csv", model_path=None):
+    def __init__(self, deck="abomasnow.csv", model_path=None, model_args=None):
         self.deck = self._load_deck(deck)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = MyModel(*MODEL_ARGS).to(self.device)
+        self.model_args = tuple(model_args or MODEL_ARGS)
+        self.model = MyModel(*self.model_args).to(self.device)
         self.model.eval()
 
         if model_path:

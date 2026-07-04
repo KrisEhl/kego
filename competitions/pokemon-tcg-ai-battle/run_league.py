@@ -1,4 +1,5 @@
 import argparse
+import ast
 import contextlib
 import multiprocessing as mp
 import os
@@ -79,9 +80,21 @@ def instantiate_agent(cfg):
     mod = load_agent(cfg["file"])
     deck = load_deck(cfg["deck"])
     if cfg["type"] == "mcts":
-        agent_obj = mod.MCTSTransformerAgent(deck=cfg["deck"], model_path=cfg["model_path"])
+        agent_obj = mod.MCTSTransformerAgent(
+            deck=cfg["deck"], model_path=cfg["model_path"], model_args=cfg.get("model_args")
+        )
         mod._agent_instance = agent_obj
     return {"mod": mod, "deck": deck}
+
+
+def _parse_model_args(raw: str | None):
+    if not raw:
+        return None
+    try:
+        parsed = ast.literal_eval(raw)
+        return tuple(parsed) if isinstance(parsed, (list, tuple)) else None
+    except (SyntaxError, ValueError):
+        return None
 
 
 def _run_single_game(payload):
@@ -239,6 +252,7 @@ def main():
                 "file": "competitions/pokemon-tcg-ai-battle/agents/mcts.py",
                 "deck": f"competitions/pokemon-tcg-ai-battle/decks/{deck_name}.csv",
                 "model_path": model_checkpoints[v_name],
+                "model_args": _parse_model_args(v.tags.get("model_args") if v.tags else None),
             }
 
     # Check for local checkpoints as well
