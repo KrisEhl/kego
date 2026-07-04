@@ -38,3 +38,46 @@ def update_player(rating: Rating, results: list[tuple[Rating, float]]) -> Rating
         delta += g * (score - e)
     denom = 1.0 / rating.rd**2 + d2_inv
     return Rating(rating.elo + (Q / denom) * delta, math.sqrt(1.0 / denom))
+
+
+def results_from_winmatrix(
+    names: list[str], wins: list[list[float]], games: list[list[float]]
+) -> dict[str, list[tuple[str, float]]]:
+    """Expand a wins/games matrix into per-player ``(opponent, score)`` game outcomes."""
+    out: dict[str, list[tuple[str, float]]] = {n: [] for n in names}
+    n = len(names)
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            played = int(games[i][j])
+            won = int(wins[i][j])
+            for k in range(played):
+                out[names[i]].append((names[j], 1.0 if k < won else 0.0))
+    return out
+
+
+_DEFAULT_INITIAL_RATING = Rating(DEFAULT_RATING, DEFAULT_RD)  # module-level singleton (Rating is frozen/immutable)
+
+
+def rate_round(
+    prior: dict[str, Rating],
+    results: dict[str, list[tuple[str, float]]],
+    anchors: dict[str, float],
+    *,
+    initial: Rating = _DEFAULT_INITIAL_RATING,
+    anchor_rd: float = ANCHOR_RD,
+) -> dict[str, Rating]:
+    """Update every non-anchor player from this round's results (pre-round opponent ratings)."""
+
+    def rating_of(name: str) -> Rating:
+        if name in anchors:
+            return Rating(anchors[name], anchor_rd)
+        return prior.get(name, initial)
+
+    updated: dict[str, Rating] = {}
+    for player, games_played in results.items():
+        if player in anchors:
+            continue
+        updated[player] = update_player(rating_of(player), [(rating_of(o), s) for o, s in games_played])
+    return updated
