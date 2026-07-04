@@ -83,38 +83,72 @@ echo "PROCS:"
 ps -eo pid,cmd 2>/dev/null | grep -E 'train-agent|train_agent' | grep -v grep || true
 echo "LOGS:"
 ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
-    TAIL_LINES=$(tail -n 30 "$logpath" 2>/dev/null)
-    ITER=""
+    TAIL_LINES=$(tail -n 50 "$logpath" 2>/dev/null)
+
+    ITER_REGEX="--- Iteration ([0-9]+)/([0-9]+) ---"
+    TIMINGS_REGEX="\[timings @ iter ([0-9]+)\] total tracked ([0-9.]+)s"
+    EVAL_REGEX="Evaluating gauntlet"
+    PLAY_REGEX="Collecting self-play"
+    BUFFER_REGEX="Training on buffer"
+    COMPLETE_REGEX="Training complete\. avg loss: (.*)"
+    DONE_REGEX="Done\. Best rule-agent avg: (.*)"
+    ERROR_REGEX="Error during training: (.*)"
+
+    CURRENT_ITER=""
+    TOTAL_ITER=""
+    TRACKED_ITER=""
+    TRACKED_TIME=""
     STEP=""
     DONE_MSG=""
 
     while IFS= read -r line; do
-        if [[ "$line" =~ ---[[:space:]]*Iteration[[:space:]]*([0-9]+/[0-9]+)[[:space:]]*--- ]]; then
-            ITER="Iter ${BASH_REMATCH[1]}"
-        elif [[ "$line" =~ Evaluating[[:space:]]+gauntlet ]]; then
+        if [[ "$line" =~ $ITER_REGEX ]]; then
+            CURRENT_ITER="${BASH_REMATCH[1]}"
+            TOTAL_ITER="${BASH_REMATCH[2]}"
+        elif [[ "$line" =~ $EVAL_REGEX ]]; then
             STEP="Evaluating gauntlet"
-        elif [[ "$line" =~ Collecting[[:space:]]+self-play[[:space:]]+training[[:space:]]+data ]]; then
+        elif [[ "$line" =~ $PLAY_REGEX ]]; then
             STEP="Collecting self-play data"
-        elif [[ "$line" =~ Training[[:space:]]+on[[:space:]]+buffer ]]; then
+        elif [[ "$line" =~ $BUFFER_REGEX ]]; then
             STEP="Training on buffer"
-        elif [[ "$line" =~ Training[[:space:]]+complete\.[[:space:]]+avg[[:space:]]+loss:[[:space:]]+(.*) ]]; then
+        elif [[ "$line" =~ $COMPLETE_REGEX ]]; then
             LOSS_PART="${BASH_REMATCH[1]}"
             STEP="Training complete (${LOSS_PART%% |*})"
-        elif [[ "$line" =~ Done\.[[:space:]]+Best[[:space:]]+rule-agent[[:space:]]+avg:[[:space:]]+(.*) ]]; then
+        elif [[ "$line" =~ $TIMINGS_REGEX ]]; then
+            TRACKED_ITER="${BASH_REMATCH[1]}"
+            TRACKED_TIME="${BASH_REMATCH[2]}"
+        elif [[ "$line" =~ $DONE_REGEX ]]; then
             DONE_MSG="Done (best avg: ${BASH_REMATCH[1]})"
-        elif [[ "$line" =~ Error[[:space:]]+during[[:space:]]+training:[[:space:]]+(.*) ]]; then
+        elif [[ "$line" =~ $ERROR_REGEX ]]; then
             DONE_MSG="Error: ${BASH_REMATCH[1]}"
         fi
     done <<< "$TAIL_LINES"
 
+    ETA_STR=""
+    if [ -n "$CURRENT_ITER" ] && [ -n "$TOTAL_ITER" ] && [ -n "$TRACKED_ITER" ] && [ -n "$TRACKED_TIME" ]; then
+        REM_ITER=$(($TOTAL_ITER - $CURRENT_ITER))
+        if [ "$REM_ITER" -gt 0 ] && [ "$TRACKED_ITER" -gt 0 ]; then
+            AVG_TIME=$(awk -v t="$TRACKED_TIME" -v i="$TRACKED_ITER" "BEGIN {print t / i}")
+            ETA_SECS=$(awk -v r="$REM_ITER" -v a="$AVG_TIME" "BEGIN {printf \"%.0f\", r * a}")
+            H=$(($ETA_SECS / 3600))
+            M=$((($ETA_SECS % 3600) / 60))
+            if [ "$H" -gt 0 ]; then
+                ETA_STR=", ${H}h ${M}m remaining"
+            else
+                ETA_STR=", ${M}m remaining"
+            fi
+        fi
+    fi
+
     PROGRESS=""
     if [ -n "$DONE_MSG" ]; then
         PROGRESS="$DONE_MSG"
-    elif [ -n "$ITER" ]; then
+    elif [ -n "$CURRENT_ITER" ]; then
+        ITER="Iter $CURRENT_ITER/$TOTAL_ITER"
         if [ -n "$STEP" ]; then
-            PROGRESS="$ITER - $STEP"
+            PROGRESS="$ITER - $STEP$ETA_STR"
         else
-            PROGRESS="$ITER"
+            PROGRESS="$ITER$ETA_STR"
         fi
     else
         LAST_LINE=$(tail -n 1 "$logpath" 2>/dev/null | xargs)
