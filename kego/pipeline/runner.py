@@ -80,7 +80,7 @@ else
     echo "GPU: N/A"
 fi
 echo "PROCS:"
-ps -eo pid,cmd 2>/dev/null | grep -E 'train_agent|kego' | grep -v grep || true
+ps -eo pid,cmd 2>/dev/null | grep -E 'train-agent|train_agent' | grep -v grep || true
 echo "LOGS:"
 ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
     echo "  LOG: $(basename "$logpath") | LAST: $(tail -n 1 "$logpath" 2>/dev/null)"
@@ -143,16 +143,26 @@ done
                     logs[run_id] = last_line
 
         running_runs = []
+        seen_run_ids = set()
+        seen_cmds = set()
         for proc in procs:
-            pid = proc.split()[0]
-            run_ids = re.findall(r"[a-f0-9]{32}", proc)
+            parts = proc.split(None, 1)
+            if len(parts) < 2:
+                continue
+            pid, cmd = parts[0], parts[1]
+            run_ids = re.findall(r"[a-f0-9]{32}", cmd)
             if run_ids:
                 run_id = run_ids[0]
-                last_log = logs.get(run_id, "No logs yet")
-                running_runs.append((pid, run_id, last_log))
+                if run_id not in seen_run_ids:
+                    seen_run_ids.add(run_id)
+                    last_log = logs.get(run_id, "No logs yet")
+                    running_runs.append((pid, run_id, last_log))
             else:
-                cmd = " ".join(proc.split()[1:])
-                running_runs.append((pid, cmd[:25], ""))
+                if not any(x in cmd for x in ["uv run kego", "/bin/kego"]):
+                    cmd_norm = cmd[:25]
+                    if cmd_norm not in seen_cmds:
+                        seen_cmds.add(cmd_norm)
+                        running_runs.append((pid, cmd[:25], ""))
 
         load_val = f"{load} ({cores}c)" if cores != "unknown" else load
         cpu_val = f"{cpu_util} / {load_val}" if cpu_util != "unknown" else load_val
