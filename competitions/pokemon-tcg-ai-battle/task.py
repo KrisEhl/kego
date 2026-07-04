@@ -61,6 +61,7 @@ class PokemonTCGAIBattleTask:
         selfplay_opponents = None
         replay_buffer_size = 100000
         train_steps = 100
+        init_checkpoint = None
         config_path = comp_dir / "kego.toml"
         deck_file = "decks/abomasnow.csv"
         if config_path.exists():
@@ -78,6 +79,7 @@ class PokemonTCGAIBattleTask:
                 selfplay_opponents = train_cfg.get("selfplay_opponents", selfplay_opponents)
                 replay_buffer_size = train_cfg.get("replay_buffer_size", replay_buffer_size)
                 train_steps = train_cfg.get("train_steps", train_steps)
+                init_checkpoint = train_cfg.get("init_checkpoint", init_checkpoint)
 
                 comp_cfg = toml_data.get("competition", {})
                 deck_file = comp_cfg.get("deck_file", deck_file)
@@ -101,6 +103,7 @@ class PokemonTCGAIBattleTask:
             replay_buffer_size=replay_buffer_size,
             train_steps=train_steps,
             deck_file=deck_file,
+            init_checkpoint=init_checkpoint,
         )
 
     def make_submission(self, ids: np.ndarray, preds: np.ndarray) -> Path:

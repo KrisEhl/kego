@@ -348,10 +348,59 @@ def _transport_state(model: MyModel) -> dict:
 
 
 def _build_cpu_model(state_dict) -> MyModel:
-    model = MyModel(*MODEL_ARGS)
+    model = MyModel(*_model_args_from_state_dict(state_dict))
     model.load_state_dict({k: torch.from_numpy(v) for k, v in state_dict.items()})
     model.eval()
     return model
+
+
+def _layer_count(state_dict, prefix: str, suffix: str) -> int:
+    found = []
+    for key in state_dict:
+        if key.startswith(prefix) and key.endswith(suffix):
+            try:
+                found.append(int(key[len(prefix) :].split(".", 1)[0]))
+            except ValueError:
+                pass
+    return max(found) + 1 if found else 0
+
+
+def _model_args_from_state_dict(state_dict) -> tuple[int, int, int, int, int]:
+    d_model = int(state_dict["encoder_bag.weight"].shape[1])
+    d_feedforward = int(state_dict["encoder.layers.0.linear1.weight"].shape[0])
+    num_heads = MODEL_ARGS[1] if d_model % MODEL_ARGS[1] == 0 else 4
+    return (
+        d_model,
+        num_heads,
+        d_feedforward,
+        _layer_count(state_dict, "encoder.layers.", ".linear1.weight"),
+        _layer_count(state_dict, "decoder.", ".fc1.weight"),
+    )
+
+
+def _resolve_init_checkpoint(spec: str, task: str, comp_dir: Path) -> Path:
+    """Resolve a warm-start checkpoint from a local path or `registry:<version>`."""
+    if spec.startswith("registry:"):
+        version = spec.split(":", 1)[1]
+        from mlflow.tracking import MlflowClient
+
+        from kego.tracking import default_tracking_uri
+
+        client = MlflowClient(tracking_uri=default_tracking_uri())
+        model_version = client.get_model_version(task, version)
+        cache_dir = comp_dir / "outputs" / "init_checkpoints" / f"registry_v{version}"
+        downloaded = Path(client.download_artifacts(model_version.run_id, "checkpoint", dst_path=str(cache_dir)))
+        candidates = [downloaded] if downloaded.suffix == ".pth" else sorted(downloaded.rglob("*.pth"))
+        if not candidates:
+            raise FileNotFoundError(f"No .pth checkpoint found in registry:{version} artifact {downloaded}")
+        return candidates[0]
+
+    path = Path(spec).expanduser()
+    if not path.is_absolute():
+        path = comp_dir / path
+    if not path.exists():
+        raise FileNotFoundError(f"init_checkpoint not found: {path}")
+    return path
 
 
 _AGENT_CACHE: dict = {}  # per-worker cache of loaded rule-agent modules
@@ -496,6 +545,7 @@ def run_training_loop(
     replay_buffer_size: int = 100000,
     train_steps: int = 100,
     deck_file: str | None = None,
+    init_checkpoint: str | None = None,
 ):
     import multiprocessing as mp
 
@@ -539,7 +589,17 @@ def run_training_loop(
     num_workers = max(1, min(num_workers, max(self_play_games, eval_games, 1)))
     print(f"Starting MCTS self-play training on {device} | rollout workers: {num_workers}...")
 
-    model = MyModel(*MODEL_ARGS).to(device)
+    init_checkpoint_path = None
+    init_state_dict = None
+    actual_model_args = MODEL_ARGS
+    if init_checkpoint:
+        init_checkpoint_path = _resolve_init_checkpoint(init_checkpoint, "pokemon-tcg-ai-battle", comp_dir)
+        init_state_dict = torch.load(init_checkpoint_path, map_location=device)
+        actual_model_args = _model_args_from_state_dict(init_state_dict)
+    model = MyModel(*actual_model_args).to(device)
+    if init_state_dict is not None:
+        model.load_state_dict(init_state_dict)
+        print(f"Warm-started model from {init_checkpoint_path}", flush=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
     # Cosine LR decay over the run so late iterations settle instead of wandering.
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, iterations), eta_min=3e-5)
@@ -573,8 +633,10 @@ def run_training_loop(
         "search_count": str(search_count),
         "self_play_games": str(self_play_games),
         "batched": str(batched),
-        "model_args": str(MODEL_ARGS),
+        "model_args": str(actual_model_args),
     }
+    if init_checkpoint:
+        _run_tags["continued_from"] = init_checkpoint
     # Attach to the dispatcher's run when dispatched (KEGO_MLFLOW_RUN_ID injected over SSH),
     # else open a fresh run. set_tags after open so our tags land whether new or resumed.
     _run_id = os.environ.get("KEGO_MLFLOW_RUN_ID")
@@ -595,9 +657,11 @@ def run_training_loop(
             "selfplay_opponents": ",".join(selfplay_opponents),
             "replay_buffer_size": replay_buffer_size,
             "train_steps": train_steps,
-            "model_args": MODEL_ARGS,
+            "model_args": actual_model_args,
             "deck": deck_path.stem,
             "deck_file": deck_file,
+            "init_checkpoint": init_checkpoint or "",
+            "init_checkpoint_resolved": str(init_checkpoint_path) if init_checkpoint_path else "",
             "output_path": output_path,
         }
     )
@@ -658,7 +722,7 @@ def run_training_loop(
         return results, avg
 
     best_score = -1.0  # best rule-agent average; output_file always holds this checkpoint
-    best_state = None
+    best_state = _transport_state(model) if init_checkpoint else None
 
     try:
         for iter_idx in range(iterations):
