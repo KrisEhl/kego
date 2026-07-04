@@ -349,38 +349,43 @@ def main():
             wins_matrix[j][i] += 1
 
     # --- League Elo: update ratings from this round and write back to the registry ---
-    from kego.tracking import read_ratings, write_ratings
-    from kego.tracking.league import Rating, rate_round, results_from_winmatrix
+    try:
+        from kego.tracking import read_ratings, write_ratings
+        from kego.tracking.league import Rating, rate_round, results_from_winmatrix
 
-    round_results = results_from_winmatrix(participant_names, wins_matrix.tolist(), games_matrix.tolist())
+        round_results = results_from_winmatrix(participant_names, wins_matrix.tolist(), games_matrix.tolist())
 
-    # Prior ratings keyed by display name (from registry tags); unrated players default later.
-    version_ratings = read_ratings(uri, args.task)
-    prior = {
-        name: Rating(version_ratings[v]["elo"], version_ratings[v]["elo_rd"])
-        for name, v in name_to_version.items()
-        if v in version_ratings
-    }
-    updated = rate_round(prior, round_results, anchor_elos)
-
-    # Games this round per player = number of outcomes emitted for it.
-    round_games = {name: len(res) for name, res in round_results.items()}
-    prior_games = {name: version_ratings.get(v, {}).get("games", 0) for name, v in name_to_version.items()}
-
-    ratings_by_version = {
-        name_to_version[name]: {
-            "elo": r.elo,
-            "elo_rd": r.rd,
-            "games": prior_games.get(name, 0) + round_games.get(name, 0),
+        # Prior ratings keyed by display name (from registry tags); unrated players default later.
+        version_ratings = read_ratings(uri, args.task)
+        prior = {
+            name: Rating(version_ratings[v]["elo"], version_ratings[v]["elo_rd"])
+            for name, v in name_to_version.items()
+            if v in version_ratings
         }
-        for name, r in updated.items()
-        if name in name_to_version  # skip "Local (...)" and anything not in the registry
-    }
-    if ratings_by_version:
-        write_ratings(uri, args.task, ratings_by_version)
-        print(f"\nUpdated Elo ratings for {len(ratings_by_version)} registered agent(s): {sorted(ratings_by_version)}")
-    else:
-        print("\nNo registry-backed agents in this league — no ratings written.")
+        updated = rate_round(prior, round_results, anchor_elos)
+
+        # Games this round per player = number of outcomes emitted for it.
+        round_games = {name: len(res) for name, res in round_results.items()}
+        prior_games = {name: version_ratings.get(v, {}).get("games", 0) for name, v in name_to_version.items()}
+
+        ratings_by_version = {
+            name_to_version[name]: {
+                "elo": r.elo,
+                "elo_rd": r.rd,
+                "games": prior_games.get(name, 0) + round_games.get(name, 0),
+            }
+            for name, r in updated.items()
+            if name in name_to_version  # skip "Local (...)" and anything not in the registry
+        }
+        if ratings_by_version:
+            write_ratings(uri, args.task, ratings_by_version)
+            print(
+                f"\nUpdated Elo ratings for {len(ratings_by_version)} registered agent(s): {sorted(ratings_by_version)}"
+            )
+        else:
+            print("\nNo registry-backed agents in this league — no ratings written.")
+    except Exception as e:
+        print(f"\nWarning: could not update league Elo ratings ({e}); showing the round-robin matrix below.")
 
     # Generate Markdown Table sorted by average win rate
     results = []
