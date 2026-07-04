@@ -53,3 +53,10 @@ repo = "/Users/kristianehlert/projects/kego"
 # ssh = "kristian@linux-laptop"
 # role = "gpu"
 # repo = "/home/kristian/projects/kego"
+
+[[machine]]
+name = "omarchyl"
+ssh = "kristian@omarchyl"
+role = "gpu"
+repo = "/home/kristian/projects/kego"
+gpus = ["rtx30506gblaptopgpu"]
