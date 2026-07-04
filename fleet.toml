@@ -44,3 +44,9 @@ ssh = "kristian@omarchyd"
 role = "gpu"
 repo = "/home/kristian/projects/kego"
 gpus = ["rtx3090", "rtx3090"]
+
+[[machine]]
+name = "mn-exjk9p93n75h"
+ssh = "kristian.ehlert@mn-exjk9p93n75h"
+role = "cpu"
+repo = "/Users/kristian.ehlert/projects/kaggle/kego"
