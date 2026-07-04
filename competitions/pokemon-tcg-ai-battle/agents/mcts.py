@@ -376,8 +376,16 @@ def create_node(
 class MCTSTransformerAgent(BaseAgent):
     def __init__(self, deck="abomasnow.csv", model_path=None, model_args=None):
         self.deck = self._load_deck(deck)
-        self.device = torch.device(
-            "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+        # MCTS_DEVICE forces a device (the league runner pins CPU: many spawn workers on one
+        # MPS/CUDA device exhaust GPU memory — on Apple Silicon that is unified RAM, hanging
+        # the whole machine). Unset => auto-pick (used by single-process training).
+        forced = os.environ.get("MCTS_DEVICE")
+        self.device = (
+            torch.device(forced)
+            if forced
+            else torch.device(
+                "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+            )
         )
         self.model_args = tuple(model_args or MODEL_ARGS)
         self.model = MyModel(*self.model_args).to(self.device)

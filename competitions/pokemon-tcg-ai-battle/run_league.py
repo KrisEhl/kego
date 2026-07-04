@@ -257,6 +257,12 @@ def main():
     # Set MCTS search count for all workers
     os.environ["MCTS_SEARCH_COUNT"] = str(args.search_count)
 
+    # Pin league agents to CPU. This runner spawns one worker per core; each loads the model
+    # onto self.device, so MPS/CUDA would put N processes on one GPU. On Apple Silicon (unified
+    # memory) that exhausts system RAM and hangs the laptop. Inference here is tiny + CPU-parallel
+    # is already fast. Override with MCTS_DEVICE=mps/cuda if you really want it.
+    os.environ.setdefault("MCTS_DEVICE", "cpu")
+
     # 2. Get registered models from MLflow
     uri = default_tracking_uri()
     if args.debug:
