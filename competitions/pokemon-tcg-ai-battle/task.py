@@ -164,6 +164,16 @@ class PokemonTCGAIBattleTask:
             if cg_dir.exists():
                 tar.add(cg_dir, arcname="cg")
 
+            # Package model weights if the agent is MCTS
+            if "mcts" in str(agent_path):
+                for pth_name in ["mcts.pth", "mcts_model.pth"]:
+                    pth_path = comp_dir / "outputs" / pth_name
+                    if not pth_path.exists():
+                        pth_path = comp_dir / pth_name
+                    if pth_path.exists():
+                        tar.add(pth_path, arcname="mcts.pth")
+                        break
+
         # Read contents for kernel notebook generation
         with open(agent_path) as f:
             main_py_content = f.read()
@@ -232,9 +242,19 @@ except Exception as e:
     print(f"Error copying cg: {{e}}")
 
 # Create submission.tar.gz
+# If there is a model weights file in the input directory, copy it
+for root, dirs, files in os.walk(INPUT_DIR):
+    for file in files:
+        if file in ("mcts.pth", "mcts_model.pth"):
+            shutil.copy(os.path.join(root, file), os.path.join(WORKING_DIR, "mcts.pth"))
+            break
+
 submission_path = os.path.join(WORKING_DIR, "submission.tar.gz")
 with tarfile.open(submission_path, "w:gz") as tar:
-    for item in ["main.py", "deck.csv", "cg"] + {list(helpers.keys())}:
+    items = ["main.py", "deck.csv", "cg"] + {list(helpers.keys())}
+    if os.path.exists(os.path.join(WORKING_DIR, "mcts.pth")):
+        items.append("mcts.pth")
+    for item in items:
         full_path = os.path.join(WORKING_DIR, item)
         if os.path.exists(full_path):
             tar.add(full_path, arcname=item)

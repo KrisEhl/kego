@@ -62,4 +62,8 @@ endif
 leaderboard:
 	uv run python run_league.py --games $(GAMES) --task $(TASK) --search-count $(SEARCH_COUNT) --workers $(WORKERS) $(DEBUG_FLAG)
 
-.PHONY: train-agent train-agent-cluster train-agent-fleet ray-head ray-status ray-stop models leaderboard
+# Automatically identify, download, configure, and submit the current leaderboard leader model.
+submit-leader:
+	uv run python submit_leader.py
+
+.PHONY: train-agent train-agent-cluster train-agent-fleet ray-head ray-status ray-stop models leaderboard submit-leader
