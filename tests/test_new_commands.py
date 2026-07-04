@@ -84,6 +84,8 @@ def test_parser_new_commands():
             "80",
             "--num-workers",
             "12",
+            "--model-args",
+            "192,4,384,2,2",
         ]
     )
     assert args.command == "train-agent"
@@ -95,6 +97,7 @@ def test_parser_new_commands():
     assert args.search_count == 40
     assert args.train_steps == 80
     assert args.num_workers == 12
+    assert args.model_args == "192,4,384,2,2"
 
 
 def test_status_execution(tmp_path, monkeypatch, capsys):
@@ -406,6 +409,7 @@ def test_train_agent_execution(tmp_path, monkeypatch):
         search_count=32,
         train_steps=80,
         num_workers=10,
+        model_args="192,4,384,2,2",
     )
     assert task.trained
     assert task.epochs == 5
@@ -416,6 +420,7 @@ def test_train_agent_execution(tmp_path, monkeypatch):
     assert task.kwargs["search_count"] == 32
     assert task.kwargs["train_steps"] == 80
     assert task.kwargs["num_workers"] == 10
+    assert task.kwargs["model_args"] == "192,4,384,2,2"
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +527,8 @@ def test_train_agent_target_parser():
             "80",
             "--num-workers",
             "10",
+            "--model-args",
+            "192,4,384,2,2",
         ]
     )
     assert args.command == "train-agent"
@@ -533,6 +540,7 @@ def test_train_agent_target_parser():
     assert args.search_count == 35
     assert args.train_steps == 80
     assert args.num_workers == 10
+    assert args.model_args == "192,4,384,2,2"
 
     # --target is optional (local run when omitted)
     args = parser.parse_args(["train-agent", "--epochs", "5"])

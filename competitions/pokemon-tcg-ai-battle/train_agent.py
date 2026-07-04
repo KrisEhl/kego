@@ -378,6 +378,20 @@ def _model_args_from_state_dict(state_dict) -> tuple[int, int, int, int, int]:
     )
 
 
+def _parse_model_args(raw) -> tuple[int, int, int, int, int] | None:
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, tuple):
+        vals = raw
+    elif isinstance(raw, list):
+        vals = tuple(raw)
+    else:
+        vals = tuple(int(part.strip()) for part in str(raw).strip("()").split(",") if part.strip())
+    if len(vals) != 5:
+        raise ValueError(f"model_args must have 5 integers, got {vals!r}")
+    return tuple(int(v) for v in vals)
+
+
 def _resolve_init_checkpoint(spec: str, task: str, comp_dir: Path) -> Path:
     """Resolve a warm-start checkpoint from a local path or `registry:<version>`."""
     if spec.startswith("registry:"):
@@ -549,6 +563,7 @@ def run_training_loop(
     train_steps: int = 100,
     deck_file: str | None = None,
     init_checkpoint: str | None = None,
+    model_args=None,
 ):
     import multiprocessing as mp
 
@@ -596,7 +611,7 @@ def run_training_loop(
 
     init_checkpoint_path = None
     init_state_dict = None
-    actual_model_args = MODEL_ARGS
+    actual_model_args = _parse_model_args(model_args) or MODEL_ARGS
     if init_checkpoint:
         init_checkpoint_path = _resolve_init_checkpoint(init_checkpoint, "pokemon-tcg-ai-battle", comp_dir)
         init_state_dict = torch.load(init_checkpoint_path, map_location=device)

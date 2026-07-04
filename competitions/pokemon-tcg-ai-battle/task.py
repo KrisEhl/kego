@@ -94,6 +94,7 @@ class PokemonTCGAIBattleTask:
         search_count = kwargs.get("search_count", search_count)
         train_steps = kwargs.get("train_steps", train_steps)
         num_workers = kwargs.get("num_workers", num_workers)
+        model_args = kwargs.get("model_args")
 
         train_module.run_training_loop(
             iterations=iterations,
@@ -110,6 +111,7 @@ class PokemonTCGAIBattleTask:
             train_steps=train_steps,
             deck_file=deck_file,
             init_checkpoint=init_checkpoint,
+            model_args=model_args,
         )
 
     def make_submission(self, ids: np.ndarray, preds: np.ndarray) -> Path:

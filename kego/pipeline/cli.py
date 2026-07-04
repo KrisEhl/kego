@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("--search-count", type=int, help="MCTS search count target for self-play")
     train_parser.add_argument("--train-steps", type=int, help="optimizer steps per training iteration")
     train_parser.add_argument("--num-workers", type=int, help="parallel rollout/eval workers")
+    train_parser.add_argument("--model-args", help="MCTS model tuple, e.g. 192,4,384,2,2")
     train_parser.add_argument(
         "--target", help="fleet machine name to dispatch to (rsync + SSH-launch); omit to run locally"
     )
@@ -122,7 +123,15 @@ def detect_task() -> str:
 
 
 def _train_agent_overrides(args) -> dict:
-    keys = ["init_checkpoint", "deck_file", "self_play_games", "search_count", "train_steps", "num_workers"]
+    keys = [
+        "init_checkpoint",
+        "deck_file",
+        "self_play_games",
+        "search_count",
+        "train_steps",
+        "num_workers",
+        "model_args",
+    ]
     return {k: getattr(args, k, None) for k in keys if getattr(args, k, None) is not None}
 
 
@@ -172,6 +181,7 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
         ("search_count", "--search-count"),
         ("train_steps", "--train-steps"),
         ("num_workers", "--num-workers"),
+        ("model_args", "--model-args"),
     ]:
         if key in overrides:
             cmd_args += [flag, str(overrides[key])]
