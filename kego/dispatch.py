@@ -19,14 +19,25 @@ from kego.fleet import Machine
 # VCS/venv/data/caches. Other competitions are excluded dynamically (other_competition_excludes).
 DEFAULT_EXCLUDES = [
     ".git",
+    ".git/",
     ".venv",
+    ".venv/",
     "__pycache__",
+    "__pycache__/",
     "*.tar.gz",
     "data",
+    "data/",
     "model_data",
+    "model_data/",
     "outputs",
+    "outputs/",
     "tmp",
+    "tmp/",
     "mlruns",
+    "mlruns/",
+    # Explicitly exclude nested outputs inside competition dirs (e.g. large .pth checkpoints)
+    "competitions/*/outputs/",
+    "competitions/*/mlruns/",
 ]
 
 
