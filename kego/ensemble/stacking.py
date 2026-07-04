@@ -42,6 +42,7 @@ def l2_stacking(
             subsample=0.8,
             colsample_bytree=0.8,
             random_state=seed + fold_idx,
+            n_jobs=1,
             verbose=-1,
         )
         lgb.fit(
