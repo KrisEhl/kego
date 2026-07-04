@@ -276,6 +276,18 @@ def main():
         cfg["deck"] = str(repo_root / cfg["deck"]) if not Path(cfg["deck"]).is_absolute() else cfg["deck"]
         cfg["file"] = str(repo_root / cfg["file"]) if not Path(cfg["file"]).is_absolute() else cfg["file"]
 
+    # Map participant display name -> registry version (only registry-backed agents get rated).
+    name_to_version = {f"Registry v{v.version}": str(v.version) for v in versions}
+
+    # Pinned anchor Elos (spec Appendix A.4), keyed by participant display name.
+    anchor_elos = {
+        "Random": 1200.0,
+        "Zacian ex": 1350.0,
+        "Mega Lucario ex": 1450.0,
+        "Dragapult ex": 1520.0,
+        "Mega Abomasnow ex": 1650.0,
+    }
+
     participant_names = list(participants.keys())
     n_participants = len(participant_names)
 
@@ -335,6 +347,40 @@ def main():
             wins_matrix[i][j] += 1
         elif winner_val == 1:
             wins_matrix[j][i] += 1
+
+    # --- League Elo: update ratings from this round and write back to the registry ---
+    from kego.tracking import read_ratings, write_ratings
+    from kego.tracking.league import Rating, rate_round, results_from_winmatrix
+
+    round_results = results_from_winmatrix(participant_names, wins_matrix.tolist(), games_matrix.tolist())
+
+    # Prior ratings keyed by display name (from registry tags); unrated players default later.
+    version_ratings = read_ratings(uri, args.task)
+    prior = {
+        name: Rating(version_ratings[v]["elo"], version_ratings[v]["elo_rd"])
+        for name, v in name_to_version.items()
+        if v in version_ratings
+    }
+    updated = rate_round(prior, round_results, anchor_elos)
+
+    # Games this round per player = number of outcomes emitted for it.
+    round_games = {name: len(res) for name, res in round_results.items()}
+    prior_games = {name: version_ratings.get(v, {}).get("games", 0) for name, v in name_to_version.items()}
+
+    ratings_by_version = {
+        name_to_version[name]: {
+            "elo": r.elo,
+            "elo_rd": r.rd,
+            "games": prior_games.get(name, 0) + round_games.get(name, 0),
+        }
+        for name, r in updated.items()
+        if name in name_to_version  # skip "Local (...)" and anything not in the registry
+    }
+    if ratings_by_version:
+        write_ratings(uri, args.task, ratings_by_version)
+        print(f"\nUpdated Elo ratings for {len(ratings_by_version)} registered agent(s): {sorted(ratings_by_version)}")
+    else:
+        print("\nNo registry-backed agents in this league — no ratings written.")
 
     # Generate Markdown Table sorted by average win rate
     results = []

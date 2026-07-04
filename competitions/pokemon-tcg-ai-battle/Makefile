@@ -45,7 +45,8 @@ ray-stop:
 models:
 	uv run kego models --task $(TASK)
 
-# Run a live round-robin tournament between registered checkpoints and baseline agents in parallel.
+# Run a round-robin round, update each registered agent's league Elo, and write it back
+# to the registry (so `make models` reflects the new games). More rounds = sharper ratings.
 #   make leaderboard GAMES=4 SEARCH_COUNT=10 WORKERS=8 DEBUG=1
 GAMES        ?= 4
 SEARCH_COUNT ?= 10
