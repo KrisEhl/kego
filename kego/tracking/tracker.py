@@ -62,6 +62,16 @@ class Tracker:
         except Exception:  # never let telemetry break the run
             return
 
+    def log_params(self, params: dict[str, object]) -> None:
+        if not self._active:
+            return
+        try:
+            import mlflow
+
+            mlflow.log_params({k: str(v) for k, v in params.items()})
+        except Exception:
+            return
+
     def set_tags(self, tags: dict) -> None:
         if not self._active:
             return

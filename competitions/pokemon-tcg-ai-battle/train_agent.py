@@ -578,6 +578,23 @@ def run_training_loop(
         _uri, experiment=_task, run_id=_run_id, run_name=f"{_run_tags['machine']}-{output_file.stem}", tags=_run_tags
     )
     _track.set_tags(_run_tags)
+    _track.log_params(
+        {
+            "iterations": iterations,
+            "eval_games": eval_games,
+            "self_play_games": self_play_games,
+            "eval_every": eval_every,
+            "search_count": search_count,
+            "batched": batched,
+            "num_workers": num_workers,
+            "eval_opponents": ",".join(eval_opponents),
+            "selfplay_opponents": ",".join(selfplay_opponents),
+            "replay_buffer_size": replay_buffer_size,
+            "train_steps": train_steps,
+            "model_args": MODEL_ARGS,
+            "output_path": output_path,
+        }
+    )
     best_results: dict[str, float] = {}  # per-opponent WRs at the best gauntlet_avg, for registry tags
 
     # Self-play/eval run on CPU-only worker processes: batch-1 inference is far cheaper
