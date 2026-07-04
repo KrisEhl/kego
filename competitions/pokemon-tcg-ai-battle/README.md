@@ -10,6 +10,7 @@
 | Registry v1 | MCTS Transformer `(256, 4, 512, 2, 2)` | Elo 1746.2, gauntlet_avg 90.2 | Best known registry agent as of 2026-07-04; trained on omarchyd, git `e7bd6e8`. |
 | Registry v2 | MCTS Transformer `(256, 4, 512, 2, 2)` | Elo 1657.0, gauntlet_avg 90.2 | Same saturated gauntlet score as v1 but lower league Elo; use league games to rank future runs. |
 | Registry v3 | MCTS Transformer variant | Elo 1155.2, gauntlet_avg 45.0 | Weak Windows run; useful as a regression marker only. |
+| Registry v4 | MCTS Transformer duplicate baseline-ish seed | gauntlet_avg 62.25 | Finished DESKTOP seed-variance run; registered without league Elo yet. |
 | search40_train100 | MCTS Transformer `(256, 4, 512, 2, 2)` | TBD | In progress: `search_count=40`, `train_steps=100`, `self_play_games=48`, batched MCTS. Tests whether deeper targets beat extra gradient steps. |
 | selfplay96_train100 | MCTS Transformer `(256, 4, 512, 2, 2)` | TBD | In progress: `search_count=25`, `train_steps=100`, `self_play_games=96`, batched MCTS. Tests whether more diverse targets beat extra gradient steps. |
 
