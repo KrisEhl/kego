@@ -24,6 +24,7 @@ def register_checkpoint(uri: str, name: str, checkpoint_path: str, tags: dict) -
     run = mlflow.active_run()
     owns_run = run is None
     if owns_run:
+        mlflow.set_experiment("Default")
         run = mlflow.start_run()
     try:
         mlflow.log_artifact(checkpoint_path, artifact_path="checkpoint")

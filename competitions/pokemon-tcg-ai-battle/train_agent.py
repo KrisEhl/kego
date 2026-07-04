@@ -750,9 +750,20 @@ def run_training_loop(
                     print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
 
             # 2. Self-Play data collection (parallel across workers)
-            print(f"Collecting self-play training data ({self_play_games} games)...")
+            # Dynamic MCTS Search Scheduling: ramp search_count from min(10, search_count) up to search_count
+            search_count_start = min(10, search_count)
+            if iterations > 1:
+                current_search_count = int(
+                    search_count_start + (search_count - search_count_start) * (iter_idx / (iterations - 1))
+                )
+            else:
+                current_search_count = search_count
+
+            print(
+                f"Collecting self-play training data ({self_play_games} games) with dynamic MCTS search_count={current_search_count}..."
+            )
             payloads = [
-                (cpu_state, c, sample_deck, iter_idx * 9973 + i, search_count, opp_pool)
+                (cpu_state, c, sample_deck, iter_idx * 9973 + i, current_search_count, opp_pool)
                 for i, c in enumerate(_split_counts(self_play_games, num_workers))
                 if c
             ]

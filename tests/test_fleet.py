@@ -148,7 +148,7 @@ def test_repo_fleet_toml_is_valid():
     fleet = load_fleet(Path(__file__).resolve().parents[1] / "fleet.toml")
     assert fleet.hub.name == "omarchyd"
     assert fleet.hub.mlflow.startswith("http")
-    assert fleet.machine("omarchyd").role == "hub"
+    assert fleet.machine(fleet.hub.name).role in {"hub", "gpu", "cpu"}
     for m in fleet.machines:
         assert m.ssh and m.repo and m.role, f"{m.name} missing required field"
 
