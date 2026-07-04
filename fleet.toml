@@ -30,6 +30,15 @@ ssh = "kristianehlert@kristians-macbook-pro"
 role = "cpu"
 repo = "/Users/kristianehlert/projects/kego"
 
+# Windows WSL Ubuntu box — RTX 2080 Ti (GPU self-play). Registered as cpu because
+# nvidia-smi returned nothing at fleet-register time; role/gpus set manually here.
+[[machine]]
+name = "DESKTOP-68OIS2S"
+ssh = "kristian@DESKTOP-68OIS2S"
+role = "gpu"
+repo = "/home/kristian/projects/kego"
+gpus = ["rtx2080ti"]
+
 # Machines below register themselves via `make fleet-register` (ssh names unconfirmed):
 #
 # MacBook Pro M5, 48 GB — CPU self-play (fast cores, no CUDA).

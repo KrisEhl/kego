@@ -41,4 +41,24 @@ ray-status:
 ray-stop:
 	ssh $(RAY_HOST) 'bash -lc "cd $(RAY_PLAYGROUND) && make stop"'
 
-.PHONY: train-agent train-agent-cluster train-agent-fleet ray-head ray-status ray-stop
+# Query the MLflow model registry for registered task models.
+models:
+	uv run kego models --task $(TASK)
+
+# Run a live round-robin tournament between registered checkpoints and baseline agents in parallel.
+#   make leaderboard GAMES=4 SEARCH_COUNT=10 WORKERS=8 DEBUG=1
+GAMES        ?= 4
+SEARCH_COUNT ?= 10
+WORKERS      ?= $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+DEBUG        ?= 0
+
+# Toggle verbose logging based on DEBUG
+DEBUG_FLAG =
+ifeq ($(DEBUG),1)
+  DEBUG_FLAG = --debug
+endif
+
+leaderboard:
+	uv run python run_league.py --games $(GAMES) --task $(TASK) --search-count $(SEARCH_COUNT) --workers $(WORKERS) $(DEBUG_FLAG)
+
+.PHONY: train-agent train-agent-cluster train-agent-fleet ray-head ray-status ray-stop models leaderboard

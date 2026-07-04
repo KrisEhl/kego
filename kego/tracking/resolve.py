@@ -14,7 +14,13 @@ def default_tracking_uri(fleet_path: str | Path | None = None) -> str:
     explicit = os.environ.get("KEGO_MLFLOW") or os.environ.get("MLFLOW_TRACKING_URI")
     if explicit:
         return explicit
-    fp = Path(fleet_path) if fleet_path else Path.cwd() / "fleet.toml"
+    if fleet_path:
+        fp = Path(fleet_path)
+    else:
+        repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+        fp = repo_root / "fleet.toml"
+        if not fp.exists():
+            fp = Path.cwd() / "fleet.toml"
     if fp.exists():
         from kego.fleet import load_fleet
 

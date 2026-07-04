@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         seen: set[str] = set()
         cols = [
             c
-            for c in [args.sort_by, "gauntlet_avg", "elo", "machine", "git_sha", "version"]
+            for c in [args.sort_by, "gauntlet_avg", "elo", "machine", "git_sha", "version", "created"]
             if not (c in seen or seen.add(c))
         ]
         print(f"{task_name} — {len(rows)} agents · tracking {uri}")

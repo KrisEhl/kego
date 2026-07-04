@@ -37,11 +37,17 @@ def register_checkpoint(uri: str, name: str, checkpoint_path: str, tags: dict) -
 def leaderboard(uri: str, name: str, sort_by: str = "elo", desc: bool = True) -> list[dict]:
     """Return every registered version of ``name`` as ``{"version", **tags}`` dicts, sorted
     by the numeric ``sort_by`` tag (versions missing/unparsable rank last)."""
+    from datetime import datetime, timezone
+
     from mlflow.tracking import MlflowClient
 
     client = MlflowClient(tracking_uri=uri)
     versions = client.search_model_versions(f"name='{name}'")
-    rows = [{"version": str(v.version), **dict(v.tags)} for v in versions]
+    rows = []
+    for v in versions:
+        dt = datetime.fromtimestamp(v.creation_timestamp / 1000.0, tz=timezone.utc)
+        created_str = dt.astimezone().strftime("%Y-%m-%d %H:%M")
+        rows.append({"version": str(v.version), "created": created_str, **dict(v.tags)})
 
     def key(row: dict) -> float:
         try:
