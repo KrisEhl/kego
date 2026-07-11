@@ -2,6 +2,8 @@
 
 Deck CSV files contain one simulator card ID per line. Keep experimental decks separate rather than overwriting a baseline that has existing training or league results.
 
+Every CSV under `decks/` is covered automatically by `tests/test_pokemon_decks.py`. The tests enforce 60 cards, known simulator IDs, copy and ACE SPEC limits, at least one Basic Pokémon, and acceptance by the battle engine.
+
 ## Dragapult baseline
 
 File: [`decks/dragapult.csv`](decks/dragapult.csv)
