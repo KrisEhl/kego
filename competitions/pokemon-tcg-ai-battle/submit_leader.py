@@ -196,15 +196,15 @@ def main():
     # 7. Update kego.toml to use MCTS agent
     with open(kego_toml_path) as f:
         content = f.read()
-    content = re.sub(r'agent_file\s*=\s*".*"', 'agent_file = "agents/mcts.py"', content)
+    content = re.sub(r'agent_file\s*=\s*".*"', 'agent_file = "agents/mcts"', content)
     content = re.sub(r'deck_file\s*=\s*".*"', f'deck_file = "decks/{deck_name}.csv"', content)
     with open(kego_toml_path, "w") as f:
         f.write(content)
-    print(f"Updated kego.toml to use agents/mcts.py with decks/{deck_name}.csv")
+    print(f"Updated kego.toml to use agents/mcts with decks/{deck_name}.csv")
 
-    # 8. Update MODEL_ARGS in agents/mcts.py to match the leader's configuration
+    # 8. Update MODEL_ARGS in agents/mcts/model.py to match the leader's configuration
     if model_args:
-        mcts_py_path = comp_dir / "agents" / "mcts.py"
+        mcts_py_path = comp_dir / "agents" / "mcts" / "model.py"
         if mcts_py_path.exists():
             with open(mcts_py_path) as f:
                 mcts_content = f.read()
@@ -212,7 +212,7 @@ def main():
             if count > 0:
                 with open(mcts_py_path, "w") as f:
                     f.write(updated_content)
-                print(f"Updated MODEL_ARGS in agents/mcts.py to {model_args} to match the leader checkpoint.")
+                print(f"Updated MODEL_ARGS in agents/mcts/model.py to {model_args} to match the leader checkpoint.")
 
     # 9. Submit to Kaggle
     print("\nRunning submission command...")

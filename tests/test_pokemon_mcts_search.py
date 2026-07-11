@@ -1,8 +1,8 @@
-"""Tests for shared, pure MCTS search helpers extracted from `agents.mcts`.
+"""Tests for shared, pure MCTS search helpers exposed by `agents.mcts`.
 
 Part of the behavior-preserving refactor of the pokemon MCTS agent (see
 tests/test_pokemon_mcts_golden.py for the feature-encoding goldens). This file holds
-unit tests for the pure functions promoted out of `agents/mcts.py` and
+unit tests for the pure functions shared by the MCTS package and
 `train_agent.py` as the refactor proceeds — later tasks add more tests here.
 """
 

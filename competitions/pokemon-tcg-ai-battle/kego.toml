@@ -7,7 +7,7 @@ pattern = "simulation"
 inference_notebook = ""
 checkpoint_dir = "outputs"
 primary_metric = "win_rate"
-agent_file = "agents/mcts.py"
+agent_file = "agents/mcts"
 deck_file = "decks/abomasnow.csv"
 
 [train]

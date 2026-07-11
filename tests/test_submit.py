@@ -294,19 +294,15 @@ def test_pokemon_mcts_submission_agent_auto_loads_packaged_weights(tmp_path, mon
     The submitted MCTS agent must therefore discover packaged mcts.pth itself."""
     repo_root = Path(__file__).resolve().parents[1]
     comp_dir = repo_root / "competitions/pokemon-tcg-ai-battle"
-    cg_parent = repo_root / "data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission"
-    mcts_path = comp_dir / "agents/mcts.py"
-    content = mcts_path.read_text()
     (tmp_path / "mcts.pth").write_bytes(b"fake weights")
     monkeypatch.chdir(tmp_path)
     monkeypatch.syspath_prepend(str(comp_dir))
-    monkeypatch.syspath_prepend(str(cg_parent))
+    from agents.mcts import agent as agent_function
+    from agents.mcts.agent import _default_model_path
 
-    namespace: dict = {"__name__": "submitted_main"}
-    exec(compile(content, "main.py", "exec"), namespace)  # noqa: S102
-
-    assert "def _default_model_path()" in content
-    assert namespace["_default_model_path"]() == str(tmp_path / "mcts.pth")
+    content = (comp_dir / "agents/mcts/agent.py").read_text()
+    assert callable(agent_function)
+    assert _default_model_path() == str(tmp_path / "mcts.pth")
     assert '"/kaggle_simulations/agent/mcts.pth"' in content
     assert 'deck=os.environ.get("MCTS_DECK", "deck.csv")' in content
     assert "model_path=_default_model_path()" in content
