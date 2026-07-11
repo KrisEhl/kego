@@ -532,7 +532,7 @@ def main():
                 )
             participants[v_name] = {
                 "type": "mcts",
-                "file": "competitions/pokemon-tcg-ai-battle/agents/mcts.py",
+                "file": "competitions/pokemon-tcg-ai-battle/agents/mcts",
                 "deck": f"competitions/pokemon-tcg-ai-battle/decks/{deck_name}.csv",
                 "model_path": model_checkpoints[v_name],
                 "model_args": _parse_model_args(v.tags.get("model_args") if v.tags else None),
@@ -554,7 +554,7 @@ def main():
             pass
         participants["Local (outputs/mcts.pth)"] = {
             "type": "mcts",
-            "file": "competitions/pokemon-tcg-ai-battle/agents/mcts.py",
+            "file": "competitions/pokemon-tcg-ai-battle/agents/mcts",
             "deck": str(comp_dir / local_deck),
             "model_path": str(local_mcts),
         }

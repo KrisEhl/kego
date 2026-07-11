@@ -394,3 +394,130 @@ def test_submission_generation():
     notebook_content = notebook_path.read_text()
     assert "find_cg_dir" in notebook_content
     assert "shutil.copytree" in notebook_content
+
+
+def test_submission_generation_package_agent(tmp_path, monkeypatch):
+    """Verify make_submission supports a package-directory agent (the shape the
+    real MCTS agent takes after the Task 7 flip): the generated main.py becomes
+    a thin shim, the package is packaged recursively under its own basename with
+    __pycache__ excluded, and the kernel notebook writes nested helper files
+    preceded by an os.makedirs for their parent directory."""
+    import tarfile
+
+    import numpy as np
+    from task import PokemonTCGAIBattleTask
+
+    package_name = "fancyagent"
+
+    comp_dir = tmp_path / "competitions" / "pokemon-tcg-ai-battle"
+    pkg_dir = comp_dir / "agents" / package_name
+    pkg_dir.mkdir(parents=True)
+    decks_dir = comp_dir / "decks"
+    decks_dir.mkdir()
+
+    (pkg_dir / "__init__.py").write_text(
+        "from .model import compute_score  # noqa: F401\n\n\ndef agent(obs):\n    return [compute_score()]\n"
+    )
+    (pkg_dir / "model.py").write_text("def compute_score():\n    return 0\n")
+
+    # A stale __pycache__ that must never leak into the packaged artifacts.
+    pycache_dir = pkg_dir / "__pycache__"
+    pycache_dir.mkdir()
+    (pycache_dir / "model.cpython-313.pyc").write_bytes(b"cached-bytecode")
+
+    (decks_dir / "mock_deck.csv").write_text("1\n2\n3\n")
+
+    (comp_dir / "kego.toml").write_text(
+        f"""
+[competition]
+agent_file = "agents/{package_name}"
+deck_file = "decks/mock_deck.csv"
+"""
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    task = PokemonTCGAIBattleTask()
+    tarball_path = task.make_submission(np.array([]), np.array([]))
+
+    assert tarball_path.exists()
+
+    with tarfile.open(tarball_path, "r:gz") as tar:
+        members = {member.name for member in tar.getmembers()}
+        assert "main.py" in members
+        assert f"{package_name}/__init__.py" in members
+        assert f"{package_name}/model.py" in members
+        assert not any("__pycache__" in m for m in members), f"__pycache__ leaked into tarball: {members}"
+
+        main_content = tar.extractfile("main.py").read().decode()
+        assert f"from {package_name} import agent" in main_content
+        extracted = tmp_path / "extracted"
+        tar.extractall(extracted, filter="data")
+
+    from kego.pipeline.battle import load_agent
+
+    packaged_agent = load_agent(str(extracted / "main.py"))
+    assert packaged_agent.agent({}) == [0]
+
+    notebook_path = tarball_path.parent / "kernel" / "submission_notebook.py"
+    assert notebook_path.exists()
+    notebook_content = notebook_path.read_text()
+    assert f"{package_name}/__init__.py" in notebook_content
+    assert f"{package_name}/model.py" in notebook_content
+    assert "os.makedirs(os.path.dirname(" in notebook_content
+    assert f"from {package_name} import agent" in notebook_content
+
+
+def test_submission_generation_package_agent_packages_mcts_weights(tmp_path, monkeypatch):
+    """The `"mcts" in str(agent_path)` weights-packaging check (task.py) must
+    still fire when the agent is a directory whose path contains "mcts" — the
+    real shape after Task 7 flips `agent_file` from agents/mcts.py to
+    agents/mcts/."""
+    import tarfile
+
+    import numpy as np
+    from task import PokemonTCGAIBattleTask
+
+    comp_dir = tmp_path / "competitions" / "pokemon-tcg-ai-battle"
+    pkg_dir = comp_dir / "agents" / "mcts"
+    pkg_dir.mkdir(parents=True)
+    decks_dir = comp_dir / "decks"
+    decks_dir.mkdir()
+    outputs_dir = comp_dir / "outputs"
+    outputs_dir.mkdir()
+
+    (pkg_dir / "__init__.py").write_text("def agent(obs):\n    return [0]\n")
+    (decks_dir / "mock_deck.csv").write_text("1\n2\n3\n")
+    (outputs_dir / "mcts.pth").write_bytes(b"weights")
+
+    (comp_dir / "kego.toml").write_text(
+        """
+[competition]
+agent_file = "agents/mcts"
+deck_file = "decks/mock_deck.csv"
+"""
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    task = PokemonTCGAIBattleTask()
+    tarball_path = task.make_submission(np.array([]), np.array([]))
+
+    with tarfile.open(tarball_path, "r:gz") as tar:
+        members = {member.name for member in tar.getmembers()}
+        assert "mcts.pth" in members
+        assert "mcts/__init__.py" in members
+        assert "from mcts import agent" in tar.extractfile("main.py").read().decode()
+
+
+def test_load_agent_supports_package_with_relative_imports(tmp_path):
+    from kego.pipeline.battle import load_agent
+
+    package = tmp_path / "fixture_agent"
+    package.mkdir()
+    (package / "__init__.py").write_text("from .impl import agent\n")
+    (package / "impl.py").write_text("def agent(obs):\n    return [obs['choice']]\n")
+
+    module = load_agent(str(package))
+
+    assert module.agent({"choice": 3}) == [3]

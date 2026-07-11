@@ -38,7 +38,7 @@ def locate_cg_dir() -> Path:
 
 
 def load_agent(filepath: str) -> Any:
-    """Dynamically load an agent module from a file path."""
+    """Dynamically load an agent module from a file or package path."""
     p = Path(filepath)
     if not p.is_absolute():
         repo_root = Path(__file__).resolve().parents[2]
@@ -51,11 +51,17 @@ def load_agent(filepath: str) -> Any:
     # Ensure parent directory is in sys.path so relative imports in main.py work
     sys.path.insert(0, str(p.parent))
 
-    spec = importlib.util.spec_from_file_location(p.stem, p)
+    if p.is_dir():
+        sys.path.insert(0, str(p.parent.parent))
+        spec = importlib.util.spec_from_file_location(p.name, p / "__init__.py", submodule_search_locations=[str(p)])
+    else:
+        spec = importlib.util.spec_from_file_location(p.stem, p)
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not load agent spec for {p}")
 
     module = importlib.util.module_from_spec(spec)
+    if p.is_dir():
+        sys.modules[p.name] = module
     spec.loader.exec_module(module)
 
     if not hasattr(module, "agent"):
