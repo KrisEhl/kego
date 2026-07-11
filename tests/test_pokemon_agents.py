@@ -500,3 +500,16 @@ deck_file = "decks/mock_deck.csv"
         members = {member.name for member in tar.getmembers()}
         assert "mcts.pth" in members
         assert "mcts/__init__.py" in members
+
+
+def test_load_agent_supports_package_with_relative_imports(tmp_path):
+    from kego.pipeline.battle import load_agent
+
+    package = tmp_path / "fixture_agent"
+    package.mkdir()
+    (package / "__init__.py").write_text("from .impl import agent\n")
+    (package / "impl.py").write_text("def agent(obs):\n    return [obs['choice']]\n")
+
+    module = load_agent(str(package))
+
+    assert module.agent({"choice": 3}) == [3]
