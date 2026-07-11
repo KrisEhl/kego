@@ -6,8 +6,10 @@ unit tests for the pure functions shared by the MCTS package and
 `train_agent.py` as the refactor proceeds — later tasks add more tests here.
 """
 
+import random
 import sys
 import types
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -140,3 +142,29 @@ def test_agent_infers_model_architecture_from_checkpoint(env, tmp_path, monkeypa
     agent = env.MCTSTransformerAgent(deck=[1] * 60, model_path=str(checkpoint))
 
     assert agent.model_args == (128, 4, 256, 1, 1)
+
+
+def test_opponent_hidden_cards_use_revealed_signature_and_subtract_visible_cards(env):
+    torchic = types.SimpleNamespace(id=324, tools=[], energyCards=[])
+    opponent = types.SimpleNamespace(
+        active=[torchic], bench=[], discard=[], deckCount=50, prize=[None] * 6, handCount=3
+    )
+    state = types.SimpleNamespace(players=[types.SimpleNamespace(), opponent], stadium=[])
+
+    hidden = env.infer_opponent_hidden_cards(state, your_index=0, rng=random.Random(7))  # noqa: S311
+
+    assert hidden.archetype == "dragapult_blaziken"
+    assert len(hidden.deck) == 50
+    assert len(hidden.prize) == 6
+    assert len(hidden.hand) == 3
+    assert Counter(hidden.deck + hidden.prize + hidden.hand)[324] == 1
+
+
+def test_opponent_archetype_decks_have_60_cards(env):
+    assert {name: len(deck) for name, deck in env.ARCHETYPE_DECKS.items()} == {
+        "abomasnow": 60,
+        "dragapult": 60,
+        "dragapult_blaziken": 60,
+        "lucario": 60,
+        "zacian": 60,
+    }

@@ -11,6 +11,7 @@ from cg.api import Observation, search_begin, search_end, search_step, to_observ
 
 from .encoding import encode_actions, encode_state
 from .model import MODEL_ARGS, PolicyValueNet, model_args_from_state_dict
+from .opponent import infer_opponent_hidden_cards
 from .search import Evaluator, create_node, evaluate_position, select_child
 
 
@@ -75,13 +76,14 @@ class MCTSTransformerAgent(BaseAgent):
         your_index = obs.current.yourIndex
         state = obs.current
         active = state.players[1 - your_index].active
+        opponent = infer_opponent_hidden_cards(state, your_index, random)
         search_state = search_begin(
             obs,
             your_deck=random.sample(self.deck, state.players[your_index].deckCount),
             your_prize=random.sample(self.deck, len(state.players[your_index].prize)),
-            opponent_deck=[1072] * state.players[1 - your_index].deckCount,
-            opponent_prize=[1] * len(state.players[1 - your_index].prize),
-            opponent_hand=[1] * state.players[1 - your_index].handCount,
+            opponent_deck=opponent.deck,
+            opponent_prize=opponent.prize,
+            opponent_hand=opponent.hand,
             opponent_active=[1072] if len(active) > 0 and active[0] is None else [],
         )
 

@@ -29,6 +29,7 @@ from agents.mcts import (
     encode_actions,
     encode_state,
     enumerate_action_combinations,
+    infer_opponent_hidden_cards,
     model_args_from_state_dict,
     select_child,
 )
@@ -192,15 +193,16 @@ def mcts_train_agent(
     your_index = obs.current.yourIndex
     state = obs.current
     active = state.players[1 - your_index].active
+    opponent = infer_opponent_hidden_cards(state, your_index, random)
 
     with timer("engine"):
         search_state = search_begin(
             obs,
             your_deck=random.sample(your_deck, state.players[your_index].deckCount),
             your_prize=random.sample(your_deck, len(state.players[your_index].prize)),
-            opponent_deck=[1072] * state.players[1 - your_index].deckCount,
-            opponent_prize=[1] * len(state.players[1 - your_index].prize),
-            opponent_hand=[1] * state.players[1 - your_index].handCount,
+            opponent_deck=opponent.deck,
+            opponent_prize=opponent.prize,
+            opponent_hand=opponent.hand,
             opponent_active=[1072] if len(active) > 0 and active[0] is None else [],
         )
 

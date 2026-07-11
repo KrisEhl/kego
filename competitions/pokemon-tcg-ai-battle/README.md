@@ -32,8 +32,11 @@ The MCTS implementation lives in the `agents/mcts/` package:
 
 - `model.py` defines the sparse transformer policy/value network and infers architecture dimensions from saved checkpoints.
 - `encoding.py` converts observations and legal actions into sparse feature vectors.
+- `opponent.py` detects known archetypes from revealed cards and samples plausible hidden hand, Prize, and deck cards for search determinization.
 - `search.py` owns shared tree nodes, action enumeration, policy priors, node evaluation, and PUCT selection.
 - `agent.py` handles hidden-information determinization, checkpoint/device configuration, and the Kaggle `agent()` entry point.
 - `__init__.py` exposes the public API and compatibility aliases used by older training scripts.
 
 Training imports the shared model, encoders, and tree mechanics rather than maintaining parallel implementations. Submission packaging includes the complete package behind a small `main.py` shim. Existing checkpoints remain compatible because model attribute names and feature layouts are pinned by golden tests.
+
+Inference and training also share the same opponent determinization. It recognizes the saved Abomasnow, Dragapult, Dragapult–Blaziken, Zacian, and Lucario lists; revealed cards are subtracted before the unseen zones are sampled. Unknown or tied archetypes are sampled rather than treated as certain.

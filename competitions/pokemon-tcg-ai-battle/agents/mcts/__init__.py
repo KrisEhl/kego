@@ -15,6 +15,7 @@ from .model import (
     PolicyValueNet,
     model_args_from_state_dict,
 )
+from .opponent import ARCHETYPE_DECKS, SIGNATURE_MAP, OpponentHiddenCards, infer_opponent_hidden_cards
 from .search import (
     EXPLORATION_C,
     MAX_ACTION_COMBINATIONS,
@@ -32,6 +33,7 @@ from .search import (
 __all__ = [
     "MODEL_ARGS",
     "ATTACK_COUNT",
+    "ARCHETYPE_DECKS",
     "CARD_COUNT",
     "Child",
     "DecoderLayer",
@@ -40,9 +42,11 @@ __all__ = [
     "MCTSTransformerAgent",
     "MyModel",
     "Node",
+    "OpponentHiddenCards",
     "PolicyValueNet",
     "POLICY_TEMPERATURE",
     "RESULT_DRAW",
+    "SIGNATURE_MAP",
     "SparseVector",
     "agent",
     "attack_count",
@@ -61,6 +65,7 @@ __all__ = [
     "evaluate_position",
     "get_decoder_input",
     "get_encoder_input",
+    "infer_opponent_hidden_cards",
     "model_args_from_state_dict",
     "num_words_encoder",
     "select_child",
