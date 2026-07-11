@@ -129,3 +129,14 @@ class TestSelectChild:
         chosen = env.select_child(current, your_index=0)
 
         assert chosen is low_q_child
+
+
+def test_agent_infers_model_architecture_from_checkpoint(env, tmp_path, monkeypatch):
+    torch = pytest.importorskip("torch")
+    checkpoint = tmp_path / "m.pth"
+    torch.save(env.MyModel(128, 4, 256, 1, 1).state_dict(), checkpoint)
+    monkeypatch.setenv("MCTS_DEVICE", "cpu")
+
+    agent = env.MCTSTransformerAgent(deck=[1] * 60, model_path=str(checkpoint))
+
+    assert agent.model_args == (128, 4, 256, 1, 1)

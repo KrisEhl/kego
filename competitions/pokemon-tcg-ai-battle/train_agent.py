@@ -28,6 +28,7 @@ from agents.mcts import (
     enumerate_action_combinations,
     get_decoder_input,
     get_encoder_input,
+    model_args_from_state_dict,
     select_child,
 )
 
@@ -270,34 +271,10 @@ def _transport_state(model: MyModel) -> dict:
 
 
 def _build_cpu_model(state_dict) -> MyModel:
-    model = MyModel(*_model_args_from_state_dict(state_dict))
+    model = MyModel(*model_args_from_state_dict(state_dict))
     model.load_state_dict({k: torch.from_numpy(v) for k, v in state_dict.items()})
     model.eval()
     return model
-
-
-def _layer_count(state_dict, prefix: str, suffix: str) -> int:
-    found = []
-    for key in state_dict:
-        if key.startswith(prefix) and key.endswith(suffix):
-            try:
-                found.append(int(key[len(prefix) :].split(".", 1)[0]))
-            except ValueError:
-                pass
-    return max(found) + 1 if found else 0
-
-
-def _model_args_from_state_dict(state_dict) -> tuple[int, int, int, int, int]:
-    d_model = int(state_dict["encoder_bag.weight"].shape[1])
-    d_feedforward = int(state_dict["encoder.layers.0.linear1.weight"].shape[0])
-    num_heads = MODEL_ARGS[1] if d_model % MODEL_ARGS[1] == 0 else 4
-    return (
-        d_model,
-        num_heads,
-        d_feedforward,
-        _layer_count(state_dict, "encoder.layers.", ".linear1.weight"),
-        _layer_count(state_dict, "decoder.", ".fc1.weight"),
-    )
 
 
 def _parse_model_args(raw) -> tuple[int, int, int, int, int] | None:
@@ -537,7 +514,7 @@ def run_training_loop(
     if init_checkpoint:
         init_checkpoint_path = _resolve_init_checkpoint(init_checkpoint, "pokemon-tcg-ai-battle", comp_dir)
         init_state_dict = torch.load(init_checkpoint_path, map_location=device)
-        actual_model_args = _model_args_from_state_dict(init_state_dict)
+        actual_model_args = model_args_from_state_dict(init_state_dict)
     model = MyModel(*actual_model_args).to(device)
     if init_state_dict is not None:
         model.load_state_dict(init_state_dict)

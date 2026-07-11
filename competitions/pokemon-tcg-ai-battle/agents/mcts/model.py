@@ -23,6 +23,30 @@ decoder_size = decoder_card_offset + (1 + decoder_main_feature + 48) * card_coun
 MODEL_ARGS = (256, 4, 512, 2, 2)
 
 
+def _layer_count(state_dict, prefix: str, suffix: str) -> int:
+    found = []
+    for key in state_dict:
+        if key.startswith(prefix) and key.endswith(suffix):
+            try:
+                found.append(int(key[len(prefix) :].split(".", 1)[0]))
+            except ValueError:
+                pass
+    return max(found) + 1 if found else 0
+
+
+def model_args_from_state_dict(state_dict) -> tuple[int, int, int, int, int]:
+    d_model = int(state_dict["encoder_bag.weight"].shape[1])
+    d_feedforward = int(state_dict["encoder.layers.0.linear1.weight"].shape[0])
+    num_heads = MODEL_ARGS[1] if d_model % MODEL_ARGS[1] == 0 else 4
+    return (
+        d_model,
+        num_heads,
+        d_feedforward,
+        _layer_count(state_dict, "encoder.layers.", ".linear1.weight"),
+        _layer_count(state_dict, "decoder.", ".fc1.weight"),
+    )
+
+
 class DecoderLayer(torch.nn.Module):
     def __init__(self, d_model: int, num_heads: int, d_feedforward: int):
         super().__init__()

@@ -10,7 +10,7 @@ except ImportError:
 from cg.api import search_begin, search_end, search_step, to_observation_class
 
 from .encoding import get_decoder_input, get_encoder_input
-from .model import MODEL_ARGS, MyModel
+from .model import MODEL_ARGS, MyModel, model_args_from_state_dict
 from .search import Evaluator, create_node, eval_nn, select_child
 
 
@@ -36,14 +36,17 @@ class MCTSTransformerAgent(BaseAgent):
                 "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
             )
         )
-        self.model_args = tuple(model_args or MODEL_ARGS)
-        self.model = MyModel(*self.model_args).to(self.device)
-        self.model.eval()
-
+        state = None
         if model_path:
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"[MCTSTransformerAgent] model_path not found: {model_path}")
-            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+            state = torch.load(model_path, map_location=self.device)
+        self.model_args = tuple(model_args or (model_args_from_state_dict(state) if state is not None else MODEL_ARGS))
+        self.model = MyModel(*self.model_args).to(self.device)
+        self.model.eval()
+
+        if state is not None:
+            self.model.load_state_dict(state)
             print(f"[MCTSTransformerAgent] loaded weights from {model_path}", flush=True)
 
         self.SEARCH_COUNT = int(os.environ.get("MCTS_SEARCH_COUNT", "10"))

@@ -11,6 +11,7 @@ from .model import (
     decoder_main_feature,
     decoder_size,
     encoder_size,
+    model_args_from_state_dict,
     num_words_encoder,
 )
 from .search import Child, Node, build_children, create_node, enumerate_action_combinations, eval_nn, select_child
@@ -37,6 +38,7 @@ __all__ = [
     "eval_nn",
     "get_decoder_input",
     "get_encoder_input",
+    "model_args_from_state_dict",
     "num_words_encoder",
     "select_child",
 ]
