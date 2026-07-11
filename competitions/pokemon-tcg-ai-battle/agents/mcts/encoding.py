@@ -17,7 +17,7 @@ except ImportError:
     from agents.base import get_card as get_card_helper
 from cg.api import Card, Observation, OptionType, PlayerState, Pokemon
 
-from .model import DECODER_ATTACK_OFFSET, DECODER_CARD_OFFSET, DECODER_MAIN_FEATURE, card_count
+from .model import CARD_COUNT, DECODER_ATTACK_OFFSET, DECODER_CARD_OFFSET, DECODER_MAIN_FEATURE
 
 
 class SparseVector:
@@ -50,20 +50,20 @@ class SparseVector:
 def add_card(sv: SparseVector, card: Card | Pokemon | None) -> None:
     if card is not None:
         sv.add(card.id, 1)
-    sv.add_pos(card_count)
+    sv.add_pos(CARD_COUNT)
 
 
 def add_cards(sv: SparseVector, cards: list[Card] | None, value: float) -> None:
     if cards is not None:
         for card in cards:
             sv.add(card.id, value)
-    sv.add_pos(card_count)
+    sv.add_pos(CARD_COUNT)
 
 
 def add_pokemon(sv: SparseVector, poke: Pokemon | None) -> None:
     if poke is None:
         sv.add_single(1)
-        sv.add_pos(1 + 3 * card_count)
+        sv.add_pos(1 + 3 * CARD_COUNT)
     else:
         sv.add_single(0)
         sv.add_single(poke.hp / 400.0)
@@ -124,7 +124,7 @@ def encode_state(obs: Observation, your_deck: list[int]) -> SparseVector:
     sv.word_start()
     for id in your_deck:
         sv.add(id, 0.25)
-    sv.add_pos(card_count)
+    sv.add_pos(CARD_COUNT)
 
     sv.word_start()
     add_cards(sv, state.stadium, 1.0)
@@ -138,11 +138,11 @@ def encode_state(obs: Observation, your_deck: list[int]) -> SparseVector:
 
 def add_role_card_feature(sv: SparseVector, feature_index: int, card: Card | Pokemon | None) -> None:
     if card is not None:
-        sv.add(DECODER_CARD_OFFSET + feature_index * card_count + card.id, 1)
+        sv.add(DECODER_CARD_OFFSET + feature_index * CARD_COUNT + card.id, 1)
 
 
 def add_context_card_id(sv: SparseVector, context: int, card_id: int) -> None:
-    sv.add(DECODER_CARD_OFFSET + (DECODER_MAIN_FEATURE + context) * card_count + card_id, 1)
+    sv.add(DECODER_CARD_OFFSET + (DECODER_MAIN_FEATURE + context) * CARD_COUNT + card_id, 1)
 
 
 def add_context_card(sv: SparseVector, context: int, card: Card | Pokemon | None) -> None:

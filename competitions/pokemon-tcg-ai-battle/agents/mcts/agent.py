@@ -7,7 +7,7 @@ try:
     from base_agent import BaseAgent
 except ImportError:
     from agents.base import BaseAgent
-from cg.api import search_begin, search_end, search_step, to_observation_class
+from cg.api import Observation, search_begin, search_end, search_step, to_observation_class
 
 from .encoding import encode_actions, encode_state
 from .model import MODEL_ARGS, PolicyValueNet, model_args_from_state_dict
@@ -17,7 +17,7 @@ from .search import Evaluator, create_node, evaluate_position, select_child
 def _nn_evaluator(model: PolicyValueNet, your_deck: list[int]) -> Evaluator:
     """Build the inference-time `evaluate` closure for `create_node`."""
 
-    def evaluate(obs, actions) -> tuple[float, list[float]]:
+    def evaluate(obs: Observation, actions: list[list[int]]) -> tuple[float, list[float]]:
         sv_enc = encode_state(obs, your_deck)
         sv_dec = encode_actions(obs, actions)
         return evaluate_position(sv_enc, sv_dec, model)
@@ -33,7 +33,12 @@ class MCTSTransformerAgent(BaseAgent):
     and ``MCTS_DECK`` selects its deck CSV.
     """
 
-    def __init__(self, deck="abomasnow.csv", model_path=None, model_args=None):
+    def __init__(
+        self,
+        deck: list[int] | str = "abomasnow.csv",
+        model_path: str | None = None,
+        model_args: tuple[int, int, int, int, int] | None = None,
+    ) -> None:
         self.deck = self._load_deck(deck)
         forced = os.environ.get("MCTS_DEVICE")
         self.device = (

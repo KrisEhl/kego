@@ -11,20 +11,25 @@ import torch
 
 from cg.api import all_attack, all_card_data
 
-try:
-    all_card = all_card_data()
-    card_count = max(all_card, key=lambda c: c.cardId).cardId + 1
-    attack_count = max(all_attack(), key=lambda a: a.attackId).attackId + 1
-except Exception:
-    card_count = 2000
-    attack_count = 2000
+
+def _load_feature_counts() -> tuple[int, int]:
+    try:
+        cards = all_card_data()
+        return max(cards, key=lambda card: card.cardId).cardId + 1, max(
+            all_attack(), key=lambda attack: attack.attackId
+        ).attackId + 1
+    except Exception:
+        return 2000, 2000
+
+
+CARD_COUNT, ATTACK_COUNT = _load_feature_counts()
 
 NUM_WORDS_ENCODER = 24
 ENCODER_SIZE = 22000
 DECODER_MAIN_FEATURE = 8
 DECODER_ATTACK_OFFSET = 14
-DECODER_CARD_OFFSET = DECODER_ATTACK_OFFSET + attack_count
-DECODER_SIZE = DECODER_CARD_OFFSET + (1 + DECODER_MAIN_FEATURE + 48) * card_count
+DECODER_CARD_OFFSET = DECODER_ATTACK_OFFSET + ATTACK_COUNT
+DECODER_SIZE = DECODER_CARD_OFFSET + (1 + DECODER_MAIN_FEATURE + 48) * CARD_COUNT
 
 # (d_model, num_heads, d_feedforward, n_encoder_layers, n_decoder_layers).
 # Single source of truth: training and inference both build PolicyValueNet

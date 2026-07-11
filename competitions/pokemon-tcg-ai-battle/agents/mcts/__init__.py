@@ -1,6 +1,8 @@
 from .agent import MCTSTransformerAgent, agent
 from .encoding import SparseVector, encode_actions, encode_state
 from .model import (
+    ATTACK_COUNT,
+    CARD_COUNT,
     DECODER_ATTACK_OFFSET,
     DECODER_CARD_OFFSET,
     DECODER_MAIN_FEATURE,
@@ -11,8 +13,6 @@ from .model import (
     DecoderLayer,
     MyModel,
     PolicyValueNet,
-    attack_count,
-    card_count,
     model_args_from_state_dict,
 )
 from .search import (
@@ -31,6 +31,8 @@ from .search import (
 
 __all__ = [
     "MODEL_ARGS",
+    "ATTACK_COUNT",
+    "CARD_COUNT",
     "Child",
     "DecoderLayer",
     "EXPLORATION_C",
@@ -67,6 +69,8 @@ __all__ = [
 get_encoder_input = encode_state
 get_decoder_input = encode_actions
 eval_nn = evaluate_position
+attack_count = ATTACK_COUNT
+card_count = CARD_COUNT
 num_words_encoder = NUM_WORDS_ENCODER
 encoder_size = ENCODER_SIZE
 decoder_main_feature = DECODER_MAIN_FEATURE
