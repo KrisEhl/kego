@@ -21,8 +21,10 @@ sys.path.insert(0, str(cg_parent))
 from agents.mcts import (
     MODEL_ARGS,
     MyModel,
+    Node,
     SparseVector,
     build_children,
+    create_node,
     enumerate_action_combinations,
     get_decoder_input,
     get_encoder_input,
@@ -59,29 +61,6 @@ class LearnInput:
         self.value.extend(sv.value)
         for o in sv.offset:
             self.offset.append(o + count)
-
-
-class Child:
-    def __init__(self, select: list[int], prob: float):
-        self.node = None
-        self.select = select
-        self.prob = prob
-
-
-class Node:
-    def __init__(self, parent: "Node | None", state: SearchState):
-        self.value = -2.0
-        self.total = 0.0
-        self.visit = 0
-        self.parent = parent
-        self.children = []
-        self.state = state
-
-    def backprop(self, value: float):
-        self.total += value
-        self.visit += 1
-        if self.parent is not None:
-            self.parent.backprop(value)
 
 
 def eval_nn_train(sv_enc: SparseVector, sv_dec: SparseVector, model: MyModel) -> tuple[float, list[float]]:
@@ -131,33 +110,21 @@ def eval_nn_batch(svs: list[tuple[SparseVector, SparseVector]], model: MyModel) 
 def create_node_train(
     parent: Node | None, search_state: SearchState, your_index: int, your_deck: list[int], model: MyModel
 ) -> tuple[Node, LearnSample | None]:
-    node = Node(parent, search_state)
-    obs = search_state.observation
-    state = obs.current
+    """Thin training wrapper around the shared `create_node`: evaluates with
+    `eval_nn_train` (timed) instead of inference's `eval_nn`, and captures the raw
+    (pre-sign-flip) value/policy as a `LearnSample` via a closure cell.
+    """
+    sample_cell: list[LearnSample | None] = [None]
 
-    if state.result >= 0:
-        if state.result == 2:
-            node.value = 0.0
-        elif state.result == your_index:
-            node.value = 1.0
-        else:
-            node.value = -1.0
-        node.backprop(node.value)
-        sample = None
-    else:
-        actions = enumerate_action_combinations(obs.select.maxCount, len(obs.select.option))
+    def evaluate(obs, actions):
         sv_enc = get_encoder_input(obs, your_deck)
         sv_dec = get_decoder_input(obs, actions)
         value, policy = eval_nn_train(sv_enc, sv_dec, model)
-        v = value
-        if state.yourIndex != your_index:
-            v = -v
-        node.value = v
-        node.backprop(v)
-        build_children(node, actions, policy)
-        sample = LearnSample(value, policy, sv_enc, sv_dec)
+        sample_cell[0] = LearnSample(value, policy, sv_enc, sv_dec)
+        return value, policy
 
-    return node, sample
+    node = create_node(parent, search_state, your_index, evaluate)
+    return node, sample_cell[0]
 
 
 def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list[int], model: MyModel) -> None:

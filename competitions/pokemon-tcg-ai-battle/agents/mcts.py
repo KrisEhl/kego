@@ -1,6 +1,7 @@
 import math
 import os
 import random
+from collections.abc import Callable
 
 import torch
 
@@ -377,9 +378,25 @@ def select_child(current: Node, your_index: int):
     return chosen
 
 
-def create_node(
-    parent: Node | None, search_state: SearchState, your_index: int, your_deck: list[int], model: MyModel
-) -> Node:
+Evaluator = Callable[[Observation, list[list[int]]], tuple[float, list[float]]]
+
+
+def _nn_evaluator(model: MyModel, your_deck: list[int]) -> Evaluator:
+    """Build the inference-time `evaluate` closure for `create_node`.
+
+    Computes the encoder/decoder feature vectors for a node's observation + candidate
+    actions and runs the model on them, once per node.
+    """
+
+    def evaluate(obs: Observation, actions: list[list[int]]) -> tuple[float, list[float]]:
+        sv_enc = get_encoder_input(obs, your_deck)
+        sv_dec = get_decoder_input(obs, actions)
+        return eval_nn(sv_enc, sv_dec, model)
+
+    return evaluate
+
+
+def create_node(parent: Node | None, search_state: SearchState, your_index: int, evaluate: Evaluator) -> Node:
     node = Node(parent, search_state)
     obs = search_state.observation
     state = obs.current
@@ -395,9 +412,7 @@ def create_node(
     else:
         actions = enumerate_action_combinations(obs.select.maxCount, len(obs.select.option))
 
-        sv_enc = get_encoder_input(obs, your_deck)
-        sv_dec = get_decoder_input(obs, actions)
-        value, policy = eval_nn(sv_enc, sv_dec, model)
+        value, policy = evaluate(obs, actions)
         v = value
         if state.yourIndex != your_index:
             v = -v
@@ -462,7 +477,8 @@ class MCTSTransformerAgent(BaseAgent):
             opponent_active=[1072] if len(active) > 0 and active[0] is None else [],
         )
 
-        root = create_node(None, search_state, your_index, self.deck, self.model)
+        evaluate = _nn_evaluator(self.model, self.deck)
+        root = create_node(None, search_state, your_index, evaluate)
 
         for _ in range(self.SEARCH_COUNT):
             current = root
@@ -473,7 +489,7 @@ class MCTSTransformerAgent(BaseAgent):
 
                 if next_child.node is None:
                     s_state = search_step(current.state.searchId, next_child.select)
-                    next_child.node = create_node(current, s_state, your_index, self.deck, self.model)
+                    next_child.node = create_node(current, s_state, your_index, evaluate)
                     break
                 else:
                     current = next_child.node
