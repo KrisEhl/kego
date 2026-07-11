@@ -94,14 +94,17 @@ def _parse_etime(etime_str: str) -> int:
 
 
 def _poll_machine(machine: Machine) -> dict:
+    import os
     import re
     import subprocess
 
     remote_script = r"""
 if [ "$(uname)" = "Darwin" ]; then
     CPU_UTIL=$(top -l 1 | awk '/CPU usage/ {print $3}' | tr -d '%')
+    PS_CMD="ps -eo pid,etime,command"
 else
     CPU_UTIL=$(top -bn1 | grep -i '%Cpu(s)' | awk '{for(i=1;i<=NF;i++) if($i ~ /id/) print 100 - $(i-1)}')
+    PS_CMD="ps -eo pid,etime,cmd"
 fi
 echo "CPU_UTIL: $CPU_UTIL%"
 echo "LOAD: $(cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null || echo 'unknown')"
@@ -112,12 +115,13 @@ else
     echo "GPU: N/A"
 fi
 echo "PROCS:"
-ps -eo pid,etime,cmd 2>/dev/null | grep -E 'train-agent|train_agent' | grep -v grep || true
+$PS_CMD 2>/dev/null | grep -E 'train-agent|train_agent|kego leaderboard|run_league' | grep -v grep || true
 echo "LOGS:"
-ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
-    TAIL_LINES=$(tail -n 50 "$logpath" 2>/dev/null)
+ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 20 | while read -r logpath; do
+    TAIL_LINES=$(tail -c 20000 "$logpath" 2>/dev/null | tr '\r' '\n')
 
     ITER_REGEX="--- Iteration ([0-9]+)/([0-9]+) ---"
+    LEAGUE_REGEX="\(([0-9]+)/([0-9]+)\).*ETA: ([^]]+)"
     EVAL_REGEX="Evaluating gauntlet"
     PLAY_REGEX="Collecting self-play"
     BUFFER_REGEX="Training on buffer"
@@ -129,11 +133,18 @@ ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
     TOTAL_ITER=""
     STEP=""
     DONE_MSG=""
+    KIND="train"
 
     while IFS= read -r line; do
         if [[ "$line" =~ $ITER_REGEX ]]; then
             CURRENT_ITER="${BASH_REMATCH[1]}"
             TOTAL_ITER="${BASH_REMATCH[2]}"
+            KIND="train"
+        elif [[ "$line" =~ $LEAGUE_REGEX ]]; then
+            CURRENT_ITER="${BASH_REMATCH[1]}"
+            TOTAL_ITER="${BASH_REMATCH[2]}"
+            STEP="ETA ${BASH_REMATCH[3]}"
+            KIND="leaderboard"
         elif [[ "$line" =~ $EVAL_REGEX ]]; then
             STEP="Evaluating gauntlet"
         elif [[ "$line" =~ $PLAY_REGEX ]]; then
@@ -152,13 +163,33 @@ ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 5 | while read -r logpath; do
 
     FILENAME=$(basename "$logpath")
     RUN_ID="${FILENAME%.log}"
-    echo "LOG_PARSED: run_id=$RUN_ID | curr=$CURRENT_ITER | total=$TOTAL_ITER | step=$STEP | done=$DONE_MSG"
+    echo "LOG_PARSED: run_id=$RUN_ID | curr=$CURRENT_ITER | total=$TOTAL_ITER | step=$STEP | done=$DONE_MSG | kind=$KIND"
 done
 """
-    ssh_cmd = ["ssh", "-o", "ConnectTimeout=1", "-o", "BatchMode=yes", machine.ssh, remote_script]
+    try:
+        from kego.fleet import machine_name
+
+        is_local = machine.name == machine_name()
+    except Exception:
+        is_local = False
+    connect_timeout = os.environ.get("KEGO_STATUS_CONNECT_TIMEOUT", "4")
+    command_timeout = float(os.environ.get("KEGO_STATUS_TIMEOUT", "8"))
+    cmd = (
+        ["bash", "-lc", remote_script]
+        if is_local
+        else [
+            "ssh",
+            "-o",
+            f"ConnectTimeout={connect_timeout}",
+            "-o",
+            "BatchMode=yes",
+            machine.ssh,
+            remote_script,
+        ]
+    )
 
     try:
-        res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=2.5)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=command_timeout)
         if res.returncode != 0:
             return {"name": machine.name, "status": "Offline", "error": res.stderr.strip() or "Connection failed"}
 
@@ -173,7 +204,7 @@ done
         mode = None
         for line in lines:
             if line.startswith("LOAD:"):
-                load_parts = line.split(":", 1)[1].strip().split()
+                load_parts = line.split(":", 1)[1].strip().strip("{}").split()
                 if len(load_parts) >= 3:
                     load = " ".join(load_parts[:3])
                 else:
@@ -222,6 +253,8 @@ done
             if len(parts) < 3:
                 continue
             pid, etime, cmd = parts[0], parts[1], parts[2]
+            if is_local and cmd.startswith("ssh ") and "kego leaderboard" in cmd:
+                continue
 
             run_ids = re.findall(r"[a-f0-9]{32}", cmd)
             if run_ids:
@@ -234,13 +267,16 @@ done
                     total = log_data.get("total", "")
                     step = log_data.get("step", "")
                     done = log_data.get("done", "")
+                    kind = log_data.get("kind", "train")
 
                     eta_str = ""
+                    if kind == "leaderboard" and step.startswith("ETA "):
+                        eta_str = step.removeprefix("ETA ").strip()
                     if curr and total:
                         try:
                             curr_val = int(curr)
                             total_val = int(total)
-                            if curr_val > 0 and total_val > curr_val:
+                            if not eta_str and curr_val > 0 and total_val > curr_val:
                                 elapsed_secs = _parse_etime(etime)
                                 avg_iter_time = elapsed_secs / curr_val
                                 rem_iters = total_val - curr_val
@@ -257,8 +293,9 @@ done
                     if done:
                         progress_desc = done
                     elif curr:
-                        progress_desc = f"Iter {curr}/{total}"
-                        if step:
+                        label = "Games" if kind == "leaderboard" else "Iter"
+                        progress_desc = f"{label} {curr}/{total}"
+                        if step and kind != "leaderboard":
                             progress_desc += f" - {step}"
                     else:
                         progress_desc = "Running"

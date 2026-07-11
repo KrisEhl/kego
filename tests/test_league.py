@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -136,3 +137,83 @@ def test_download_checkpoint_discovers_remote_pth_before_scp(tmp_path, monkeypat
     assert out.read_bytes() == b"weights"
     assert calls[0][:4] == ["ssh", "-o", "BatchMode=yes", "-o"]
     assert calls[1][0] == "scp"
+
+
+def test_persist_league_artifacts_writes_mergeable_files(tmp_path, monkeypatch):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    monkeypatch.setattr(module, "comp_dir", tmp_path)
+
+    class Client:
+        def __init__(self):
+            self.logged = []
+
+        def log_artifacts(self, run_id, local_dir, artifact_path):
+            self.logged.append((run_id, Path(local_dir), artifact_path))
+
+    client = Client()
+    names = ["Registry v1", "Mega Abomasnow ex"]
+    wins = module.np.array([[0, 1], [3, 0]])
+    games = module.np.array([[0, 4], [4, 0]])
+    results = [
+        {"name": "Mega Abomasnow ex", "avg_wr": 75.0, "wins": 3, "games": 4},
+        {"name": "Registry v1", "avg_wr": 25.0, "wins": 1, "games": 4},
+    ]
+    args = SimpleNamespace(
+        task="pokemon-tcg-ai-battle",
+        games=4,
+        search_count=10,
+        workers=2,
+        write_ratings=False,
+        partial_save_every=5000,
+    )
+
+    out = module._persist_league_artifacts(
+        client,
+        "run1",
+        names,
+        wins,
+        games,
+        results,
+        {"Registry v1": "1"},
+        {"Mega Abomasnow ex": 1650.0},
+        args,
+    )
+
+    assert (out / "matrix.md").read_text().startswith("League Results Matrix")
+    assert "Mega Abomasnow ex" in (out / "matrix.md").read_text()
+    assert (out / "wins.csv").read_text().splitlines()[0] == "participant,Registry v1,Mega Abomasnow ex"
+    meta = json.loads((out / "participants.json").read_text())
+    assert meta["name_to_version"] == {"Registry v1": "1"}
+    assert meta["args"]["partial_save_every"] == 5000
+    assert client.logged == [("run1", out, "league")]
+
+
+def test_registry_league_refuses_to_guess_missing_deck_tag():
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+
+    content = league_path.read_text()
+
+    assert 'v.tags.get("deck", "abomasnow")' not in content
+    assert "missing required model-version tag 'deck'" in content
+    assert "Refusing to guess a deck for registry-backed league evaluation" in content
+
+
+def test_aggregate_completed_results_skips_pending_and_failed_games():
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    wins, games, completed = module._aggregate_completed_results(
+        [0, 1, -1, None],
+        [(0, 1), (0, 1), (1, 2), (0, 2)],
+        3,
+    )
+
+    assert completed == 3
+    assert wins.tolist() == [[0, 1, 0], [1, 0, 0], [0, 0, 0]]
+    assert games.tolist() == [[0, 2, 0], [2, 0, 0], [0, 0, 0]]

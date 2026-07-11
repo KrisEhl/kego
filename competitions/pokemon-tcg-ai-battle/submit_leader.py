@@ -80,7 +80,20 @@ def main():
     git_sha = leader.get("git_sha", "unknown")
     machine = leader.get("machine", "unknown")
     model_args_raw = leader.get("model_args")
-    deck_name = leader.get("deck", "abomasnow")
+    deck_name = leader.get("deck")
+    if not deck_name:
+        print(
+            f"Error: Leader registry version {version} is missing required 'deck' tag. "
+            "Refusing to guess a deck for submission."
+        )
+        print("Set the tag explicitly, e.g.:")
+        print(
+            '  uv run python -c "from mlflow.tracking import MlflowClient; '
+            "from kego.tracking import default_tracking_uri; "
+            "MlflowClient(tracking_uri=default_tracking_uri()).set_model_version_tag("
+            f"'pokemon-tcg-ai-battle', '{version}', 'deck', '<deck-name>')\""
+        )
+        sys.exit(1)
     model_args = None
     if model_args_raw:
         try:

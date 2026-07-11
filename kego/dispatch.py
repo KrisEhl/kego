@@ -35,6 +35,12 @@ DEFAULT_EXCLUDES = [
     "tmp/",
     "mlruns",
     "mlruns/",
+    "notebooks",
+    "notebooks/",
+    "cluster",
+    "cluster/",
+    "catboost_info",
+    "catboost_info/",
     # Explicitly exclude nested outputs inside competition dirs (e.g. large .pth checkpoints)
     "competitions/*/outputs/",
     "competitions/*/mlruns/",
@@ -51,7 +57,7 @@ def other_competition_excludes(repo_root: str | Path, keep: str) -> list[str]:
 
 def rsync_command(local_dir: str | Path, machine: Machine, excludes: Sequence[str]) -> list[str]:
     """rsync the *contents* of ``local_dir`` into ``machine.repo`` (trailing slashes), --delete."""
-    cmd = ["rsync", "-az", "--delete"]
+    cmd = ["rsync", "-az", "--delete", "--force"]
     cmd += [f"--exclude={e}" for e in excludes]
     cmd += [f"{local_dir}/", f"{machine.ssh}:{machine.repo}/"]
     return cmd
@@ -71,10 +77,11 @@ def remote_launch_command(machine: Machine, cmd_args: Sequence[str], run_id: str
             pass
 
     kego_cmd = "uv run kego " + " ".join(shlex.quote(a) for a in cmd_args)
+    launch_cmd = f"exec env KEGO_MLFLOW_RUN_ID={shlex.quote(run_id)} {kego_cmd}"
     log = f"{log_dir}/{run_id}.log"
     return (
         f"mkdir -p {log_dir} && cd {shlex.quote(machine.repo)}{task_dir} && "
-        f"KEGO_MLFLOW_RUN_ID={run_id} nohup {kego_cmd} > {log} 2>&1 &"
+        f"nohup bash -lc {shlex.quote(launch_cmd)} > {log} 2>&1 < /dev/null & disown; exit 0"
     )
 
 
@@ -99,4 +106,6 @@ def dispatch(
     if getattr(ship, "returncode", 0) != 0:
         raise RuntimeError(f"rsync to {machine.name} ({machine.ssh}) failed")
     remote = remote_launch_command(machine, cmd_args, run_id)
-    runner(ssh_command(machine, remote))
+    launched = runner(ssh_command(machine, remote))
+    if getattr(launched, "returncode", 0) != 0:
+        raise RuntimeError(f"ssh launch on {machine.name} ({machine.ssh}) failed")

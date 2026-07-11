@@ -1,12 +1,15 @@
 import argparse
 import ast
 import contextlib
+import csv
+import json
 import multiprocessing as mp
 import os
 import shlex
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -96,6 +99,175 @@ def _parse_model_args(raw: str | None):
         return tuple(parsed) if isinstance(parsed, (list, tuple)) else None
     except (SyntaxError, ValueError):
         return None
+
+
+def default_workers() -> int:
+    cores = os.cpu_count() or 4
+    return max(1, cores - 2)
+
+
+def _finish_mlflow_run(client: MlflowClient, run_id: str | None, status: str = "FINISHED") -> None:
+    if not run_id:
+        return
+    try:
+        client.set_terminated(run_id, status=status)
+    except Exception:
+        pass
+
+
+def _ensure_league_run(client: MlflowClient, uri: str, task: str, args) -> tuple[str | None, bool]:
+    run_id = os.environ.get("KEGO_MLFLOW_RUN_ID")
+    if run_id:
+        return run_id, False
+    try:
+        from kego.tracking import create_run
+
+        run_id = create_run(
+            uri,
+            experiment=task,
+            run_name=f"{task}-leaderboard",
+            tags={"job": "leaderboard", "task": task, "write_ratings": str(args.write_ratings)},
+        )
+        return run_id, bool(run_id)
+    except Exception:
+        return None, False
+
+
+def _format_league_matrix(participant_names, wins_matrix, games_matrix, results) -> str:
+    sorted_names = [r["name"] for r in results]
+    headers = ["Participant"] + sorted_names + ["Average WR"]
+    table_rows = [headers]
+
+    for idx, r in enumerate(results):
+        prefix = ""
+        if idx == 0:
+            prefix = "🥇 "
+        elif idx == 1:
+            prefix = "🥈 "
+        elif idx == 2:
+            prefix = "🥉 "
+
+        row = [f"{prefix}**{r['name']}**"]
+        idx_i = participant_names.index(r["name"])
+        for name_j in sorted_names:
+            if r["name"] == name_j:
+                row.append("-")
+            else:
+                idx_j = participant_names.index(name_j)
+                wr = (
+                    (wins_matrix[idx_i][idx_j] / games_matrix[idx_i][idx_j]) * 100
+                    if games_matrix[idx_i][idx_j] > 0
+                    else 0
+                )
+                row.append(f"{int(wr)}%" if wr.is_integer() else f"{wr:.1f}%")
+        avg_str = f"**{int(r['avg_wr'])}%**" if r["avg_wr"].is_integer() else f"**{r['avg_wr']:.1f}%**"
+        row.append(avg_str)
+        table_rows.append(row)
+
+    col_widths = [max(len(row[col_idx]) for row in table_rows) for col_idx in range(len(headers))]
+    sep_row = []
+    for col_idx, w in enumerate(col_widths):
+        sep_row.append(":" + "-" * (w - 1) if col_idx == 0 else ":" + "-" * (w - 2) + ":")
+
+    lines = ["League Results Matrix (Row vs Column Win Rate %):"]
+    header_cells = [
+        table_rows[0][c].ljust(col_widths[c]) if c == 0 else table_rows[0][c].center(col_widths[c])
+        for c in range(len(headers))
+    ]
+    lines.append("| " + " | ".join(header_cells) + " |")
+    lines.append("| " + " | ".join(sep_row) + " |")
+    for row in table_rows[1:]:
+        row_cells = [
+            row[c].ljust(col_widths[c]) if c == 0 else row[c].center(col_widths[c]) for c in range(len(headers))
+        ]
+        lines.append("| " + " | ".join(row_cells) + " |")
+    return "\n".join(lines)
+
+
+def _write_matrix_csv(path: Path, participant_names, matrix) -> None:
+    with path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["participant", *participant_names])
+        for name, row in zip(participant_names, matrix, strict=True):
+            writer.writerow([name, *row])
+
+
+def _persist_league_artifacts(
+    client: MlflowClient,
+    run_id: str | None,
+    participant_names,
+    wins_matrix,
+    games_matrix,
+    results,
+    name_to_version,
+    anchor_elos,
+    args,
+) -> Path:
+    artifact_id = run_id or f"local_{uuid.uuid4().hex[:12]}"
+    out_dir = comp_dir / "outputs" / "league_runs" / artifact_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    matrix_md = _format_league_matrix(participant_names, wins_matrix, games_matrix, results)
+    (out_dir / "matrix.md").write_text(matrix_md + "\n")
+    _write_matrix_csv(out_dir / "wins.csv", participant_names, wins_matrix.astype(int).tolist())
+    _write_matrix_csv(out_dir / "games.csv", participant_names, games_matrix.astype(int).tolist())
+    (out_dir / "results.json").write_text(json.dumps(results, indent=2))
+    (out_dir / "participants.json").write_text(
+        json.dumps(
+            {
+                "participants": participant_names,
+                "name_to_version": name_to_version,
+                "anchor_elos": anchor_elos,
+                "args": {
+                    "task": args.task,
+                    "games": args.games,
+                    "search_count": args.search_count,
+                    "workers": args.workers,
+                    "write_ratings": args.write_ratings,
+                    "include_local_mcts": getattr(args, "include_local_mcts", False),
+                    "partial_save_every": getattr(args, "partial_save_every", 0),
+                },
+            },
+            indent=2,
+        )
+    )
+    if run_id:
+        try:
+            client.log_artifacts(run_id, str(out_dir), artifact_path="league")
+        except Exception as e:
+            print(f"\nWarning: could not log league artifacts to MLflow ({e}). Local copy: {out_dir}")
+    return out_dir
+
+
+def _aggregate_completed_results(results_list, task_map, n_participants):
+    wins_matrix = np.zeros((n_participants, n_participants))
+    games_matrix = np.zeros((n_participants, n_participants))
+    completed = 0
+    for task_idx, winner_val in enumerate(results_list):
+        if winner_val is None:
+            continue
+        completed += 1
+        if winner_val == -1:
+            continue
+        i, j = task_map[task_idx]
+        games_matrix[i][j] += 1
+        games_matrix[j][i] += 1
+        if winner_val == 0:
+            wins_matrix[i][j] += 1
+        elif winner_val == 1:
+            wins_matrix[j][i] += 1
+    return wins_matrix, games_matrix, completed
+
+
+def _build_league_results(participant_names, wins_matrix, games_matrix):
+    results = []
+    for i, name in enumerate(participant_names):
+        total_wins = sum(wins_matrix[i][j] for j in range(len(participant_names)) if i != j)
+        total_games = sum(games_matrix[i][j] for j in range(len(participant_names)) if i != j)
+        avg_wr = (total_wins / total_games) * 100 if total_games > 0 else 0
+        results.append({"name": name, "avg_wr": avg_wr, "wins": total_wins, "games": total_games})
+    results.sort(key=lambda x: x["avg_wr"], reverse=True)
+    return results
 
 
 def _run_single_game(payload):
@@ -249,9 +421,32 @@ def main():
     parser.add_argument("--task", type=str, default="pokemon-tcg-ai-battle", help="Task name to query in registry")
     parser.add_argument("--search-count", type=int, default=10, help="Inference search count for MCTS agents")
     parser.add_argument(
-        "--workers", type=int, default=os.cpu_count(), help="Number of parallel workers (defaults to CPU count)"
+        "--workers", type=int, default=default_workers(), help="Number of parallel workers (defaults to CPU count - 2)"
     )
     parser.add_argument("--debug", action="store_true", help="Enable verbose debug logging")
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Directory for downloaded registry checkpoints (default: outputs/cached_registry[/run_id])",
+    )
+    parser.add_argument(
+        "--write-ratings",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write updated Elo ratings back to MLflow model-version tags",
+    )
+    parser.add_argument(
+        "--include-local-mcts",
+        action="store_true",
+        help="Include local outputs/mcts.pth as a participant (not merge-safe across fleet machines)",
+    )
+    parser.add_argument(
+        "--partial-save-every",
+        type=int,
+        default=5000,
+        help="Persist partial league artifacts every N completed games; use 0 to disable",
+    )
     args = parser.parse_args()
 
     # Set MCTS search count for all workers
@@ -271,6 +466,18 @@ def main():
         print(f"Connecting to MLflow at {uri}...")
 
     client = MlflowClient(tracking_uri=uri)
+    mlflow_run_id, _owns_mlflow_run = _ensure_league_run(client, uri, args.task, args)
+    if mlflow_run_id:
+        try:
+            client.set_tag(mlflow_run_id, "job", "leaderboard")
+            client.set_tag(mlflow_run_id, "task", args.task)
+            client.log_param(mlflow_run_id, "job", "leaderboard")
+            client.log_param(mlflow_run_id, "games", args.games)
+            client.log_param(mlflow_run_id, "search_count", args.search_count)
+            client.log_param(mlflow_run_id, "workers", args.workers)
+            client.log_param(mlflow_run_id, "write_ratings", args.write_ratings)
+        except Exception:
+            pass
 
     try:
         versions = client.search_model_versions(f"name='{args.task}'")
@@ -280,7 +487,13 @@ def main():
         versions = []
 
     model_checkpoints = {}
-    cache_base_dir = comp_dir / "outputs" / "cached_registry"
+    run_id = os.environ.get("KEGO_MLFLOW_RUN_ID") or os.environ.get("KEGO_LEAGUE_RUN_ID")
+    if args.cache_dir:
+        cache_base_dir = Path(args.cache_dir)
+    elif run_id:
+        cache_base_dir = comp_dir / "outputs" / "cached_registry" / run_id
+    else:
+        cache_base_dir = comp_dir / "outputs" / "cached_registry" / f"league_{uuid.uuid4().hex[:12]}"
 
     if not args.debug and len(versions) > 0:
         print("Caching registered checkpoints from hub...")
@@ -299,9 +512,10 @@ def main():
             if args.debug:
                 print(f"  Error obtaining checkpoint: {e}")
 
-    # Check for local checkpoints as well
+    # Check for local checkpoints as well. Disabled by default so fleet runs do not
+    # depend on machine-local output files.
     local_mcts = comp_dir / "outputs" / "mcts.pth"
-    if local_mcts.exists():
+    if args.include_local_mcts and local_mcts.exists():
         model_checkpoints["Local (outputs/mcts.pth)"] = str(local_mcts)
 
     # 3. Define the participants
@@ -310,7 +524,12 @@ def main():
     for v in versions:
         v_name = f"Registry v{v.version}"
         if v_name in model_checkpoints:
-            deck_name = v.tags.get("deck", "abomasnow") if v.tags else "abomasnow"
+            deck_name = v.tags.get("deck") if v.tags else None
+            if not deck_name:
+                raise ValueError(
+                    f"{v_name} is missing required model-version tag 'deck'. "
+                    "Refusing to guess a deck for registry-backed league evaluation."
+                )
             participants[v_name] = {
                 "type": "mcts",
                 "file": "competitions/pokemon-tcg-ai-battle/agents/mcts.py",
@@ -321,7 +540,7 @@ def main():
 
     # Check for local checkpoints as well
     local_mcts = comp_dir / "outputs" / "mcts.pth"
-    if local_mcts.exists():
+    if args.include_local_mcts and local_mcts.exists():
         local_deck = "decks/abomasnow.csv"
         try:
             import tomllib
@@ -395,6 +614,7 @@ def main():
 
     if n_participants < 2:
         print("Not enough participants to run a league.")
+        _finish_mlflow_run(client, mlflow_run_id)
         return
 
     # Wins and games matrices
@@ -423,6 +643,26 @@ def main():
         print("No games requested; participant dry-run only. No Elo ratings written.")
         for name in participant_names:
             print(f"  - {name}")
+        empty_results = [{"name": name, "avg_wr": 0.0, "wins": 0, "games": 0} for name in participant_names]
+        artifact_dir = _persist_league_artifacts(
+            client,
+            mlflow_run_id,
+            participant_names,
+            wins_matrix,
+            games_matrix,
+            empty_results,
+            name_to_version,
+            anchor_elos,
+            args,
+        )
+        print(f"League artifacts written to {artifact_dir}")
+        if mlflow_run_id:
+            try:
+                client.log_metric(mlflow_run_id, "league_participants", n_participants)
+                client.log_metric(mlflow_run_id, "league_games_total", 0)
+            except Exception:
+                pass
+        _finish_mlflow_run(client, mlflow_run_id)
         return
 
     # Set up child process environments
@@ -433,144 +673,145 @@ def main():
 
     # Run in parallel
     results_list = [None] * len(tasks)
+    partial_save_every = max(0, args.partial_save_every)
+    next_partial_save = partial_save_every
     pool = mp.get_context("spawn").Pool(args.workers, initializer=_worker_init)
     try:
         pbar = ProgressBar(total=len(tasks))
         for task_idx, winner_val in pool.imap_unordered(_run_single_game_indexed, tasks):
             results_list[task_idx] = winner_val
             pbar.update(1)
-    finally:
+            if partial_save_every and pbar.completed >= next_partial_save:
+                wins_matrix, games_matrix, completed = _aggregate_completed_results(
+                    results_list, task_map, n_participants
+                )
+                partial_results = _build_league_results(participant_names, wins_matrix, games_matrix)
+                artifact_dir = _persist_league_artifacts(
+                    client,
+                    mlflow_run_id,
+                    participant_names,
+                    wins_matrix,
+                    games_matrix,
+                    partial_results,
+                    name_to_version,
+                    anchor_elos,
+                    args,
+                )
+                print(f"\nPartial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
+                next_partial_save += partial_save_every
+    except KeyboardInterrupt:
+        print("\nInterrupted; saving completed league games before shutdown...")
+        pool.terminate()
+        wins_matrix, games_matrix, completed = _aggregate_completed_results(results_list, task_map, n_participants)
+        partial_results = _build_league_results(participant_names, wins_matrix, games_matrix)
+        artifact_dir = _persist_league_artifacts(
+            client,
+            mlflow_run_id,
+            participant_names,
+            wins_matrix,
+            games_matrix,
+            partial_results,
+            name_to_version,
+            anchor_elos,
+            args,
+        )
+        print(f"Partial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
+        _finish_mlflow_run(client, mlflow_run_id, status="KILLED")
+        return
+    except Exception:
+        print("\nLeague failed; saving completed games before raising the error...")
+        pool.terminate()
+        wins_matrix, games_matrix, completed = _aggregate_completed_results(results_list, task_map, n_participants)
+        partial_results = _build_league_results(participant_names, wins_matrix, games_matrix)
+        artifact_dir = _persist_league_artifacts(
+            client,
+            mlflow_run_id,
+            participant_names,
+            wins_matrix,
+            games_matrix,
+            partial_results,
+            name_to_version,
+            anchor_elos,
+            args,
+        )
+        print(f"Partial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
+        _finish_mlflow_run(client, mlflow_run_id, status="FAILED")
+        raise
+    else:
         pool.close()
+    finally:
         pool.join()
 
-    # Aggregate wins
-    for task_idx, winner_val in enumerate(results_list):
-        if winner_val == -1:
-            continue
-        i, j = task_map[task_idx]
-        games_matrix[i][j] += 1
-        games_matrix[j][i] += 1
-        if winner_val == 0:
-            wins_matrix[i][j] += 1
-        elif winner_val == 1:
-            wins_matrix[j][i] += 1
+    wins_matrix, games_matrix, _ = _aggregate_completed_results(results_list, task_map, n_participants)
 
-    # --- League Elo: update ratings from this round and write back to the registry ---
-    try:
-        from kego.tracking import read_ratings, write_ratings
-        from kego.tracking.league import Rating, rate_round, results_from_winmatrix
+    # --- League Elo: update ratings from this round and optionally write back to the registry ---
+    if not args.write_ratings:
+        print("\nRead-only league: not writing Elo ratings to the registry.")
+    else:
+        try:
+            from kego.tracking import read_ratings, write_ratings
+            from kego.tracking.league import Rating, rate_round, results_from_winmatrix
 
-        round_results = results_from_winmatrix(participant_names, wins_matrix.tolist(), games_matrix.tolist())
+            round_results = results_from_winmatrix(participant_names, wins_matrix.tolist(), games_matrix.tolist())
 
-        # Prior ratings keyed by display name (from registry tags); unrated players default later.
-        version_ratings = read_ratings(uri, args.task)
-        prior = {
-            name: Rating(version_ratings[v]["elo"], version_ratings[v]["elo_rd"])
-            for name, v in name_to_version.items()
-            if v in version_ratings
-        }
-        updated = rate_round(prior, round_results, anchor_elos)
-
-        # Games this round per player = number of outcomes emitted for it.
-        round_games = {name: len(res) for name, res in round_results.items()}
-        prior_games = {name: version_ratings.get(v, {}).get("games", 0) for name, v in name_to_version.items()}
-
-        ratings_by_version = {
-            name_to_version[name]: {
-                "elo": r.elo,
-                "elo_rd": r.rd,
-                "games": prior_games.get(name, 0) + round_games.get(name, 0),
+            # Prior ratings keyed by display name (from registry tags); unrated players default later.
+            version_ratings = read_ratings(uri, args.task)
+            prior = {
+                name: Rating(version_ratings[v]["elo"], version_ratings[v]["elo_rd"])
+                for name, v in name_to_version.items()
+                if v in version_ratings
             }
-            for name, r in updated.items()
-            if name in name_to_version  # skip "Local (...)" and anything not in the registry
-        }
-        if ratings_by_version:
-            write_ratings(uri, args.task, ratings_by_version)
-            print(
-                f"\nUpdated Elo ratings for {len(ratings_by_version)} registered agent(s): {sorted(ratings_by_version)}"
-            )
-        else:
-            print("\nNo registry-backed agents in this league — no ratings written.")
-    except Exception as e:
-        print(f"\nWarning: could not update league Elo ratings ({e}); showing the round-robin matrix below.")
+            updated = rate_round(prior, round_results, anchor_elos)
 
-    # Generate Markdown Table sorted by average win rate
-    results = []
-    for i in range(n_participants):
-        total_wins = 0
-        total_games = 0
-        for j in range(n_participants):
-            if i != j:
-                total_wins += wins_matrix[i][j]
-                total_games += games_matrix[i][j]
-        avg_wr = (total_wins / total_games) * 100 if total_games > 0 else 0
-        results.append({"name": participant_names[i], "avg_wr": avg_wr, "wins": total_wins, "games": total_games})
+            # Games this round per player = number of outcomes emitted for it.
+            round_games = {name: len(res) for name, res in round_results.items()}
+            prior_games = {name: version_ratings.get(v, {}).get("games", 0) for name, v in name_to_version.items()}
 
-    # Sort descending by average win rate
-    results.sort(key=lambda x: x["avg_wr"], reverse=True)
-    sorted_names = [r["name"] for r in results]
-
-    # Build the full table structure for column width calculations
-    headers = ["Participant"] + sorted_names + ["Average WR"]
-    table_rows = [headers]
-
-    for idx, r in enumerate(results):
-        prefix = ""
-        if idx == 0:
-            prefix = "🥇 "
-        elif idx == 1:
-            prefix = "🥈 "
-        elif idx == 2:
-            prefix = "🥉 "
-
-        row = [f"{prefix}**{r['name']}**"]
-        idx_i = participant_names.index(r["name"])
-        for name_j in sorted_names:
-            if r["name"] == name_j:
-                row.append("-")
-            else:
-                idx_j = participant_names.index(name_j)
-                wr = (
-                    (wins_matrix[idx_i][idx_j] / games_matrix[idx_i][idx_j]) * 100
-                    if games_matrix[idx_i][idx_j] > 0
-                    else 0
+            ratings_by_version = {
+                name_to_version[name]: {
+                    "elo": r.elo,
+                    "elo_rd": r.rd,
+                    "games": prior_games.get(name, 0) + round_games.get(name, 0),
+                }
+                for name, r in updated.items()
+                if name in name_to_version  # skip "Local (...)" and anything not in the registry
+            }
+            if ratings_by_version:
+                write_ratings(uri, args.task, ratings_by_version)
+                print(
+                    f"\nUpdated Elo ratings for {len(ratings_by_version)} registered agent(s): {sorted(ratings_by_version)}"
                 )
-                val_str = f"{int(wr)}%" if wr.is_integer() else f"{wr:.1f}%"
-                row.append(val_str)
-        avg_str = f"**{int(r['avg_wr'])}%**" if r["avg_wr"].is_integer() else f"**{r['avg_wr']:.1f}%**"
-        row.append(avg_str)
-        table_rows.append(row)
+            else:
+                print("\nNo registry-backed agents in this league — no ratings written.")
+        except Exception as e:
+            print(f"\nWarning: could not update league Elo ratings ({e}); showing the round-robin matrix below.")
 
-    # Compute column widths
-    col_widths = []
-    for col_idx in range(len(headers)):
-        max_w = max(len(row[col_idx]) for row in table_rows)
-        col_widths.append(max_w)
+    results = _build_league_results(participant_names, wins_matrix, games_matrix)
+    matrix_md = _format_league_matrix(participant_names, wins_matrix, games_matrix, results)
+    print("\n" + matrix_md)
+    artifact_dir = _persist_league_artifacts(
+        client,
+        mlflow_run_id,
+        participant_names,
+        wins_matrix,
+        games_matrix,
+        results,
+        name_to_version,
+        anchor_elos,
+        args,
+    )
+    print(f"\nLeague artifacts written to {artifact_dir}")
 
-    # Build the separator row
-    sep_row = []
-    for col_idx in range(len(headers)):
-        w = col_widths[col_idx]
-        if col_idx == 0:
-            sep_row.append(":" + "-" * (w - 1))
-        else:
-            sep_row.append(":" + "-" * (w - 2) + ":")
-
-    print("\nLeague Results Matrix (Row vs Column Win Rate %):")
-    # Print headers
-    header_cells = [
-        table_rows[0][c].ljust(col_widths[c]) if c == 0 else table_rows[0][c].center(col_widths[c])
-        for c in range(len(headers))
-    ]
-    print("| " + " | ".join(header_cells) + " |")
-    # Print separator
-    print("| " + " | ".join(sep_row) + " |")
-    # Print body
-    for row in table_rows[1:]:
-        row_cells = [
-            row[c].ljust(col_widths[c]) if c == 0 else row[c].center(col_widths[c]) for c in range(len(headers))
-        ]
-        print("| " + " | ".join(row_cells) + " |")
+    if mlflow_run_id:
+        try:
+            client.log_metric(mlflow_run_id, "league_participants", n_participants)
+            client.log_metric(mlflow_run_id, "league_games_total", int(games_matrix.sum() / 2))
+            if results:
+                client.log_metric(mlflow_run_id, "league_top_avg_wr", float(results[0]["avg_wr"]))
+                client.set_tag(mlflow_run_id, "league_top", results[0]["name"])
+        except Exception:
+            pass
+    _finish_mlflow_run(client, mlflow_run_id)
 
 
 if __name__ == "__main__":

@@ -170,6 +170,12 @@ class PokemonTCGAIBattleTask:
             except Exception:
                 pass
 
+        def submission_tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+            parts = Path(info.name).parts
+            if "__pycache__" in parts or info.name.endswith((".pyc", ".pyo")):
+                return None
+            return info
+
         # Create local tar.gz
         with tarfile.open(target_path, "w:gz") as tar:
             tar.add(agent_path, arcname="main.py")
@@ -178,7 +184,7 @@ class PokemonTCGAIBattleTask:
                 tar.add(base_path, arcname="base_agent.py")
             cg_dir = src_dir / "cg"
             if cg_dir.exists():
-                tar.add(cg_dir, arcname="cg")
+                tar.add(cg_dir, arcname="cg", filter=submission_tar_filter)
 
             # Package model weights if the agent is MCTS
             if "mcts" in str(agent_path):
@@ -253,7 +259,7 @@ try:
     cg_dst = os.path.join(WORKING_DIR, "cg")
     if os.path.exists(cg_dst):
         shutil.rmtree(cg_dst)
-    shutil.copytree(cg_src, cg_dst)
+    shutil.copytree(cg_src, cg_dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
 except Exception as e:
     print(f"Error copying cg: {{e}}")
 
@@ -267,6 +273,12 @@ for root, dirs, files in os.walk("/kaggle/input"):
             break
 
 submission_path = os.path.join(WORKING_DIR, "submission.tar.gz")
+def submission_tar_filter(info):
+    parts = info.name.split("/")
+    if "__pycache__" in parts or info.name.endswith((".pyc", ".pyo")):
+        return None
+    return info
+
 with tarfile.open(submission_path, "w:gz") as tar:
     items = ["main.py", "deck.csv", "cg"] + {list(helpers.keys())}
     if os.path.exists(os.path.join(WORKING_DIR, "mcts.pth")):
@@ -274,7 +286,7 @@ with tarfile.open(submission_path, "w:gz") as tar:
     for item in items:
         full_path = os.path.join(WORKING_DIR, item)
         if os.path.exists(full_path):
-            tar.add(full_path, arcname=item)
+            tar.add(full_path, arcname=item, filter=submission_tar_filter)
 
 print(f"Created {{submission_path}}")
 print(f"Size: {{os.path.getsize(submission_path)}} bytes")

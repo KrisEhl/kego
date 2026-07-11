@@ -42,9 +42,6 @@ _SUBMODULES = {
     "get_executor": "executor",
     "FeatureSets": "features",
     "FeatureStore": "features",
-    "Model": "model",
-    "get_model_class": "model",
-    "register_model": "model",
     "CachingPredictionStore": "predictions",
     "LocalCacheStore": "predictions",
     "MlflowPredictionStore": "predictions",
@@ -79,7 +76,6 @@ __all__ = [
     "LearnerSpec",
     "LocalCacheStore",
     "MlflowPredictionStore",
-    "Model",
     "ModelConfig",
     "Pipeline",
     "PipelineConfig",
@@ -97,10 +93,8 @@ __all__ = [
     "Tuner",
     "expand_grid",
     "get_executor",
-    "get_model_class",
     "get_task",
     "load_config",
-    "register_model",
     "register_task",
 ]
 

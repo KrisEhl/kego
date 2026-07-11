@@ -491,6 +491,149 @@ def test_status_surfaces_remote_query_error(tmp_path, monkeypatch, capsys):
     assert "No active training runs found." not in out
 
 
+def test_poll_machine_parses_darwin_process_commands(monkeypatch):
+    from kego.fleet import Machine
+    from kego.pipeline import runner
+
+    run_id = "05754c803bf248e29796d66ab75a5689"
+
+    class FakeCompleted:
+        returncode = 0
+        stderr = ""
+        stdout = f"""
+CPU_UTIL: 9.41%
+LOAD: {{ 1.23 1.96 2.08 }}
+CORES: 14
+GPU: N/A
+PROCS:
+15845    07:57 bash -lc mkdir -p ~/.kego/logs && cd /repo/competitions/pokemon-tcg-ai-battle && KEGO_MLFLOW_RUN_ID={run_id} nohup uv run kego train-agent --task pokemon-tcg-ai-battle --epochs 80 --output outputs/model.pth > ~/.kego/logs/{run_id}.log 2>&1 &
+15848    07:57 uv run kego train-agent --task pokemon-tcg-ai-battle --epochs 80 --output outputs/model.pth
+15859    07:57 /repo/.venv/bin/python3 /repo/.venv/bin/kego train-agent --task pokemon-tcg-ai-battle --epochs 80 --output outputs/model.pth
+LOGS:
+LOG_PARSED: run_id={run_id} | curr=15 | total=80 | step=Training complete (value=0.0062 policy=0.0073) | done=
+"""
+
+    monkeypatch.setattr("subprocess.run", lambda *_args, **_kwargs: FakeCompleted())
+
+    res = runner._poll_machine(Machine("mn", "user@mn", "cpu", "/repo"))
+
+    assert res["status"] == "Online"
+    assert res["load"] == "9.41% / 1.23 1.96 2.08 (14c)"
+    assert res["runs"] == [("15845", run_id, "Iter 15/80 - Training complete (value=0.0062 policy=0.0073)", "34m")]
+
+
+def test_poll_machine_parses_leaderboard_progress(monkeypatch):
+    from kego.fleet import Machine
+    from kego.pipeline import runner
+
+    run_id = "a1035113a0af4680bf7fa87a6c9b4500"
+
+    class FakeCompleted:
+        returncode = 0
+        stderr = ""
+        stdout = f"""
+CPU_UTIL: 92.4%
+LOAD: 18.10 18.06 18.02
+CORES: 20
+GPU: 0, 0, 6144
+PROCS:
+26452    02:30:59 bash -lc mkdir -p ~/.kego/logs && cd /repo/competitions/pokemon-tcg-ai-battle && KEGO_MLFLOW_RUN_ID={run_id} nohup uv run kego leaderboard --task pokemon-tcg-ai-battle --games 200 --search-count 10 > ~/.kego/logs/{run_id}.log 2>&1 < /dev/null &
+26454    02:30:59 uv run kego leaderboard --task pokemon-tcg-ai-battle --games 200 --search-count 10
+26457    02:30:59 /repo/.venv/bin/python3 /repo/.venv/bin/kego leaderboard --task pokemon-tcg-ai-battle --games 200 --search-count 10
+LOGS:
+LOG_PARSED: run_id={run_id} | curr=35650 | total=65000 | step=ETA 02:04:18 | done= | kind=leaderboard
+"""
+
+    monkeypatch.setattr("subprocess.run", lambda *_args, **_kwargs: FakeCompleted())
+
+    res = runner._poll_machine(Machine("omarchyl", "user@omarchyl", "gpu", "/repo"))
+
+    assert res["status"] == "Online"
+    assert res["gpu"] == "0% (0.0/6.0 GB)"
+    assert res["runs"] == [("26452", run_id, "Games 35650/65000", "02:04:18")]
+
+
+def test_poll_machine_uses_local_shell_for_current_machine(monkeypatch):
+    from kego.fleet import Machine
+    from kego.pipeline import runner
+
+    seen = {}
+
+    class FakeCompleted:
+        returncode = 0
+        stderr = ""
+        stdout = "CPU_UTIL: 1%\nLOAD: 0.1 0.2 0.3\nCORES: 4\nGPU: N/A\nPROCS:\nLOGS:\n"
+
+    def fake_run(cmd, **_kwargs):
+        seen["cmd"] = cmd
+        return FakeCompleted()
+
+    monkeypatch.setattr("kego.fleet.machine_name", lambda: "localbox")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    res = runner._poll_machine(Machine("localbox", "user@localbox", "cpu", "/repo"))
+
+    assert seen["cmd"][:2] == ["bash", "-lc"]
+    assert seen["cmd"][0] != "ssh"
+    assert res["status"] == "Online"
+
+
+def test_poll_machine_ignores_local_leaderboard_dispatch_ssh(monkeypatch):
+    from kego.fleet import Machine
+    from kego.pipeline import runner
+
+    run_id = "d38b7ed3f55447d9bcdf34a1cbd0a7bd"
+
+    class FakeCompleted:
+        returncode = 0
+        stderr = ""
+        stdout = f"""
+CPU_UTIL: 1%
+LOAD: 0.1 0.2 0.3
+CORES: 4
+GPU: N/A
+PROCS:
+73274 27:53 ssh kristian@omarchyd bash -lc 'mkdir -p ~/.kego/logs && cd /repo && KEGO_MLFLOW_RUN_ID={run_id} nohup uv run kego leaderboard --task pokemon-tcg-ai-battle > ~/.kego/logs/{run_id}.log 2>&1 < /dev/null &'
+LOGS:
+LOG_PARSED: run_id={run_id} | curr=3771 | total=16250 | step=ETA 01:30:02 | done= | kind=leaderboard
+"""
+
+    monkeypatch.setattr("kego.fleet.machine_name", lambda: "localbox")
+    monkeypatch.setattr("subprocess.run", lambda *_args, **_kwargs: FakeCompleted())
+
+    res = runner._poll_machine(Machine("localbox", "user@localbox", "cpu", "/repo"))
+
+    assert res["status"] == "Online"
+    assert res["runs"] == []
+
+
+def test_poll_machine_uses_longer_configurable_timeout(monkeypatch):
+    from kego.fleet import Machine
+    from kego.pipeline import runner
+
+    seen = {}
+
+    class FakeCompleted:
+        returncode = 0
+        stderr = ""
+        stdout = "CPU_UTIL: 1%\nLOAD: 0.1 0.2 0.3\nCORES: 4\nGPU: N/A\nPROCS:\nLOGS:\n"
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["timeout"] = kwargs["timeout"]
+        return FakeCompleted()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setenv("KEGO_STATUS_CONNECT_TIMEOUT", "6")
+    monkeypatch.setenv("KEGO_STATUS_TIMEOUT", "11")
+
+    res = runner._poll_machine(Machine("remote", "user@remote", "cpu", "/repo"))
+
+    assert res["status"] == "Online"
+    assert "ConnectTimeout=6" in seen["cmd"]
+    assert seen["timeout"] == 11
+
+
 def test_models_parser():
     parser = build_parser()
 
@@ -498,10 +641,185 @@ def test_models_parser():
     assert args.command == "models"
     assert args.sort_by == "elo"  # default now ranks by league Elo
     assert args.breakdown is False
+    assert args.color is None
 
-    args = parser.parse_args(["models", "--task", "x", "--sort-by", "gauntlet_avg", "-b"])
+    args = parser.parse_args(["models", "--task", "x", "--sort-by", "gauntlet_avg", "-b", "--color"])
     assert args.sort_by == "gauntlet_avg"
     assert args.breakdown is True
+    assert args.color is True
+
+
+def test_rule_agent_rows_are_available_for_pokemon_models():
+    from kego.pipeline.cli import _numeric_row_value, _rule_agent_rows
+
+    rows = _rule_agent_rows("pokemon-tcg-ai-battle")
+
+    assert [r["agent"] for r in rows] == [
+        "Mega Abomasnow ex",
+        "Dragapult ex",
+        "Mega Lucario ex",
+        "Zacian ex",
+        "Random",
+    ]
+    assert rows[0]["type"] == "rule"
+    assert rows[0]["version"] == "rule"
+    assert _numeric_row_value(rows[0], "elo") == 1650.0
+    assert _rule_agent_rows("other-task") == []
+
+
+def test_registry_agent_name_prefers_logged_tag():
+    from kego.pipeline.cli import _registry_agent_name
+
+    assert _registry_agent_name({"version": "2", "agent_name": "mcts-abomasnow"}) == "mcts-abomasnow"
+
+
+def test_registry_agent_name_derives_legacy_name():
+    from kego.pipeline.cli import _registry_agent_name
+
+    row = {"version": "2", "deck": "abomasnow", "model_args": "(256, 4, 512, 2, 2)", "epoch": "100"}
+
+    assert _registry_agent_name(row) == "v2 mcts-abomasnow 256/4/512/2/2 @100"
+
+
+def test_models_forced_color_shows_elo_trust_legend(monkeypatch, capsys):
+    from kego.pipeline import cli
+
+    monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr(
+        "kego.tracking.leaderboard",
+        lambda uri, task, sort_by: [{"version": "1", "elo": "1700", "elo_rd": "0.9"}],
+    )
+    monkeypatch.setenv("NO_COLOR", "1")
+
+    assert cli.main(["models", "--task", "pokemon-tcg-ai-battle", "--color"]) == 0
+    out = capsys.readouterr().out
+
+    assert "elo color:" in out
+    assert "Registry v1" in out
+    assert "\x1b[32m1700\x1b[0m" in out
+
+
+def test_models_no_color_suppresses_elo_trust_colors(monkeypatch, capsys):
+    from kego.pipeline import cli
+
+    monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr(
+        "kego.tracking.leaderboard",
+        lambda uri, task, sort_by: [{"version": "1", "elo": "1700", "elo_rd": "0.9"}],
+    )
+    assert cli.main(["models", "--task", "pokemon-tcg-ai-battle", "--no-color"]) == 0
+    out = capsys.readouterr().out
+
+    assert "elo color:" not in out
+    assert "\x1b[" not in out
+
+
+def test_leaderboard_parser():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "leaderboard",
+            "--task",
+            "pokemon-tcg-ai-battle",
+            "--target",
+            "mn",
+            "--games",
+            "8",
+            "--search-count",
+            "12",
+            "--workers",
+            "4",
+            "--no-write-ratings",
+            "--cache-dir",
+            "outputs/cache",
+            "--partial-save-every",
+            "123",
+        ]
+    )
+
+    assert args.command == "leaderboard"
+    assert args.target == "mn"
+    assert args.games == 8
+    assert args.search_count == 12
+    assert args.workers == 4
+    assert args.write_ratings is False
+    assert args.cache_dir == "outputs/cache"
+    assert args.partial_save_every == 123
+
+
+def test_leaderboard_show_parser():
+    parser = build_parser()
+    args = parser.parse_args(["leaderboard-show", "--task", "pokemon-tcg-ai-battle", "--run-id", "abc123"])
+
+    assert args.command == "leaderboard-show"
+    assert args.run_id == "abc123"
+
+
+def test_leaderboard_merge_parser():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "leaderboard-merge",
+            "--task",
+            "pokemon-tcg-ai-battle",
+            "--run-ids",
+            "run1",
+            "run2",
+            "--write-ratings",
+        ]
+    )
+
+    assert args.command == "leaderboard-merge"
+    assert args.run_ids == ["run1", "run2"]
+    assert args.write_ratings is True
+
+    args = parser.parse_args(["leaderboard-merge", "--task", "pokemon-tcg-ai-battle"])
+    assert args.run_ids == []
+    assert args.latest is None
+
+    args = parser.parse_args(["leaderboard-merge", "--task", "pokemon-tcg-ai-battle", "--latest", "2"])
+    assert args.command == "leaderboard-merge"
+    assert args.run_ids == []
+    assert args.latest == 2
+
+
+def test_auto_leaderboard_run_ids_skips_consumed_and_missing_artifacts(monkeypatch):
+    from types import SimpleNamespace
+
+    from kego.pipeline import cli
+
+    class Client:
+        def get_experiment_by_name(self, name):
+            return SimpleNamespace(experiment_id="50")
+
+        def search_runs(self, _experiment_ids, filter_string, order_by, max_results):
+            if "leaderboard_merge" in filter_string:
+                return [SimpleNamespace(data=SimpleNamespace(tags={"source_run_ids": "old1,old2"}))]
+            return [
+                SimpleNamespace(info=SimpleNamespace(run_id="new2")),
+                SimpleNamespace(info=SimpleNamespace(run_id="new1")),
+                SimpleNamespace(info=SimpleNamespace(run_id="old1")),
+                SimpleNamespace(info=SimpleNamespace(run_id="bad")),
+            ]
+
+        def list_artifacts(self, run_id, path):
+            if run_id == "bad":
+                return []
+            return [
+                SimpleNamespace(path="league/matrix.md"),
+                SimpleNamespace(path="league/wins.csv"),
+                SimpleNamespace(path="league/games.csv"),
+                SimpleNamespace(path="league/results.json"),
+                SimpleNamespace(path="league/participants.json"),
+            ]
+
+    monkeypatch.setattr("mlflow.tracking.MlflowClient", lambda tracking_uri: Client())
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+
+    assert cli._auto_leaderboard_run_ids("pokemon-tcg-ai-battle") == ["new2", "new1"]
+    assert cli._auto_leaderboard_run_ids("pokemon-tcg-ai-battle", latest=1) == ["new2"]
 
 
 def test_train_agent_target_parser():

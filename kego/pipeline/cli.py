@@ -56,6 +56,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("submissions", parents=[common], help="list submissions")
 
+    leaderboard = sub.add_parser("leaderboard", parents=[common], help="run a task-specific model league")
+    leaderboard.add_argument("--games", type=int, default=200)
+    leaderboard.add_argument("--search-count", type=int, default=10)
+    leaderboard.add_argument("--workers", type=int)
+    leaderboard.add_argument("--debug", action="store_true")
+    leaderboard.add_argument("--cache-dir")
+    leaderboard.add_argument("--write-ratings", action=argparse.BooleanOptionalAction, default=True)
+    leaderboard.add_argument("--include-local-mcts", action="store_true")
+    leaderboard.add_argument("--partial-save-every", type=int, default=5000)
+    leaderboard.add_argument("--target", help="fleet machine name to dispatch to (rsync + SSH-launch); omit locally")
+
+    leaderboard_show = sub.add_parser("leaderboard-show", parents=[common], help="show a saved task league matrix")
+    leaderboard_show.add_argument("--run-id", help="MLflow run id to show; defaults to latest leaderboard run")
+
+    leaderboard_merge = sub.add_parser("leaderboard-merge", parents=[common], help="merge saved league matrices")
+    leaderboard_merge.add_argument(
+        "--run-ids",
+        nargs="*",
+        default=[],
+        help="MLflow leaderboard run ids to merge; defaults to finished unmerged leaderboard runs",
+    )
+    leaderboard_merge.add_argument(
+        "--latest",
+        type=int,
+        help="limit automatic selection to the N latest finished unmerged leaderboard runs",
+    )
+    leaderboard_merge.add_argument("--write-ratings", action=argparse.BooleanOptionalAction, default=False)
+
     battle = sub.add_parser("battle", parents=[common], help="battle local pokemon agents against each other")
     battle.add_argument("--agent1", help="path to first agent python file")
     battle.add_argument("--agent2", help="path to second agent python file")
@@ -86,6 +114,9 @@ def build_parser() -> argparse.ArgumentParser:
         "-b",
         action="store_true",
         help="show per-opponent win-rate columns (wr_*) instead of the metadata columns",
+    )
+    models.add_argument(
+        "--color", action=argparse.BooleanOptionalAction, default=None, help="color Elo by rating uncertainty"
     )
 
     return parser
@@ -198,6 +229,433 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
     return 0
 
 
+def _dispatch_leaderboard(task_name: str, target: str, args) -> int:
+    import contextlib
+    from pathlib import Path
+
+    from mlflow.tracking import MlflowClient
+
+    from kego.dispatch import DEFAULT_EXCLUDES, dispatch, other_competition_excludes
+    from kego.fleet import git_sha, load_fleet, machine_name
+    from kego.tracking import create_run, default_tracking_uri
+
+    repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+    fleet_path = repo_root / "fleet.toml"
+    if not fleet_path.exists():
+        print(f"No fleet.toml at {fleet_path}; cannot dispatch --target {target}.")
+        return 1
+    try:
+        machine = load_fleet(fleet_path).machine(target)
+    except KeyError as e:
+        print(f"Error: {e}")
+        return 1
+
+    uri = default_tracking_uri(fleet_path)
+    tags = {
+        "machine": machine.name,
+        "task": task_name,
+        "git_sha": git_sha(repo_root),
+        "dispatched_from": machine_name(),
+        "target": target,
+        "job": "leaderboard",
+        "write_ratings": str(args.write_ratings),
+    }
+    run_id = create_run(uri, experiment=task_name, run_name=f"{machine.name}-{task_name}-leaderboard", tags=tags)
+    if not run_id:
+        print(f"Could not create an MLflow run at {uri}; aborting leaderboard dispatch.")
+        return 1
+
+    cmd_args = [
+        "leaderboard",
+        "--task",
+        task_name,
+        "--games",
+        str(args.games),
+        "--search-count",
+        str(args.search_count),
+    ]
+    if args.workers is not None:
+        cmd_args += ["--workers", str(args.workers)]
+    if args.debug:
+        cmd_args.append("--debug")
+    if args.cache_dir:
+        cmd_args += ["--cache-dir", args.cache_dir]
+    if args.include_local_mcts:
+        cmd_args.append("--include-local-mcts")
+    cmd_args += ["--partial-save-every", str(args.partial_save_every)]
+    cmd_args.append("--write-ratings" if args.write_ratings else "--no-write-ratings")
+
+    excludes = DEFAULT_EXCLUDES + other_competition_excludes(repo_root, keep=task_name)
+    print(f"Dispatching leaderboard for {task_name} to {machine.name} ({machine.ssh}) — run {run_id}")
+    try:
+        dispatch(machine, cmd_args, run_id=run_id, local_dir=str(repo_root), excludes=excludes)
+    except Exception as e:
+        print(f"Dispatch failed: {e}")
+        with contextlib.suppress(Exception):
+            MlflowClient(tracking_uri=uri).set_terminated(run_id, status="FAILED")
+        return 1
+    print(f"Launched leaderboard on {machine.name}. Track run/log metadata in MLflow at: {uri}")
+    print(f"To view remote logs, run:  ssh {machine.ssh} 'cat ~/.kego/logs/{run_id}.log'")
+    return 0
+
+
+def _run_leaderboard_locally(task_name: str, args) -> int:
+    import runpy
+    import sys
+    from pathlib import Path
+
+    if task_name != "pokemon-tcg-ai-battle":
+        print(f"Task '{task_name}' does not implement a leaderboard runner.")
+        return 1
+
+    repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+    script = repo_root / "competitions" / task_name / "run_league.py"
+    argv = [
+        str(script),
+        "--task",
+        task_name,
+        "--games",
+        str(args.games),
+        "--search-count",
+        str(args.search_count),
+        "--write-ratings" if args.write_ratings else "--no-write-ratings",
+    ]
+    if args.workers is not None:
+        argv += ["--workers", str(args.workers)]
+    if args.debug:
+        argv.append("--debug")
+    if args.cache_dir:
+        argv += ["--cache-dir", args.cache_dir]
+    if args.include_local_mcts:
+        argv.append("--include-local-mcts")
+    argv += ["--partial-save-every", str(args.partial_save_every)]
+
+    old_argv = sys.argv
+    try:
+        sys.argv = argv
+        runpy.run_path(str(script), run_name="__main__")
+    finally:
+        sys.argv = old_argv
+    return 0
+
+
+def _show_leaderboard(task_name: str, run_id: str | None = None) -> int:
+    import tempfile
+    from pathlib import Path
+
+    from mlflow.tracking import MlflowClient
+
+    from kego.tracking import default_tracking_uri
+
+    uri = default_tracking_uri()
+    client = MlflowClient(tracking_uri=uri)
+    if not run_id:
+        exp = client.get_experiment_by_name(task_name)
+        if not exp:
+            print(f"No MLflow experiment named {task_name!r}.")
+            return 1
+        runs = client.search_runs(
+            [exp.experiment_id],
+            "tags.job = 'leaderboard'",
+            order_by=["attributes.start_time DESC"],
+            max_results=1,
+        )
+        if not runs:
+            print(f"No saved leaderboard runs found for {task_name}.")
+            return 1
+        run_id = runs[0].info.run_id
+
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            path = Path(client.download_artifacts(run_id, "league/matrix.md", dst_path=tmp))
+        except Exception as e:
+            print(f"Could not download league matrix for run {run_id}: {e}")
+            return 1
+        print(f"{task_name} leaderboard matrix from MLflow run {run_id}")
+        print(path.read_text().rstrip())
+    return 0
+
+
+def _load_league_module(task_name: str):
+    import importlib.util
+    from pathlib import Path
+
+    repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+    script = repo_root / "competitions" / task_name / "run_league.py"
+    spec = importlib.util.spec_from_file_location(f"{task_name}_run_league", script)
+    if not spec or not spec.loader:
+        raise RuntimeError(f"Could not load league runner at {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _read_league_csv(path):
+    import csv
+
+    with open(path, newline="") as f:
+        rows = list(csv.reader(f))
+    names = rows[0][1:]
+    values = {}
+    for row in rows[1:]:
+        player = row[0]
+        for opponent, value in zip(names, row[1:], strict=True):
+            values[(player, opponent)] = int(float(value))
+    return names, values
+
+
+def _has_league_artifacts(client, run_id: str) -> bool:
+    from pathlib import Path
+
+    try:
+        names = {a.path for a in client.list_artifacts(run_id, "league")}
+    except Exception:
+        local_dir = Path.cwd() / "outputs" / "league_runs" / run_id
+        return all(
+            (local_dir / name).exists()
+            for name in ["matrix.md", "wins.csv", "games.csv", "results.json", "participants.json"]
+        )
+    else:
+        return {
+            "league/matrix.md",
+            "league/wins.csv",
+            "league/games.csv",
+            "league/results.json",
+            "league/participants.json",
+        } <= names
+
+
+def _auto_leaderboard_run_ids(task_name: str, latest: int | None = None) -> list[str]:
+    from mlflow.tracking import MlflowClient
+
+    from kego.tracking import default_tracking_uri
+
+    client = MlflowClient(tracking_uri=default_tracking_uri())
+    exp = client.get_experiment_by_name(task_name)
+    if not exp:
+        return []
+
+    merge_runs = client.search_runs(
+        [exp.experiment_id],
+        "tags.job = 'leaderboard_merge'",
+        order_by=["attributes.start_time DESC"],
+        max_results=1000,
+    )
+    consumed: set[str] = set()
+    for run in merge_runs:
+        consumed.update(rid for rid in run.data.tags.get("source_run_ids", "").split(",") if rid)
+
+    leaderboard_runs = client.search_runs(
+        [exp.experiment_id],
+        "tags.job = 'leaderboard' and attributes.status = 'FINISHED'",
+        order_by=["attributes.start_time DESC"],
+        max_results=1000,
+    )
+    selected = [
+        run.info.run_id
+        for run in leaderboard_runs
+        if run.info.run_id not in consumed and _has_league_artifacts(client, run.info.run_id)
+    ]
+    return selected[:latest] if latest is not None else selected
+
+
+def _merge_leaderboards(task_name: str, run_ids: list[str], write_ratings: bool, latest: int | None = None) -> int:
+    import json
+    import tempfile
+    from pathlib import Path
+
+    import numpy as np
+    from mlflow.tracking import MlflowClient
+
+    from kego.tracking import create_run, default_tracking_uri
+    from kego.tracking.league import Rating, rate_round, results_from_winmatrix
+    from kego.tracking.registry import read_ratings
+    from kego.tracking.registry import write_ratings as write_registry_ratings
+
+    uri = default_tracking_uri()
+    client = MlflowClient(tracking_uri=uri)
+    league_module = _load_league_module(task_name)
+    if not run_ids:
+        print("No leaderboard run ids provided; selecting finished unmerged leaderboard runs automatically.")
+        run_ids = _auto_leaderboard_run_ids(task_name, latest=latest)
+    if not run_ids:
+        print("No finished unmerged leaderboard runs with league artifacts found.")
+        return 1
+    print(f"Merging {len(run_ids)} leaderboard run(s): {' '.join(run_ids)}")
+
+    names: list[str] = []
+    wins_by_pair: dict[tuple[str, str], int] = {}
+    games_by_pair: dict[tuple[str, str], int] = {}
+    name_to_version: dict[str, str] = {}
+    anchor_elos: dict[str, float] = {}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for run_id in run_ids:
+            try:
+                league_dir = Path(client.download_artifacts(run_id, "league", dst_path=tmp))
+            except Exception:
+                local_dir = Path.cwd() / "outputs" / "league_runs" / run_id
+                if not (local_dir / "participants.json").exists():
+                    raise
+                league_dir = local_dir
+            meta = json.loads((league_dir / "participants.json").read_text())
+            for name in meta["participants"]:
+                if name not in names:
+                    names.append(name)
+            name_to_version.update(meta.get("name_to_version", {}))
+            anchor_elos.update({k: float(v) for k, v in meta.get("anchor_elos", {}).items()})
+
+            _, wins = _read_league_csv(league_dir / "wins.csv")
+            _, games = _read_league_csv(league_dir / "games.csv")
+            for key, value in wins.items():
+                wins_by_pair[key] = wins_by_pair.get(key, 0) + value
+            for key, value in games.items():
+                games_by_pair[key] = games_by_pair.get(key, 0) + value
+
+    n = len(names)
+    wins_matrix = np.zeros((n, n))
+    games_matrix = np.zeros((n, n))
+    for i, a in enumerate(names):
+        for j, b in enumerate(names):
+            wins_matrix[i][j] = wins_by_pair.get((a, b), 0)
+            games_matrix[i][j] = games_by_pair.get((a, b), 0)
+
+    results = []
+    for i, name in enumerate(names):
+        total_wins = sum(wins_matrix[i][j] for j in range(n) if i != j)
+        total_games = sum(games_matrix[i][j] for j in range(n) if i != j)
+        avg_wr = (total_wins / total_games) * 100 if total_games > 0 else 0
+        results.append({"name": name, "avg_wr": avg_wr, "wins": total_wins, "games": total_games})
+    results.sort(key=lambda x: x["avg_wr"], reverse=True)
+
+    matrix_md = league_module._format_league_matrix(names, wins_matrix, games_matrix, results)
+    print(matrix_md)
+
+    merged_run_id = create_run(
+        uri,
+        experiment=task_name,
+        run_name=f"{task_name}-leaderboard-merge",
+        tags={
+            "job": "leaderboard_merge",
+            "task": task_name,
+            "source_run_ids": ",".join(run_ids),
+            "write_ratings": str(write_ratings),
+        },
+    )
+    if merged_run_id:
+        args = __import__("types").SimpleNamespace(
+            task=task_name, games="merged", search_count="merged", workers=0, write_ratings=write_ratings
+        )
+        artifact_dir = league_module._persist_league_artifacts(
+            client,
+            merged_run_id,
+            names,
+            wins_matrix,
+            games_matrix,
+            results,
+            name_to_version,
+            anchor_elos,
+            args,
+        )
+        client.log_metric(merged_run_id, "league_participants", n)
+        client.log_metric(merged_run_id, "league_games_total", int(games_matrix.sum() / 2))
+        client.set_terminated(merged_run_id, status="FINISHED")
+        print(f"\nMerged league artifacts written to {artifact_dir} and MLflow run {merged_run_id}")
+
+    if write_ratings:
+        round_results = results_from_winmatrix(names, wins_matrix.tolist(), games_matrix.tolist())
+        version_ratings = read_ratings(uri, task_name)
+        prior = {
+            name: Rating(version_ratings[v]["elo"], version_ratings[v]["elo_rd"])
+            for name, v in name_to_version.items()
+            if v in version_ratings
+        }
+        updated = rate_round(prior, round_results, anchor_elos)
+        round_games = {name: len(res) for name, res in round_results.items()}
+        prior_games = {name: version_ratings.get(v, {}).get("games", 0) for name, v in name_to_version.items()}
+        ratings_by_version = {
+            name_to_version[name]: {
+                "elo": r.elo,
+                "elo_rd": r.rd,
+                "games": prior_games.get(name, 0) + round_games.get(name, 0),
+            }
+            for name, r in updated.items()
+            if name in name_to_version
+        }
+        write_registry_ratings(uri, task_name, ratings_by_version)
+        print(f"Updated Elo ratings for {len(ratings_by_version)} registered agent(s).")
+    return 0
+
+
+def _rule_agent_rows(task_name: str) -> list[dict]:
+    if task_name != "pokemon-tcg-ai-battle":
+        return []
+    return [
+        {
+            "agent": name,
+            "version": "rule",
+            "type": "rule",
+            "elo": str(elo),
+            "elo_rd": "30.0",
+            "games": "-",
+            "deck": deck,
+            "rating_status": "anchor",
+        }
+        for name, elo, deck in [
+            ("Mega Abomasnow ex", 1650.0, "abomasnow"),
+            ("Dragapult ex", 1520.0, "dragapult"),
+            ("Mega Lucario ex", 1450.0, "lucario"),
+            ("Zacian ex", 1350.0, "zacian"),
+            ("Random", 1200.0, "sample"),
+        ]
+    ]
+
+
+def _registry_agent_name(row: dict) -> str:
+    if row.get("agent_name"):
+        return str(row["agent_name"])
+
+    version = row.get("version", "-")
+    deck = row.get("deck")
+    model_args = row.get("model_args")
+    epoch = row.get("epoch")
+
+    if deck or model_args:
+        parts = [f"v{version}", f"mcts-{deck or 'unknown'}"]
+        if model_args:
+            parts.append(str(model_args).strip("()").replace(", ", "/"))
+        if epoch:
+            parts.append(f"@{epoch}")
+        return " ".join(parts)
+
+    parts = [f"Registry v{version}"]
+    if deck:
+        parts.append(str(deck))
+    if model_args:
+        parts.append(str(model_args))
+    if epoch:
+        parts.append(f"epoch {epoch}")
+    return " · ".join(parts)
+
+
+def _numeric_row_value(row: dict, key: str) -> float:
+    try:
+        return float(row[key])
+    except (KeyError, TypeError, ValueError):
+        return float("-inf")
+
+
+def _use_color(force: bool | None = None) -> bool:
+    import os
+    import sys
+
+    if force is not None:
+        return force
+    return "NO_COLOR" not in os.environ and (
+        os.environ.get("FORCE_COLOR") not in (None, "", "0") or sys.stdout.isatty()
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -215,16 +673,48 @@ def main(argv: list[str] | None = None) -> int:
 
         uri = default_tracking_uri()
         rows = leaderboard(uri, task_name, sort_by=args.sort_by)
+        for row in rows:
+            row.setdefault("agent", _registry_agent_name(row))
+            row.setdefault("type", "registry")
+        rows = [*rows, *_rule_agent_rows(task_name)]
+        rows = sorted(rows, key=lambda row: _numeric_row_value(row, args.sort_by), reverse=True)
         seen: set[str] = set()
         if args.breakdown:
             wr_cols = sorted({k for r in rows for k in r if k.startswith("wr_")})
-            base = [args.sort_by, "gauntlet_avg", *wr_cols, "version"]
+            base = ["agent", "type", args.sort_by, "gauntlet_avg", *wr_cols, "version"]
         else:
-            base = [args.sort_by, "elo_rd", "games", "gauntlet_avg", "deck", "epoch", "machine", "git_sha", "version"]
+            base = [
+                "agent",
+                "type",
+                args.sort_by,
+                "elo_rd",
+                "games",
+                "gauntlet_avg",
+                "deck",
+                "epoch",
+                "machine",
+                "git_sha",
+                "version",
+            ]
         cols = [c for c in base if not (c in seen or seen.add(c))]
         print(f"{task_name} — {len(rows)} agents · tracking {uri}")
-        print(format_leaderboard(rows, cols))
+        use_color = _use_color(args.color)
+        if "elo" in cols and use_color:
+            print("elo color: green <= +/-1 RD, yellow <= +/-5 RD, red > +/-5 RD")
+        print(format_leaderboard(rows, cols, max_widths={"git_sha": 8}, color_elo=use_color))
         return 0
+
+    if args.command == "leaderboard":
+        target = getattr(args, "target", None)
+        if target:
+            return _dispatch_leaderboard(task_name, target, args)
+        return _run_leaderboard_locally(task_name, args)
+
+    if args.command == "leaderboard-show":
+        return _show_leaderboard(task_name, getattr(args, "run_id", None))
+
+    if args.command == "leaderboard-merge":
+        return _merge_leaderboards(task_name, args.run_ids, args.write_ratings, latest=args.latest)
 
     if args.command == "run" and not args.config and not getattr(args, "model", None):
         parser.error("Either --config or --model must be specified.")

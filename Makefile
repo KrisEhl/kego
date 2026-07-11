@@ -36,7 +36,7 @@ fleet-register:
 	uv run python -c "from kego.fleet import detect_machine, register_self, registration_summary; m = detect_machine(); print(registration_summary(m, register_self('fleet.toml', m)))"
 
 test:
-	uv run pytest tests/ -v
+	uv run pytest tests/ -v --cov=kego --cov-report=term-missing
 
 publish:
 	rm -rf dist

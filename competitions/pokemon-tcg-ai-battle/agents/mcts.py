@@ -479,12 +479,19 @@ class MCTSTransformerAgent(BaseAgent):
 _agent_instance = None
 
 
+def _agent_dir() -> str:
+    module_file = globals().get("__file__")
+    if module_file:
+        return os.path.dirname(os.path.abspath(module_file))
+    return "/kaggle_simulations/agent"
+
+
 def _default_model_path() -> str | None:
     explicit = os.environ.get("MCTS_MODEL_PATH")
     if explicit:
         return explicit
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = _agent_dir()
     candidates = [
         os.path.join(base_dir, "mcts.pth"),
         os.path.join(os.getcwd(), "mcts.pth"),

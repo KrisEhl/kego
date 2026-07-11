@@ -4,6 +4,13 @@ from abc import ABC, abstractmethod
 from cg.api import Card, Observation, Pokemon, to_observation_class
 
 
+def module_dir() -> str:
+    module_file = globals().get("__file__")
+    if module_file:
+        return os.path.dirname(os.path.abspath(module_file))
+    return "/kaggle_simulations/agent"
+
+
 def get_int_value(v) -> int | None:
     """Helper to extract raw integer value from enum, tuple, string, or number."""
     if isinstance(v, int):
@@ -72,16 +79,18 @@ class BaseAgent(ABC):
         if isinstance(deck, list):
             return deck
 
+        base_dir = module_dir()
+        parent_dir = os.path.dirname(base_dir)
         file_paths = [
             deck,
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), deck),
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), deck),
-            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "decks", deck),
+            os.path.join(base_dir, deck),
+            os.path.join(parent_dir, deck),
+            os.path.join(parent_dir, "decks", deck),
             f"/kaggle_simulations/agent/{deck}",
             f"competitions/pokemon-tcg-ai-battle/{deck}",
             f"competitions/pokemon-tcg-ai-battle/decks/{deck}",
             "deck.csv",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "deck.csv"),
+            os.path.join(base_dir, "deck.csv"),
             "/kaggle_simulations/agent/deck.csv",
         ]
         checked = []

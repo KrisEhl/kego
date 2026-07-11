@@ -4,7 +4,7 @@ from kego.fleet import Machine
 def test_default_excludes_cover_heavy_dirs():
     from kego.dispatch import DEFAULT_EXCLUDES
 
-    for e in (".git", ".venv", "data", "outputs", "mlruns"):
+    for e in (".git", ".venv", "data", "outputs", "mlruns", "notebooks", "cluster", "catboost_info"):
         assert e in DEFAULT_EXCLUDES
 
 
@@ -14,6 +14,7 @@ def test_rsync_command_ships_repo_contents():
     m = Machine(name="m5", ssh="k@m5", role="cpu", repo="/home/k/kego")
     cmd = rsync_command("/local/kego", m, [".git", "data"])
     assert cmd[0] == "rsync"
+    assert "--delete" in cmd and "--force" in cmd and "--delete-excluded" not in cmd
     assert "--exclude=.git" in cmd and "--exclude=data" in cmd
     # trailing slashes: copy the *contents* of local into the remote repo dir
     assert cmd[-2] == "/local/kego/"
@@ -30,7 +31,8 @@ def test_remote_launch_command_sets_run_id_and_detaches():
     assert "cd /home/k/kego" in rc
     assert "KEGO_MLFLOW_RUN_ID=abc123" in rc
     assert "uv run kego train-agent --task pkmn --epochs 200 --init-checkpoint registry:12" in rc
-    assert "nohup" in rc and "abc123.log" in rc and rc.rstrip().endswith("&")
+    assert "nohup" in rc and "abc123.log" in rc and "< /dev/null" in rc
+    assert "disown; exit 0" in rc
 
 
 def test_ssh_command_wraps_remote_in_login_shell():
@@ -87,3 +89,19 @@ def test_dispatch_raises_if_rsync_fails():
     m = Machine(name="m5", ssh="k@m5", role="cpu", repo="/r")
     with pytest.raises(RuntimeError):
         dispatch(m, ["train-agent"], run_id="x", local_dir="/l", excludes=[], runner=failing_run)
+
+
+def test_dispatch_raises_if_ssh_launch_fails():
+    import pytest
+
+    from kego.dispatch import dispatch
+
+    def failing_run(cmd, **kw):
+        class R:
+            returncode = 1 if cmd[0] == "ssh" else 0
+
+        return R()
+
+    m = Machine(name="m5", ssh="k@m5", role="cpu", repo="/r")
+    with pytest.raises(RuntimeError, match="ssh launch"):
+        dispatch(m, ["leaderboard"], run_id="x", local_dir="/l", excludes=[], runner=failing_run)

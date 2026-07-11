@@ -109,6 +109,38 @@ def test_format_leaderboard_missing_key_shows_dash():
     assert "-" in out.splitlines()[1]
 
 
+def test_format_leaderboard_caps_display_width():
+    from kego.tracking import format_leaderboard
+
+    out = format_leaderboard(
+        [{"version": "1", "git_sha": "b4a1117a785bbed997cd4c93ccfddc12136d516f"}],
+        columns=["git_sha", "version"],
+        max_widths={"git_sha": 8},
+    )
+
+    assert "b4a1117a" in out
+    assert "785bbed" not in out
+
+
+def test_format_leaderboard_colors_elo_by_rating_uncertainty():
+    from kego.tracking import format_leaderboard
+
+    out = format_leaderboard(
+        [
+            {"version": "1", "elo": "1700", "elo_rd": "0.9"},
+            {"version": "2", "elo": "1600", "elo_rd": "4.9"},
+            {"version": "3", "elo": "1500", "elo_rd": "9.9"},
+        ],
+        columns=["elo", "version"],
+        color_elo=True,
+    )
+
+    assert "\x1b[32m1700\x1b[0m" in out
+    assert "\x1b[33m1600\x1b[0m" in out
+    assert "\x1b[31m1500\x1b[0m" in out
+    assert out.splitlines()[1].split()[0] == "1"
+
+
 def test_format_leaderboard_empty():
     from kego.tracking import format_leaderboard
 

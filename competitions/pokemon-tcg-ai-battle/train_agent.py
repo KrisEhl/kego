@@ -645,7 +645,13 @@ def run_training_loop(
     _uri = default_tracking_uri()
     _task = "pokemon-tcg-ai-battle"
     _repo_root = Path(__file__).resolve().parents[2]
+    _agent_name = (
+        f"mcts-{deck_path.stem}-"
+        f"d{actual_model_args[0]}-h{actual_model_args[1]}-ff{actual_model_args[2]}-"
+        f"enc{actual_model_args[3]}-dec{actual_model_args[4]}"
+    )
     _run_tags = {
+        "agent_name": _agent_name,
         "machine": machine_name(),
         "git_sha": git_sha(_repo_root),
         "task": _task,

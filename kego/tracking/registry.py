@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 
 
@@ -86,16 +87,45 @@ def write_ratings(uri: str, name: str, ratings: dict[str, dict]) -> None:
         client.set_model_version_tag(name, str(version), "rating_status", "rated")
 
 
-def format_leaderboard(rows: list[dict], columns: list[str]) -> str:
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _ansi_elo(value: str, elo_rd: object) -> str:
+    try:
+        rd = float(elo_rd)
+    except (TypeError, ValueError):
+        return value
+    color = "32" if rd <= 1 else "33" if rd <= 5 else "31"
+    return f"\x1b[{color}m{value}\x1b[0m"
+
+
+def _visible_len(value: str) -> int:
+    return len(ANSI_RE.sub("", value))
+
+
+def format_leaderboard(
+    rows: list[dict],
+    columns: list[str],
+    max_widths: dict[str, int] | None = None,
+    color_elo: bool = False,
+) -> str:
     """Render leaderboard ``rows`` (already sorted) as an aligned table with a rank column;
     missing cells show ``-``."""
     if not rows:
         return "(no models registered)"
     headers = ["rank", *columns]
-    table = [[str(i), *(str(row.get(c, "-")) for c in columns)] for i, row in enumerate(rows, 1)]
-    widths = [max(len(headers[j]), *(len(r[j]) for r in table)) for j in range(len(headers))]
+    max_widths = max_widths or {}
+
+    def cell(row: dict, column: str, value: object) -> str:
+        text = str(value)
+        width = max_widths.get(column)
+        text = text if width is None or len(text) <= width else text[:width]
+        return _ansi_elo(text, row.get("elo_rd")) if color_elo and column == "elo" else text
+
+    table = [[str(i), *(cell(row, c, row.get(c, "-")) for c in columns)] for i, row in enumerate(rows, 1)]
+    widths = [max(len(headers[j]), *(_visible_len(r[j]) for r in table)) for j in range(len(headers))]
 
     def line(cells: list[str]) -> str:
-        return "  ".join(c.ljust(widths[j]) for j, c in enumerate(cells))
+        return "  ".join(c + " " * (widths[j] - _visible_len(c)) for j, c in enumerate(cells))
 
     return "\n".join([line(headers), *(line(r) for r in table)])
