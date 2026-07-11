@@ -1,3 +1,16 @@
+"""Shared MCTS tree mechanics.
+
+Selection is PUCT-style: ``q + 0.4*sqrt(N_parent)*prior/(1+n)``. Priors use
+``exp(policy*10)`` and candidate combinations are capped at 64 to bound inference
+latency on large multi-select prompts. Values use the root player's perspective:
++1 is a win for ``your_index`` and values are negated at opponent-to-move nodes.
+
+Inference determinizes hidden information on every move: the agent samples its own
+unknown deck and Prize cards, while unknown opponent cards use Snorlax card 1072 as
+a filler. That determinization is prepared by ``agent.py`` before this module builds
+the search tree.
+"""
+
 import math
 from collections.abc import Callable
 
@@ -10,6 +23,9 @@ from .model import PolicyValueNet
 
 # The cg API exposes match results as raw integers: player 0, player 1, or draw.
 RESULT_DRAW = 2
+EXPLORATION_C = 0.4
+POLICY_TEMPERATURE = 10.0
+MAX_ACTION_COMBINATIONS = 64
 
 
 def evaluate_position(sv_enc: SparseVector, sv_dec: SparseVector, model: PolicyValueNet) -> tuple[float, list[float]]:
@@ -49,7 +65,9 @@ class Node:
             self.parent.backprop(value)
 
 
-def enumerate_action_combinations(max_count: int, num_options: int, cap: int = 64) -> list[list[int]]:
+def enumerate_action_combinations(
+    max_count: int, num_options: int, cap: int = MAX_ACTION_COMBINATIONS
+) -> list[list[int]]:
     """Enumerate index combinations of size `max_count` from `num_options` options.
 
     Combinations are generated in lexicographic order (each a sorted list of distinct
@@ -76,7 +94,7 @@ def build_children(node: Node, actions: list[list[int]], policy: list[float]) ->
     """Attach softmax-weighted children to a node from a policy vector."""
     total_prob = 0.0
     for i in range(len(policy)):
-        p = math.exp(policy[i] * 10.0)
+        p = math.exp(policy[i] * POLICY_TEMPERATURE)
         node.children.append(Child(actions[i], p))
         total_prob += p
     for c in node.children:
@@ -86,7 +104,7 @@ def build_children(node: Node, actions: list[list[int]], policy: list[float]) ->
 def select_child(current: Node, your_index: int):
     """UCB-select the best child of ``current`` (None if it has none)."""
     best, chosen = -1e18, None
-    c = 0.4 * math.sqrt(current.visit)
+    c = EXPLORATION_C * math.sqrt(current.visit)
     flip = current.state.observation.current.yourIndex != your_index
     for child in current.children:
         if child.node is None:

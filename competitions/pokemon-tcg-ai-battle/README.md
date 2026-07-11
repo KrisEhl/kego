@@ -25,3 +25,15 @@
 ## Operational notes
 - Continue training by setting `[train].init_checkpoint` to a local `.pth` path or `registry:<version>`. This warm-starts model weights only; optimizer, LR scheduler, replay buffer, and epoch offset start fresh.
 - Before spending a Kaggle submission, build `submission.tar.gz`, extract it locally, confirm `main.py` loads packaged `mcts.pth` with no `MCTS_MODEL_PATH`, and run smoke games against the rule agents.
+
+## MCTS architecture
+
+The MCTS implementation lives in the `agents/mcts/` package:
+
+- `model.py` defines the sparse transformer policy/value network and infers architecture dimensions from saved checkpoints.
+- `encoding.py` converts observations and legal actions into sparse feature vectors.
+- `search.py` owns shared tree nodes, action enumeration, policy priors, node evaluation, and PUCT selection.
+- `agent.py` handles hidden-information determinization, checkpoint/device configuration, and the Kaggle `agent()` entry point.
+- `__init__.py` exposes the public API and compatibility aliases used by older training scripts.
+
+Training imports the shared model, encoders, and tree mechanics rather than maintaining parallel implementations. Submission packaging includes the complete package behind a small `main.py` shim. Existing checkpoints remain compatible because model attribute names and feature layouts are pinned by golden tests.

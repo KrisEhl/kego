@@ -16,6 +16,9 @@ from .model import (
     num_words_encoder,
 )
 from .search import (
+    EXPLORATION_C,
+    MAX_ACTION_COMBINATIONS,
+    POLICY_TEMPERATURE,
     RESULT_DRAW,
     Child,
     Node,
@@ -30,10 +33,13 @@ __all__ = [
     "MODEL_ARGS",
     "Child",
     "DecoderLayer",
+    "EXPLORATION_C",
+    "MAX_ACTION_COMBINATIONS",
     "MCTSTransformerAgent",
     "MyModel",
     "Node",
     "PolicyValueNet",
+    "POLICY_TEMPERATURE",
     "RESULT_DRAW",
     "SparseVector",
     "agent",

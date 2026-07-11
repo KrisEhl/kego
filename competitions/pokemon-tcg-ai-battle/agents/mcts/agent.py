@@ -26,6 +26,13 @@ def _nn_evaluator(model: PolicyValueNet, your_deck: list[int]) -> Evaluator:
 
 
 class MCTSTransformerAgent(BaseAgent):
+    """MCTS player backed by a transformer policy/value network.
+
+    ``MCTS_DEVICE`` forces cpu/cuda/mps, ``MCTS_SEARCH_COUNT`` controls inference
+    simulations, ``MCTS_MODEL_PATH`` selects the singleton wrapper's checkpoint,
+    and ``MCTS_DECK`` selects its deck CSV.
+    """
+
     def __init__(self, deck="abomasnow.csv", model_path=None, model_args=None):
         self.deck = self._load_deck(deck)
         forced = os.environ.get("MCTS_DEVICE")

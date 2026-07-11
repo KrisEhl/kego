@@ -1,3 +1,12 @@
+"""Transformer policy/value model for sparse Pokémon TCG observations.
+
+The value path uses an EmbeddingBag sparse input, transformer encoder, and scalar
+value head. The policy path uses a decoder EmbeddingBag and cross-attention layers
+over the encoded state before its scalar action head. ``MODEL_ARGS`` contains
+``(d_model, num_heads, d_feedforward, encoder_layers, decoder_layers)``;
+``num_heads`` must divide ``d_model``.
+"""
+
 import torch
 
 from cg.api import all_attack, all_card_data
@@ -18,7 +27,7 @@ decoder_card_offset = decoder_attack_offset + attack_count
 decoder_size = decoder_card_offset + (1 + decoder_main_feature + 48) * card_count
 
 # (d_model, num_heads, d_feedforward, n_encoder_layers, n_decoder_layers).
-# Single source of truth: training (train_agent.py) and inference both build MyModel
+# Single source of truth: training and inference both build PolicyValueNet
 # from this, so checkpoints always match. num_heads must divide d_model.
 MODEL_ARGS = (256, 4, 512, 2, 2)
 

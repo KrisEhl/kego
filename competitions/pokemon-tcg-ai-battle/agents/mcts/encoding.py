@@ -1,3 +1,16 @@
+"""Sparse state and action encoding for the MCTS policy/value network.
+
+The state encoder emits 24 words: two players times eight bench words (sharing
+positions within each player's block), two active words, two player-state words,
+then hand, own-deck, stadium, and misc words. Continuous scales are HP/400,
+deck and discard counts/60, hand/8, bench/5, discarded cards weighted 0.25,
+and attached Energy weighted 0.5. The misc word contains turn and first-player
+features.
+
+Action features start with 14 fixed slots, followed by the attack block at offset
+14, then card blocks sized ``(1 + 8 roles + 48 contexts) * card_count``.
+"""
+
 try:
     from base_agent import get_card as get_card_helper
 except ImportError:
