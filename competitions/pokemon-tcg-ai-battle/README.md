@@ -25,3 +25,7 @@
 ## Operational notes
 - Continue training by setting `[train].init_checkpoint` to a local `.pth` path or `registry:<version>`. This warm-starts model weights only; optimizer, LR scheduler, replay buffer, and epoch offset start fresh.
 - Before spending a Kaggle submission, build `submission.tar.gz`, extract it locally, confirm `main.py` loads packaged `mcts.pth` with no `MCTS_MODEL_PATH`, and run smoke games against the rule agents.
+
+## Decks
+
+See [`DECKLISTS.md`](DECKLISTS.md) for saved deck compositions, provenance, simulator substitutions, and comparisons. The original Dragapult baseline remains in `decks/dragapult.csv`; the Limitless-derived Dragapult–Blaziken list is saved separately in `decks/dragapult_blaziken.csv`.
