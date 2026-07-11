@@ -8,6 +8,9 @@ from cg.api import Observation, SearchState
 from .encoding import SparseVector
 from .model import MyModel
 
+# The cg API exposes match results as raw integers: player 0, player 1, or draw.
+RESULT_DRAW = 2
+
 
 def eval_nn(sv_enc: SparseVector, sv_dec: SparseVector, model: MyModel) -> tuple[float, list[float]]:
     device = next(model.parameters()).device
@@ -109,7 +112,7 @@ def create_node(parent: Node | None, search_state: SearchState, your_index: int,
     state = obs.current
 
     if state.result >= 0:
-        if state.result == 2:
+        if state.result == RESULT_DRAW:
             node.value = 0.0
         elif state.result == your_index:
             node.value = 1.0

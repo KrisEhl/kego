@@ -14,7 +14,16 @@ from .model import (
     model_args_from_state_dict,
     num_words_encoder,
 )
-from .search import Child, Node, build_children, create_node, enumerate_action_combinations, eval_nn, select_child
+from .search import (
+    RESULT_DRAW,
+    Child,
+    Node,
+    build_children,
+    create_node,
+    enumerate_action_combinations,
+    eval_nn,
+    select_child,
+)
 
 __all__ = [
     "MODEL_ARGS",
@@ -23,6 +32,7 @@ __all__ = [
     "MCTSTransformerAgent",
     "MyModel",
     "Node",
+    "RESULT_DRAW",
     "SparseVector",
     "agent",
     "attack_count",

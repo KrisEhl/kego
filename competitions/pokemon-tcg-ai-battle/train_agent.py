@@ -20,6 +20,7 @@ sys.path.insert(0, str(cg_parent))
 
 from agents.mcts import (
     MODEL_ARGS,
+    RESULT_DRAW,
     MyModel,
     Node,
     SparseVector,
@@ -150,7 +151,7 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
                 path.append(node)
                 leaf = search_state.observation.current
                 if leaf.result >= 0:  # terminal: value known, no NN needed
-                    node.value = 0.0 if leaf.result == 2 else (1.0 if leaf.result == your_index else -1.0)
+                    node.value = 0.0 if leaf.result == RESULT_DRAW else (1.0 if leaf.result == your_index else -1.0)
                     node.backprop(node.value)
                 else:
                     actions = enumerate_action_combinations(

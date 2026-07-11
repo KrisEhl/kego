@@ -2,7 +2,7 @@ try:
     from base_agent import get_card as get_card_helper
 except ImportError:
     from agents.base import get_card as get_card_helper
-from cg.api import Card, Observation, PlayerState, Pokemon
+from cg.api import Card, Observation, OptionType, PlayerState, Pokemon
 
 from .model import card_count, decoder_attack_offset, decoder_card_offset, decoder_main_feature
 
@@ -152,42 +152,42 @@ def get_decoder_input(obs: Observation, actions: list[list[int]]) -> SparseVecto
         for i in action:
             o = obs.select.option[i]
             o_type = int(o.type) if hasattr(o.type, "value") else int(o.type)
-            if o_type == 14:
+            if o_type == OptionType.END:
                 sv.add(1, 1)
-            elif o_type == 1:
+            elif o_type == OptionType.YES:
                 sv.add(2, 1)
-            elif o_type == 2:
+            elif o_type == OptionType.NO:
                 sv.add(3, 1)
-            elif o_type == 16:
+            elif o_type == OptionType.SPECIAL_CONDITION:
                 sv.add(4 + int(o.specialConditionType), 1)
-            elif o_type == 0:
+            elif o_type == OptionType.NUMBER:
                 sv.add(9 + min(o.number, 4), 1)
-            elif o_type == 13:
+            elif o_type == OptionType.ATTACK:
                 sv.add(decoder_attack_offset + o.attackId, 1)
-            elif o_type == 7:
+            elif o_type == OptionType.PLAY:
                 decoder_main(sv, 0, ps.hand[o.index] if ps.hand else None)
-            elif o_type == 8:
+            elif o_type == OptionType.ATTACH:
                 decoder_main(sv, 1, get_card_helper(obs, int(o.area), o.index, your_index))
                 decoder_main(sv, 2, get_card_helper(obs, int(o.inPlayArea), o.inPlayIndex, your_index))
-            elif o_type == 9:
+            elif o_type == OptionType.EVOLVE:
                 decoder_main(sv, 3, get_card_helper(obs, int(o.area), o.index, your_index))
                 decoder_main(sv, 4, get_card_helper(obs, int(o.inPlayArea), o.inPlayIndex, your_index))
-            elif o_type == 10:
+            elif o_type == OptionType.ABILITY:
                 decoder_main(sv, 5, get_card_helper(obs, int(o.area), o.index, your_index))
-            elif o_type == 11:
+            elif o_type == OptionType.DISCARD:
                 decoder_main(sv, 6, get_card_helper(obs, int(o.area), o.index, your_index))
-            elif o_type == 12:
+            elif o_type == OptionType.RETREAT:
                 decoder_main(sv, 7, ps.active[0] if ps.active else None)
-            elif o_type == 3:
+            elif o_type == OptionType.CARD:
                 decoder_card(sv, context, get_card_helper(obs, int(o.area), o.index, o.playerIndex))
-            elif o_type == 4:
+            elif o_type == OptionType.TOOL_CARD:
                 card = get_card_helper(obs, int(o.area), o.index, o.playerIndex)
                 if card and hasattr(card, "tools") and o.toolIndex < len(card.tools):
                     decoder_card(sv, context, card.tools[o.toolIndex])
-            elif o_type in (5, 6):
+            elif o_type in (OptionType.ENERGY_CARD, OptionType.ENERGY):
                 card = get_card_helper(obs, int(o.area), o.index, o.playerIndex)
                 if card and hasattr(card, "energyCards") and o.energyIndex < len(card.energyCards):
                     decoder_card(sv, context, card.energyCards[o.energyIndex])
-            elif o_type == 15:
+            elif o_type == OptionType.SKILL:
                 decoder_card_id(sv, context, o.cardId)
     return sv
