@@ -23,6 +23,7 @@ from agents.mcts import (
     MODEL_ARGS,
     MyModel,
     SparseVector,
+    enumerate_action_combinations,
     get_decoder_input,
     get_encoder_input,
 )
@@ -96,24 +97,6 @@ def eval_nn_train(sv_enc: SparseVector, sv_dec: SparseVector, model: MyModel) ->
         return (value.tolist()[0][0], policy.tolist()[0])
 
 
-def _enumerate_actions(obs) -> list[list[int]]:
-    """Enumerate up to 64 candidate action-index combinations for an observation."""
-    actions = []
-    indices = list(range(obs.select.maxCount))
-    for _ in range(64):
-        actions.append(indices.copy())
-        for i in range(len(indices)):
-            index = len(indices) - i - 1
-            if indices[index] < len(obs.select.option) - i - 1:
-                indices[index] += 1
-                for j in range(index + 1, len(indices)):
-                    indices[j] = indices[j - 1] + 1
-                break
-        else:
-            break
-    return actions
-
-
 def eval_nn_batch(svs: list[tuple[SparseVector, SparseVector]], model: MyModel) -> list[tuple[float, list[float]]]:
     """Evaluate B (encoder, decoder) inputs in a single forward; return per-item (value, policy).
 
@@ -172,7 +155,7 @@ def create_node_train(
         node.backprop(node.value)
         sample = None
     else:
-        actions = _enumerate_actions(obs)
+        actions = enumerate_action_combinations(obs.select.maxCount, len(obs.select.option))
         sv_enc = get_encoder_input(obs, your_deck)
         sv_dec = get_decoder_input(obs, actions)
         value, policy = eval_nn_train(sv_enc, sv_dec, model)
@@ -232,7 +215,9 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
                     node.value = 0.0 if leaf.result == 2 else (1.0 if leaf.result == your_index else -1.0)
                     node.backprop(node.value)
                 else:
-                    actions = _enumerate_actions(search_state.observation)
+                    actions = enumerate_action_combinations(
+                        search_state.observation.select.maxCount, len(search_state.observation.select.option)
+                    )
                     sv_enc = get_encoder_input(search_state.observation, your_deck)
                     sv_dec = get_decoder_input(search_state.observation, actions)
                     pending.append((node, path, actions, sv_enc, sv_dec, leaf))

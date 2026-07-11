@@ -323,6 +323,29 @@ class Node:
             self.parent.backprop(value)
 
 
+def enumerate_action_combinations(max_count: int, num_options: int, cap: int = 64) -> list[list[int]]:
+    """Enumerate index combinations of size `max_count` from `num_options` options.
+
+    Combinations are generated in lexicographic order (each a sorted list of distinct
+    indices in `range(num_options)`), and generation stops once `cap` combinations have
+    been produced.
+    """
+    actions = []
+    indices = list(range(max_count))
+    for _ in range(cap):
+        actions.append(indices.copy())
+        for i in range(len(indices)):
+            index = len(indices) - i - 1
+            if indices[index] < num_options - i - 1:
+                indices[index] += 1
+                for j in range(index + 1, len(indices)):
+                    indices[j] = indices[j - 1] + 1
+                break
+        else:
+            break
+    return actions
+
+
 def create_node(
     parent: Node | None, search_state: SearchState, your_index: int, your_deck: list[int], model: MyModel
 ) -> Node:
@@ -339,19 +362,7 @@ def create_node(
             node.value = -1.0
         node.backprop(node.value)
     else:
-        actions = []
-        indices = list(range(obs.select.maxCount))
-        for _ in range(64):
-            actions.append(indices.copy())
-            for i in range(len(indices)):
-                index = len(indices) - i - 1
-                if indices[index] < len(obs.select.option) - i - 1:
-                    indices[index] += 1
-                    for j in range(index + 1, len(indices)):
-                        indices[j] = indices[j - 1] + 1
-                    break
-            else:
-                break
+        actions = enumerate_action_combinations(obs.select.maxCount, len(obs.select.option))
 
         sv_enc = get_encoder_input(obs, your_deck)
         sv_dec = get_decoder_input(obs, actions)
