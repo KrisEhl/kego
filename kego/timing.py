@@ -67,7 +67,7 @@ class Timings:
 
     def timed(self, label: str | None = None) -> Callable:
         def decorate(fn: Callable) -> Callable:
-            name = label or fn.__name__
+            name = label or getattr(fn, "__name__", "timed")
 
             @wraps(fn)
             def wrapper(*args, **kwargs):

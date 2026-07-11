@@ -394,11 +394,8 @@ class MCTSTransformerAgent(BaseAgent):
         if model_path:
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"[MCTSTransformerAgent] model_path not found: {model_path}")
-            try:
-                self.model.load_state_dict(torch.load(model_path, map_location=self.device))
-                print(f"[MCTSTransformerAgent] loaded weights from {model_path}", flush=True)
-            except Exception as e:
-                raise ValueError(f"[MCTSTransformerAgent] FAILED to load weights from {model_path}: {e}") from e
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+            print(f"[MCTSTransformerAgent] loaded weights from {model_path}", flush=True)
 
         # Inference search depth (override with MCTS_SEARCH_COUNT). More = stronger,
         # slower. Inference has no training-time budget, so it can go much deeper than

@@ -20,9 +20,9 @@ def l2_stacking(
     from lightgbm import LGBMClassifier
 
     if train_features is not None:
-        X_train = np.hstack([oof_matrix, train_features])
-        X_holdout = np.hstack([holdout_matrix, holdout_features])
-        X_test = np.hstack([test_matrix, test_features])
+        X_train = np.hstack([oof_matrix, np.asarray(train_features)])
+        X_holdout = np.hstack([holdout_matrix, np.asarray(holdout_features)])
+        X_test = np.hstack([test_matrix, np.asarray(test_features)])
     else:
         X_train = oof_matrix
         X_holdout = holdout_matrix

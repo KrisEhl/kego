@@ -1,14 +1,16 @@
 from collections.abc import Sequence
 
-import matplotlib
+import matplotlib.axes
+import matplotlib.dates
 import matplotlib.pyplot as plt
+import matplotlib.ticker
 import numpy as np
 
 import kego.constants
 
 
 def set_axes(
-    ax: plt.axes,
+    ax: matplotlib.axes.Axes,
     xlim: list | None = None,
     ylim: list | None = None,
     fontsize: int = 8,
@@ -53,7 +55,7 @@ def set_axes(
         ax.tick_params(axis="y", labelrotation=labelrotation_y)
 
 
-def set_colorbar(ax_colorbar: plt.axes, label_y: str, fontsize: float):
+def set_colorbar(ax_colorbar: matplotlib.axes.Axes, label_y: str, fontsize: float):
     """
     Customizes matplotlib colorbar axes
 
@@ -215,7 +217,7 @@ def set_axis_tick_labels(
     return axes
 
 
-def remove_tick_labels(ax: plt.axes, axis: str = "x"):
+def remove_tick_labels(ax: matplotlib.axes.Axes, axis: str = "x"):
     """Remove ticks and tick labels for specified axis"""
     set_axis_tick_labels(axes=ax, values=[], labels=[], axis=axis)
 

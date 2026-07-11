@@ -6,6 +6,8 @@ import os.path
 import pathlib
 from collections.abc import Sequence
 
+import matplotlib.axes
+import matplotlib.figure
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -35,12 +37,12 @@ def plot_legend(axes):
 
 
 def create_figure_axes(
-    figure: plt.figure | None = None,
-    axes: plt.axes | None = None,
+    figure: matplotlib.figure.Figure | None = None,
+    axes: matplotlib.axes.Axes | None = None,
     figure_size: Sequence | None = None,
     font_size: int | None = 10,
     aspect: str = "auto",
-) -> tuple[plt.figure, plt.axes]:
+) -> tuple[matplotlib.figure.Figure, matplotlib.axes.Axes]:
     """
     Creates figure with axes and sets font size
 
@@ -141,7 +143,7 @@ def create_axes_grid(
     skip_rows: list[int] | None = None,
     skip_row_column: list[tuple[int, int]] | None = None,
     unravel: bool = False,
-) -> tuple[plt.figure, np.ndarray, np.ndarray]:
+) -> tuple[matplotlib.figure.Figure, np.ndarray, np.ndarray]:
     """
     Create figure with grid of axes (fig, axes, axes_colorbar). Units are scaled to normalized figure size (max value: 1)
     unless specified otherwise.
@@ -309,6 +311,6 @@ def create_axes_grid(
         axes = kego.lists.flatten_list(axes)
         axes_colorbar = kego.lists.flatten_list(axes_colorbar)
         if n_columns * n_rows == 1:
-            axes = axes[0]  # type: ignore
-            axes_colorbar = axes_colorbar[0]  # type: ignore
+            axes = axes[0]
+            axes_colorbar = axes_colorbar[0]
     return fig, axes, axes_colorbar

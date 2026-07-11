@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
+from typing import Any
 
 
 def register_checkpoint(uri: str, name: str, checkpoint_path: str, tags: dict) -> str:
@@ -90,7 +91,7 @@ def write_ratings(uri: str, name: str, ratings: dict[str, dict]) -> None:
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _ansi_elo(value: str, elo_rd: object) -> str:
+def _ansi_elo(value: str, elo_rd: Any) -> str:
     try:
         rd = float(elo_rd)
     except (TypeError, ValueError):

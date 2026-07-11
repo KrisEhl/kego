@@ -10,7 +10,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomllib
+try:
+    import tomllib  # ty: ignore[unresolved-import]  # py3.11+ stdlib
+except ImportError:
+    import tomli as tomllib  # ty: ignore[unresolved-import]
 
 
 def _tailscale_short(dns: str) -> str:

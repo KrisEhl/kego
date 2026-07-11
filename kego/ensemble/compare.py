@@ -4,6 +4,8 @@ Use this to quickly decide whether a non-linear meta-learner adds value over
 simple averaging. If the gap is < 0.001 AUC, stick with averaging.
 """
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import RidgeCV
@@ -71,7 +73,7 @@ def compare_stacking_methods(
     )
 
     # 3. LightGBM (preds only)
-    lgb_params = {
+    lgb_params: dict[str, Any] = {
         "objective": "binary",
         "metric": "auc",
         "max_depth": 3,
@@ -116,7 +118,7 @@ def compare_stacking_methods(
         oof_plus = np.hstack([oof_matrix, train_feat_np])
         holdout_plus = np.hstack([holdout_matrix, holdout_feat_np])
 
-        lgb_full_params = {
+        lgb_full_params: dict[str, Any] = {
             **lgb_params,
             "max_depth": 4,
             "num_leaves": 15,
@@ -166,7 +168,7 @@ def compare_stacking_methods(
     print(f"\n{'=' * 70}")
     print(f"RIDGE WEIGHTS  (alpha={ridge.alpha_:.2f})")
     print(f"{'=' * 70}")
-    for name, w in sorted(zip(model_names, ridge.coef_), key=lambda x: abs(x[1]), reverse=True):
+    for name, w in sorted(zip(model_names, np.asarray(ridge.coef_).tolist()), key=lambda x: abs(x[1]), reverse=True):
         print(f"  {name:<30} {w:+.4f}")
 
     # LightGBM preds-only importances
@@ -174,7 +176,7 @@ def compare_stacking_methods(
     print("LIGHTGBM (PREDS ONLY) — FEATURE IMPORTANCES")
     print(f"{'=' * 70}")
     for name, imp in sorted(
-        zip(model_names, lgb_preds.feature_importances_),
+        zip(model_names, lgb_preds.feature_importances_.tolist()),
         key=lambda x: x[1],
         reverse=True,
     ):

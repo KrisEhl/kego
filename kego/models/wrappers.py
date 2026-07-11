@@ -82,7 +82,7 @@ class SubsampledTabPFN:
         return X
 
     def fit(self, X, y, **kwargs):
-        from tabpfn import TabPFNClassifier
+        from tabpfn import TabPFNClassifier  # ty: ignore[unresolved-import]
 
         X = self._prepare(X)
         if len(X) > self.max_train_rows:
@@ -113,7 +113,7 @@ class GPUXGBClassifier:
     """
 
     def __init__(self, **kwargs):
-        from xgboost import XGBClassifier
+        from xgboost import XGBClassifier  # ty: ignore[unresolved-import]
 
         self._model = XGBClassifier(**kwargs)
 
@@ -122,7 +122,7 @@ class GPUXGBClassifier:
         return self
 
     def predict_proba(self, X, **kwargs):
-        import xgboost as xgb
+        import xgboost as xgb  # ty: ignore[unresolved-import]
 
         dmat = xgb.DMatrix(
             X,
@@ -154,7 +154,7 @@ class ScaledRealMLP:
         return X.values if isinstance(X, pd.DataFrame) else X
 
     def fit(self, X, y, **kwargs):
-        from pytabkit import RealMLP_TD_Classifier
+        from pytabkit import RealMLP_TD_Classifier  # ty: ignore[unresolved-import]
 
         X_prep = self._prepare(X)
         y_np = y.values if hasattr(y, "values") else y

@@ -126,9 +126,9 @@ def detect_task() -> str:
     from pathlib import Path
 
     try:
-        import tomllib
+        import tomllib  # ty: ignore[unresolved-import]
     except ImportError:
-        import tomli as tomllib  # type: ignore[no-redef]
+        import tomli as tomllib  # ty: ignore[unresolved-import]
 
     curr = Path.cwd()
     for parent in [curr, *curr.parents]:

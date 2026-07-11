@@ -1,5 +1,5 @@
 import torch
-from skorch import NeuralNetBinaryClassifier
+from skorch import NeuralNetBinaryClassifier  # ty: ignore[unresolved-import]
 
 
 class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
@@ -16,9 +16,9 @@ class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
 
     def train_step_single(self, batch, **fit_params):
         try:
-            from skorch.dataset import unpack_data
+            from skorch.dataset import unpack_data  # ty: ignore[unresolved-import]
         except ImportError:
-            from skorch.utils import unpack_data
+            from skorch.utils import unpack_data  # ty: ignore[unresolved-import]
 
         self._set_training(True)
         Xi, yi = unpack_data(batch)

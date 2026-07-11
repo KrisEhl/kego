@@ -1,6 +1,9 @@
 from typing import Literal
 
+import matplotlib.axes
+import matplotlib.collections
 import matplotlib.colors
+import matplotlib.container
 import matplotlib.figure
 import numpy as np
 from matplotlib import pyplot as plt
@@ -26,7 +29,7 @@ def pair_in_list(pair, _list):
 
 def annotate_values(
     H: np.ndarray,
-    axes: plt.axes,
+    axes: matplotlib.axes.Axes,
     size_x: int,
     size_y: int,
     color: str = "black",
@@ -121,7 +124,9 @@ def _get_values_from_pcolormesh_object(
     -------
     Flattened matrix values
     """
-    return pc_object.get_array().data
+    values = pc_object.get_array()
+    assert values is not None, "pcolormesh object has no array set"
+    return values.data
 
 
 def to_list(x, n=2):

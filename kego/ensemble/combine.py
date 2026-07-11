@@ -121,7 +121,7 @@ def compute_ensemble(
             auc=_eval_auc(ridge_oof, ridge_holdout, train_labels, holdout_labels),
             metadata={
                 "alpha": ridge.alpha_,
-                "weights": dict(zip(model_names, ridge.coef_)),
+                "weights": dict(zip(model_names, np.asarray(ridge.coef_).tolist())),
             },
         )
     )

@@ -302,7 +302,7 @@ def test_pokemon_mcts_submission_agent_auto_loads_packaged_weights(tmp_path, mon
     monkeypatch.syspath_prepend(str(comp_dir))
     monkeypatch.syspath_prepend(str(cg_parent))
 
-    namespace = {"__name__": "submitted_main"}
+    namespace: dict = {"__name__": "submitted_main"}
     exec(compile(content, "main.py", "exec"), namespace)  # noqa: S102
 
     assert "def _default_model_path()" in content

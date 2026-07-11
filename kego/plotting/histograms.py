@@ -444,7 +444,7 @@ def _plot_histogram_2d(
 
     x_values, y_values = _get_xy_values(x_values, y_values, mask)
 
-    xlim, ylim, log, n_bins, n_bins_linear, linear_thresh = _prepare_parameters(  # type: ignore
+    xlim, ylim, log, n_bins, n_bins_linear, linear_thresh = _prepare_parameters(
         xlim, ylim, log, n_bins, n_bins_linear, linear_thresh
     )
 
@@ -452,7 +452,7 @@ def _plot_histogram_2d(
         bin_edges_x = get_bin_edges(
             data=x_values,
             n_bins=n_bins[0],
-            n_bins_linear=n_bins_linear[0],  # type: ignore
+            n_bins_linear=n_bins_linear[0],
             symlog_linear_threshold=linear_thresh[0],
             log=log[0],
             vmin=xlim[0],
@@ -461,7 +461,7 @@ def _plot_histogram_2d(
         bin_edges_y = get_bin_edges(
             data=y_values,
             n_bins=n_bins[1],
-            n_bins_linear=n_bins_linear[1],  # type: ignore
+            n_bins_linear=n_bins_linear[1],
             symlog_linear_threshold=linear_thresh[1],
             log=log[1],
             vmin=ylim[0],
@@ -470,8 +470,8 @@ def _plot_histogram_2d(
     else:
         bin_edges_x, bin_edges_y = bin_edges
 
-    kego.checks.validate_array(bin_edges_x, name="bin_edges_x")  # type: ignore
-    kego.checks.validate_array(bin_edges_y, name="bin_edges_y")  # type: ignore
+    kego.checks.validate_array(bin_edges_x, name="bin_edges_x")
+    kego.checks.validate_array(bin_edges_y, name="bin_edges_y")
 
     norm_object = kego.plotting.utils_plotting.get_norm(
         norm,
@@ -528,7 +528,7 @@ def _plot_histogram_2d(
             log=log[0],
             figure=fig,
             n_bins=n_bins[0],
-            n_bins_linear=n_bins_linear[0],  # type: ignore
+            n_bins_linear=n_bins_linear[0],
             symlog_linear_threshold=linear_thresh[0],
             label_x=_get_label(marginal_x_label_x),
             label_y=_get_label(marginal_x_label_y),
@@ -548,7 +548,7 @@ def _plot_histogram_2d(
             log=log[1],
             figure=fig,
             n_bins=n_bins[1],
-            n_bins_linear=n_bins_linear[1],  # type: ignore
+            n_bins_linear=n_bins_linear[1],
             symlog_linear_threshold=linear_thresh[1],
             label_x=_get_label(marginal_y_label_x),
             label_y=_get_label(marginal_y_label_y),
@@ -582,25 +582,23 @@ def _prepare_parameters(
     tuple[int, int],
     tuple[float, float],
 ]:
-    log = kego.lists.to_nlength_tuple(log)  # type: ignore
-    n_bins = kego.lists.to_nlength_tuple(n_bins)  # type: ignore
-    n_bins_linear = kego.lists.to_nlength_tuple(n_bins_linear)  # type: ignore
-    xlim = kego.lists.to_nlength_tuple(xlim)  # type: ignore
-    ylim = kego.lists.to_nlength_tuple(ylim)  # type: ignore
-    n_bins = tuple(
-        [i + 1 if i is not None else i for i in n_bins]  # type: ignore
-    )  # using bin edges later, where n_edges = n_bins + 1
+    log = kego.lists.to_nlength_tuple(log)
+    n_bins = kego.lists.to_nlength_tuple(n_bins)
+    n_bins_linear = kego.lists.to_nlength_tuple(n_bins_linear)
+    xlim = kego.lists.to_nlength_tuple(xlim)
+    ylim = kego.lists.to_nlength_tuple(ylim)
+    n_bins = tuple([i + 1 if i is not None else i for i in n_bins])  # using bin edges later, where n_edges = n_bins + 1
     n_bins_linear = tuple(
-        [i + 1 if i is not None else i for i in n_bins_linear]  # type: ignore
+        [i + 1 if i is not None else i for i in n_bins_linear]
     )  # using bin edges later, where n_edges = n_bins + 1
-    linear_thresh = kego.lists.to_nlength_tuple(linear_thresh)  # type: ignore
+    linear_thresh = kego.lists.to_nlength_tuple(linear_thresh)
     return xlim, ylim, log, n_bins, n_bins_linear, linear_thresh
 
 
 def _get_xy_values(x: np.ndarray, y: np.ndarray, mask: np.ndarray | None) -> tuple[np.ndarray, np.ndarray]:
-    x = np.ndarray.flatten(x)  # type: ignore
+    x = np.ndarray.flatten(x)
     kego.checks.validate_array(x)
-    y = np.ndarray.flatten(y)  # type: ignore
+    y = np.ndarray.flatten(y)
     kego.checks.validate_array(y)
     if x.shape != y.shape:
         raise ValueError(f"x and y need to be of same shape: {np.shape(x)} != {np.shape(y)}")
@@ -761,10 +759,10 @@ def plot_histogram(
         bin_centers,
         hist,
         width_bars=np.diff(bin_edges),
-        xlim=_xlim,  # type: ignore
-        ylim=_ylim,  # type: ignore
+        xlim=_xlim,
+        ylim=_ylim,
         axes=axes,
-        log=_log,  # type: ignore
+        log=_log,
         symlog_linear_threshold=symlog_linear_threshold,
         label_x=label_x,
         label_y=label_y,
@@ -1073,4 +1071,4 @@ def _find_axis_limits(
         ylim = (bin_edges_y[0], ylim[1])
     if ylim[1] is None:
         ylim = (ylim[0], bin_edges_y[-1])
-    return xlim, ylim  # type: ignore
+    return xlim, ylim

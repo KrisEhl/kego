@@ -29,6 +29,7 @@ Typical usage::
 import contextlib
 import os
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -186,7 +187,7 @@ def drop_one_ablation(
             f"Baseline {metric} ({len(features)} features, {len(seeds)} seeds): {baseline:.5f} ({baseline_iters} iters)"
         )
 
-    feature_results = []
+    feature_results: list[dict[str, Any]] = []
     for i, feat in enumerate(features):
         reduced = [feature for feature in features if feature != feat]
         score_without, iters = eval_multiseed(
@@ -289,7 +290,7 @@ def forward_selection(
         SelectionResult with the optimal feature prefix.
         feature_results contain {"feature", "score", "delta"} per step.
     """
-    feature_results = []
+    feature_results: list[dict[str, Any]] = []
     score_width = max(len(metric), 10)
     if verbose:
         print(f"\n{'N':>3} {'Added feature':<30} {metric:>{score_width}} {'Delta':>10} {'Iters':>7}")
@@ -393,7 +394,7 @@ def greedy_add_one_screening(
         print(f"Baseline {metric}: {baseline_score:.5f} ({len(baseline_features)} features)")
         print(f"Screening {len(candidate_features)} candidates...\n")
 
-    feature_results = []
+    feature_results: list[dict[str, Any]] = []
     for i, feat in enumerate(candidate_features):
         augmented = [*baseline_features, feat]
         score, iters = eval_multiseed(

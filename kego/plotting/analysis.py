@@ -3,6 +3,8 @@ from __future__ import annotations
 import pathlib
 from collections.abc import Mapping, Sequence
 
+import matplotlib.axes
+import matplotlib.figure
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -31,7 +33,7 @@ def plot_prediction_certainty(
     cmap="viridis",
     figure_size: tuple[float, float] | None = None,
     return_matrix: bool = False,
-    axes: plt.axes | None = None,
+    axes: matplotlib.axes.Axes | None = None,
     **kwargs,
 ) -> tuple[plt.Axes, tuple[plt.Axes, np.ndarray]]:
     """

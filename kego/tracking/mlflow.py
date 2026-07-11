@@ -84,6 +84,7 @@ def get_completed_fingerprints(experiment_name, tracking_uri):
         return set(), pd.DataFrame()
 
     runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
+    assert isinstance(runs, pd.DataFrame)  # default output_format="pandas"
     # Filter out ensemble runs
     runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
     # Only keep runs that have a config_fingerprint param
@@ -118,6 +119,7 @@ def load_predictions_from_mlflow(experiment_names, tracking_uri, folds: int | No
             continue
 
         runs = mlflow.search_runs(experiment_ids=[exp.experiment_id])
+        assert isinstance(runs, pd.DataFrame)  # default output_format="pandas"
         # Filter out ensemble runs (NOT LIKE not supported by MLflow API)
         runs = runs[~runs["tags.mlflow.runName"].str.startswith("ensemble_", na=True)]
 
@@ -149,6 +151,7 @@ def load_predictions_from_ensemble(ensemble_name, tracking_uri):
         search_all_experiments=True,
         filter_string=f"tags.`{tag_key}` = 'true'",
     )
+    assert isinstance(runs, pd.DataFrame)  # default output_format="pandas"
 
     if runs.empty:
         logger.error(f"No runs found in ensemble '{ensemble_name}'")

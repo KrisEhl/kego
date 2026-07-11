@@ -2,14 +2,14 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from rtdl_num_embeddings import (
+from rtdl_num_embeddings import (  # ty: ignore[unresolved-import]
     PeriodicEmbeddings,
     PiecewiseLinearEmbeddings,
     compute_bins,
 )
-from rtdl_revisiting_models import ResNet
+from rtdl_revisiting_models import ResNet  # ty: ignore[unresolved-import]
 from sklearn.preprocessing import QuantileTransformer
-from skorch.callbacks import EarlyStopping
+from skorch.callbacks import EarlyStopping  # ty: ignore[unresolved-import]
 
 from .amp import AMPNeuralNetBinaryClassifier
 from .noise import GaussianNoise

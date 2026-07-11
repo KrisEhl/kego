@@ -6,7 +6,7 @@ import numpy as np
 def list_files(
     path,
     match_filename: str | None = None,
-    level_max: int = np.inf,
+    level_max: float = np.inf,
     return_absolute_path: bool = False,
 ):
     path = path.__str__()

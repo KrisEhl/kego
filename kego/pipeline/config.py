@@ -13,7 +13,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 # Bump (or set per-task in YAML) to invalidate every cached prediction at once,
 # e.g. after changing feature engineering or the train/holdout split logic.
@@ -366,4 +366,4 @@ def load_config(path: str, overrides: list[str] | None = None, task_name: str | 
     config_dict = OmegaConf.to_container(yaml_conf, resolve=True)
     if not isinstance(config_dict, dict):
         config_dict = {}
-    return _hydrate_config(config_dict)
+    return _hydrate_config(cast(dict, config_dict))

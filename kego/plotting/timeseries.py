@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
+import matplotlib.axes
+import matplotlib.figure
 import numpy as np
 import pandas as pd
 
@@ -9,7 +10,7 @@ import kego.plotting.utils_plotting
 
 
 def set_axes_timeseries(
-    ax: plt.axes,
+    ax: matplotlib.axes.Axes,
     xlim: list | None = None,
     ylim: list | None = None,
     fontsize: int = 8,
@@ -51,8 +52,8 @@ def plot_timeseries(
     time: np.ndarray | str,
     y: np.ndarray | str,
     ds: pd.DataFrame | None = None,
-    ax: plt.axes | None = None,
-    fig: plt.figure | None = None,
+    ax: matplotlib.axes.Axes | None = None,
+    fig: matplotlib.figure.Figure | None = None,
     xlim: list | None = None,
     ylim: list | None = None,
     label_x: str | None = None,

@@ -44,7 +44,36 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
+    "ty>=0.0.58",
 ]
+
+[tool.ty.src]
+include = ["kego", "tests"]
+
+# Legacy plotting code (serves archived competition notebooks) — matplotlib's
+# Axes/ndarray unions make strict arg checking noisy; keep other rules active.
+[[tool.ty.overrides]]
+include = ["kego/plotting/**"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"
+invalid-assignment = "ignore"
+unsupported-operator = "ignore"
+no-matching-overload = "ignore"
+not-subscriptable = "ignore"
+
+# Tests use dummies/monkeypatching (mock attrs on functions, DummyTask stand-ins,
+# dynamic imports of competition agents) that a type checker can't follow.
+[[tool.ty.overrides]]
+include = ["tests/**"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+unresolved-attribute = "ignore"
+unresolved-import = "ignore"
+not-subscriptable = "ignore"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

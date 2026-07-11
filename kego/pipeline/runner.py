@@ -358,7 +358,8 @@ class Pipeline:
 
     def train_agent(self, epochs: int | None = None, output_path: str | None = None, **kwargs) -> None:
         """Run task-specific agent or model training."""
-        if not hasattr(self.task, "train"):
+        train_fn = getattr(self.task, "train", None)
+        if not callable(train_fn):
             raise NotImplementedError(f"Task '{self.task.name}' does not implement a train method.")
         init_checkpoint = kwargs.get("init_checkpoint")
 
@@ -466,7 +467,7 @@ class Pipeline:
                     print("Error: failed to download trained weights via scp.")
             return
 
-        self.task.train(self.config, epochs=epochs, output_path=output_path, **kwargs)
+        train_fn(self.config, epochs=epochs, output_path=output_path, **kwargs)
 
     def ensemble(
         self,
@@ -693,7 +694,7 @@ class Pipeline:
             print(f"Cache coverage: {coverage:.1f}%")
 
             # Print cache folder size if it exists
-            local_root = getattr(self.store.local, "root", None)
+            local_root = getattr(getattr(self.store, "local", None), "root", None)
             if local_root and Path(local_root).exists():
                 size_bytes = sum(f.stat().st_size for f in Path(local_root).glob("**/*") if f.is_file())
                 size_mb = size_bytes / (1024 * 1024)
@@ -701,7 +702,7 @@ class Pipeline:
             print("-" * 40)
 
         elif action == "prune":
-            local_root = getattr(self.store.local, "root", None)
+            local_root = getattr(getattr(self.store, "local", None), "root", None)
             if not local_root or not Path(local_root).exists():
                 print("No local cache directory found to prune.")
                 return
