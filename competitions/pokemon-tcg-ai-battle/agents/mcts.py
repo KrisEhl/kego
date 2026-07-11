@@ -346,6 +346,37 @@ def enumerate_action_combinations(max_count: int, num_options: int, cap: int = 6
     return actions
 
 
+def build_children(node: Node, actions: list[list[int]], policy: list[float]) -> None:
+    """Attach softmax-weighted children to a node from a policy vector."""
+    total_prob = 0.0
+    for i in range(len(policy)):
+        p = math.exp(policy[i] * 10.0)
+        node.children.append(Child(actions[i], p))
+        total_prob += p
+    for c in node.children:
+        c.prob /= total_prob
+
+
+def select_child(current: Node, your_index: int):
+    """UCB-select the best child of ``current`` (None if it has none)."""
+    best, chosen = -1e18, None
+    c = 0.4 * math.sqrt(current.visit)
+    flip = current.state.observation.current.yourIndex != your_index
+    for child in current.children:
+        if child.node is None:
+            q = current.total / current.visit
+            visit = 0
+        else:
+            q = child.node.total / child.node.visit
+            visit = child.node.visit
+        if flip:
+            q = -q
+        u = q + c * child.prob / (1 + visit)
+        if u > best:
+            best, chosen = u, child
+    return chosen
+
+
 def create_node(
     parent: Node | None, search_state: SearchState, your_index: int, your_deck: list[int], model: MyModel
 ) -> Node:
@@ -373,13 +404,7 @@ def create_node(
         node.value = v
         node.backprop(v)
 
-        total_prob = 0.0
-        for i in range(len(policy)):
-            p = math.exp(policy[i] * 10.0)
-            node.children.append(Child(actions[i], p))
-            total_prob += p
-        for c in node.children:
-            c.prob /= total_prob
+        build_children(node, actions, policy)
 
     return node
 
@@ -442,21 +467,9 @@ class MCTSTransformerAgent(BaseAgent):
         for _ in range(self.SEARCH_COUNT):
             current = root
             while True:
-                value = -1e9
-                c = 0.4 * math.sqrt(current.visit)
-                for child in current.children:
-                    visit = 0
-                    if child.node is None:
-                        v = current.total / current.visit
-                    else:
-                        v = child.node.total / child.node.visit
-                        visit = child.node.visit
-                    if current.state.observation.current.yourIndex != your_index:
-                        v = -v
-                    v += c * child.prob / (1.0 + visit)
-                    if value < v:
-                        value = v
-                        next_child = child
+                next_child = select_child(current, your_index)
+                if next_child is None:
+                    break
 
                 if next_child.node is None:
                     s_state = search_step(current.state.searchId, next_child.select)

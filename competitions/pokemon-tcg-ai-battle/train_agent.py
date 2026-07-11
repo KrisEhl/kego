@@ -1,4 +1,3 @@
-import math
 import os
 import random
 import sys
@@ -23,9 +22,11 @@ from agents.mcts import (
     MODEL_ARGS,
     MyModel,
     SparseVector,
+    build_children,
     enumerate_action_combinations,
     get_decoder_input,
     get_encoder_input,
+    select_child,
 )
 
 from cg.api import (
@@ -127,17 +128,6 @@ def eval_nn_batch(svs: list[tuple[SparseVector, SparseVector]], model: MyModel) 
     return [(values[i][0], policies[i][: n_actions[i]]) for i in range(b)]
 
 
-def _build_children(node: Node, actions: list[list[int]], policy: list[float]) -> None:
-    """Attach softmax-weighted children to a node from a policy vector."""
-    total_prob = 0.0
-    for i in range(len(policy)):
-        p = math.exp(policy[i] * 10.0)
-        node.children.append(Child(actions[i], p))
-        total_prob += p
-    for c in node.children:
-        c.prob /= total_prob
-
-
 def create_node_train(
     parent: Node | None, search_state: SearchState, your_index: int, your_deck: list[int], model: MyModel
 ) -> tuple[Node, LearnSample | None]:
@@ -164,30 +154,10 @@ def create_node_train(
             v = -v
         node.value = v
         node.backprop(v)
-        _build_children(node, actions, policy)
+        build_children(node, actions, policy)
         sample = LearnSample(value, policy, sv_enc, sv_dec)
 
     return node, sample
-
-
-def _select_child(current: Node, your_index: int):
-    """UCB-select the best child of ``current`` (None if it has none)."""
-    best, chosen = -1e18, None
-    c = 0.4 * math.sqrt(current.visit)
-    flip = current.state.observation.current.yourIndex != your_index
-    for child in current.children:
-        if child.node is None:
-            q = current.total / current.visit
-            visit = 0
-        else:
-            q = child.node.total / child.node.visit
-            visit = child.node.visit
-        if flip:
-            q = -q
-        u = q + c * child.prob / (1 + visit)
-        if u > best:
-            best, chosen = u, child
-    return chosen
 
 
 def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list[int], model: MyModel) -> None:
@@ -201,7 +171,7 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
         current = root
         path = [root]
         while current.children:
-            child = _select_child(current, your_index)
+            child = select_child(current, your_index)
             if child is None:
                 break
             if child.node is None:  # unexpanded -> this is our leaf to evaluate
@@ -240,7 +210,7 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
             v = -value if leaf.yourIndex != your_index else value
             node.value = v
             node.backprop(v)
-            _build_children(node, actions, policy)
+            build_children(node, actions, policy)
 
 
 @timed("mcts_move")
@@ -272,7 +242,7 @@ def mcts_train_agent(
     for _ in range(0 if do_batched else search_count):
         current = root
         while True:
-            next_node = _select_child(current, your_index)
+            next_node = select_child(current, your_index)
             if next_node is None:
                 break
             if next_node.node is None:
