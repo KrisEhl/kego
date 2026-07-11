@@ -35,7 +35,7 @@ def tm():
 @pytest.fixture(scope="module")
 def model(tm):
     torch.manual_seed(0)
-    m = tm.MyModel(*tm.MODEL_ARGS)
+    m = tm.PolicyValueNet(*tm.MODEL_ARGS)
     m.eval()
     return m
 

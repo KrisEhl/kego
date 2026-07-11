@@ -134,7 +134,7 @@ class TestSelectChild:
 def test_agent_infers_model_architecture_from_checkpoint(env, tmp_path, monkeypatch):
     torch = pytest.importorskip("torch")
     checkpoint = tmp_path / "m.pth"
-    torch.save(env.MyModel(128, 4, 256, 1, 1).state_dict(), checkpoint)
+    torch.save(env.PolicyValueNet(128, 4, 256, 1, 1).state_dict(), checkpoint)
     monkeypatch.setenv("MCTS_DEVICE", "cpu")
 
     agent = env.MCTSTransformerAgent(deck=[1] * 60, model_path=str(checkpoint))

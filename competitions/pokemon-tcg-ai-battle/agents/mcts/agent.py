@@ -9,18 +9,18 @@ except ImportError:
     from agents.base import BaseAgent
 from cg.api import search_begin, search_end, search_step, to_observation_class
 
-from .encoding import get_decoder_input, get_encoder_input
-from .model import MODEL_ARGS, MyModel, model_args_from_state_dict
-from .search import Evaluator, create_node, eval_nn, select_child
+from .encoding import encode_actions, encode_state
+from .model import MODEL_ARGS, PolicyValueNet, model_args_from_state_dict
+from .search import Evaluator, create_node, evaluate_position, select_child
 
 
-def _nn_evaluator(model: MyModel, your_deck: list[int]) -> Evaluator:
+def _nn_evaluator(model: PolicyValueNet, your_deck: list[int]) -> Evaluator:
     """Build the inference-time `evaluate` closure for `create_node`."""
 
     def evaluate(obs, actions) -> tuple[float, list[float]]:
-        sv_enc = get_encoder_input(obs, your_deck)
-        sv_dec = get_decoder_input(obs, actions)
-        return eval_nn(sv_enc, sv_dec, model)
+        sv_enc = encode_state(obs, your_deck)
+        sv_dec = encode_actions(obs, actions)
+        return evaluate_position(sv_enc, sv_dec, model)
 
     return evaluate
 
@@ -42,7 +42,7 @@ class MCTSTransformerAgent(BaseAgent):
                 raise FileNotFoundError(f"[MCTSTransformerAgent] model_path not found: {model_path}")
             state = torch.load(model_path, map_location=self.device)
         self.model_args = tuple(model_args or (model_args_from_state_dict(state) if state is not None else MODEL_ARGS))
-        self.model = MyModel(*self.model_args).to(self.device)
+        self.model = PolicyValueNet(*self.model_args).to(self.device)
         self.model.eval()
 
         if state is not None:

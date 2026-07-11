@@ -75,7 +75,7 @@ def add_player(sv: SparseVector, ps: PlayerState):
     add_cards(sv, ps.discard, 0.25)
 
 
-def get_encoder_input(obs: Observation, your_deck: list[int]) -> SparseVector:
+def encode_state(obs: Observation, your_deck: list[int]) -> SparseVector:
     your_index = obs.current.yourIndex
     state = obs.current
 
@@ -123,21 +123,21 @@ def get_encoder_input(obs: Observation, your_deck: list[int]) -> SparseVector:
     return sv
 
 
-def decoder_main(sv: SparseVector, feature_index: int, card: Card | Pokemon | None):
+def add_role_card_feature(sv: SparseVector, feature_index: int, card: Card | Pokemon | None):
     if card is not None:
         sv.add(decoder_card_offset + feature_index * card_count + card.id, 1)
 
 
-def decoder_card_id(sv: SparseVector, context: int, card_id: int):
+def add_context_card_id(sv: SparseVector, context: int, card_id: int):
     sv.add(decoder_card_offset + (decoder_main_feature + context) * card_count + card_id, 1)
 
 
-def decoder_card(sv: SparseVector, context: int, card: Card | Pokemon | None):
+def add_context_card(sv: SparseVector, context: int, card: Card | Pokemon | None):
     if card is not None:
-        decoder_card_id(sv, context, card.id)
+        add_context_card_id(sv, context, card.id)
 
 
-def get_decoder_input(obs: Observation, actions: list[list[int]]) -> SparseVector:
+def encode_actions(obs: Observation, actions: list[list[int]]) -> SparseVector:
     sv = SparseVector()
     your_index = obs.current.yourIndex
     ps = obs.current.players[your_index]
@@ -165,29 +165,29 @@ def get_decoder_input(obs: Observation, actions: list[list[int]]) -> SparseVecto
             elif o_type == OptionType.ATTACK:
                 sv.add(decoder_attack_offset + o.attackId, 1)
             elif o_type == OptionType.PLAY:
-                decoder_main(sv, 0, ps.hand[o.index] if ps.hand else None)
+                add_role_card_feature(sv, 0, ps.hand[o.index] if ps.hand else None)
             elif o_type == OptionType.ATTACH:
-                decoder_main(sv, 1, get_card_helper(obs, int(o.area), o.index, your_index))
-                decoder_main(sv, 2, get_card_helper(obs, int(o.inPlayArea), o.inPlayIndex, your_index))
+                add_role_card_feature(sv, 1, get_card_helper(obs, int(o.area), o.index, your_index))
+                add_role_card_feature(sv, 2, get_card_helper(obs, int(o.inPlayArea), o.inPlayIndex, your_index))
             elif o_type == OptionType.EVOLVE:
-                decoder_main(sv, 3, get_card_helper(obs, int(o.area), o.index, your_index))
-                decoder_main(sv, 4, get_card_helper(obs, int(o.inPlayArea), o.inPlayIndex, your_index))
+                add_role_card_feature(sv, 3, get_card_helper(obs, int(o.area), o.index, your_index))
+                add_role_card_feature(sv, 4, get_card_helper(obs, int(o.inPlayArea), o.inPlayIndex, your_index))
             elif o_type == OptionType.ABILITY:
-                decoder_main(sv, 5, get_card_helper(obs, int(o.area), o.index, your_index))
+                add_role_card_feature(sv, 5, get_card_helper(obs, int(o.area), o.index, your_index))
             elif o_type == OptionType.DISCARD:
-                decoder_main(sv, 6, get_card_helper(obs, int(o.area), o.index, your_index))
+                add_role_card_feature(sv, 6, get_card_helper(obs, int(o.area), o.index, your_index))
             elif o_type == OptionType.RETREAT:
-                decoder_main(sv, 7, ps.active[0] if ps.active else None)
+                add_role_card_feature(sv, 7, ps.active[0] if ps.active else None)
             elif o_type == OptionType.CARD:
-                decoder_card(sv, context, get_card_helper(obs, int(o.area), o.index, o.playerIndex))
+                add_context_card(sv, context, get_card_helper(obs, int(o.area), o.index, o.playerIndex))
             elif o_type == OptionType.TOOL_CARD:
                 card = get_card_helper(obs, int(o.area), o.index, o.playerIndex)
                 if card and hasattr(card, "tools") and o.toolIndex < len(card.tools):
-                    decoder_card(sv, context, card.tools[o.toolIndex])
+                    add_context_card(sv, context, card.tools[o.toolIndex])
             elif o_type in (OptionType.ENERGY_CARD, OptionType.ENERGY):
                 card = get_card_helper(obs, int(o.area), o.index, o.playerIndex)
                 if card and hasattr(card, "energyCards") and o.energyIndex < len(card.energyCards):
-                    decoder_card(sv, context, card.energyCards[o.energyIndex])
+                    add_context_card(sv, context, card.energyCards[o.energyIndex])
             elif o_type == OptionType.SKILL:
-                decoder_card_id(sv, context, o.cardId)
+                add_context_card_id(sv, context, o.cardId)
     return sv

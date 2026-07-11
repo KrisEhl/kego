@@ -21,14 +21,14 @@ sys.path.insert(0, str(cg_parent))
 from agents.mcts import (
     MODEL_ARGS,
     RESULT_DRAW,
-    MyModel,
     Node,
+    PolicyValueNet,
     SparseVector,
     build_children,
     create_node,
+    encode_actions,
+    encode_state,
     enumerate_action_combinations,
-    get_decoder_input,
-    get_encoder_input,
     model_args_from_state_dict,
     select_child,
 )
@@ -65,7 +65,7 @@ class LearnInput:
             self.offset.append(o + count)
 
 
-def eval_nn_train(sv_enc: SparseVector, sv_dec: SparseVector, model: MyModel) -> tuple[float, list[float]]:
+def eval_nn_train(sv_enc: SparseVector, sv_dec: SparseVector, model: PolicyValueNet) -> tuple[float, list[float]]:
     device = next(model.parameters()).device
     with timer("nn_eval"):
         value, policy = model(
@@ -79,7 +79,9 @@ def eval_nn_train(sv_enc: SparseVector, sv_dec: SparseVector, model: MyModel) ->
         return (value.tolist()[0][0], policy.tolist()[0])
 
 
-def eval_nn_batch(svs: list[tuple[SparseVector, SparseVector]], model: MyModel) -> list[tuple[float, list[float]]]:
+def eval_nn_batch(
+    svs: list[tuple[SparseVector, SparseVector]], model: PolicyValueNet
+) -> list[tuple[float, list[float]]]:
     """Evaluate B (encoder, decoder) inputs in a single forward; return per-item (value, policy).
 
     Mirrors the training-loop batching: each decoder is padded to 64 words so the
@@ -110,7 +112,7 @@ def eval_nn_batch(svs: list[tuple[SparseVector, SparseVector]], model: MyModel) 
 
 
 def create_node_train(
-    parent: Node | None, search_state: SearchState, your_index: int, your_deck: list[int], model: MyModel
+    parent: Node | None, search_state: SearchState, your_index: int, your_deck: list[int], model: PolicyValueNet
 ) -> tuple[Node, LearnSample | None]:
     """Thin training wrapper around the shared `create_node`: evaluates with
     `eval_nn_train` (timed) instead of inference's `eval_nn`, and captures the raw
@@ -119,8 +121,8 @@ def create_node_train(
     sample_cell: list[LearnSample | None] = [None]
 
     def evaluate(obs, actions):
-        sv_enc = get_encoder_input(obs, your_deck)
-        sv_dec = get_decoder_input(obs, actions)
+        sv_enc = encode_state(obs, your_deck)
+        sv_dec = encode_actions(obs, actions)
         value, policy = eval_nn_train(sv_enc, sv_dec, model)
         sample_cell[0] = LearnSample(value, policy, sv_enc, sv_dec)
         return value, policy
@@ -129,7 +131,7 @@ def create_node_train(
     return node, sample_cell[0]
 
 
-def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list[int], model: MyModel) -> None:
+def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list[int], model: PolicyValueNet) -> None:
     """Tree-parallel MCTS wave: select up to ``n_leaves`` leaves by UCB descent (with a
     virtual loss so selections diversify and go DEEP), materialize them, evaluate them all
     in ONE batched forward, then backprop with the virtual loss removed. Gives real search
@@ -157,8 +159,8 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
                     actions = enumerate_action_combinations(
                         search_state.observation.select.maxCount, len(search_state.observation.select.option)
                     )
-                    sv_enc = get_encoder_input(search_state.observation, your_deck)
-                    sv_dec = get_decoder_input(search_state.observation, actions)
+                    sv_enc = encode_state(search_state.observation, your_deck)
+                    sv_dec = encode_actions(search_state.observation, actions)
                     pending.append((node, path, actions, sv_enc, sv_dec, leaf))
                     for pn in path:  # virtual loss so the next selection avoids this path
                         pn.visit += 1
@@ -184,7 +186,7 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
 
 @timed("mcts_move")
 def mcts_train_agent(
-    obs_dict: dict, your_deck: list[int], model: MyModel, search_count=10
+    obs_dict: dict, your_deck: list[int], model: PolicyValueNet, search_count=10
 ) -> tuple[list[int], LearnSample]:
     obs = to_observation_class(obs_dict)
     your_index = obs.current.yourIndex
@@ -263,7 +265,7 @@ def _worker_init():
     torch.set_num_threads(1)
 
 
-def _transport_state(model: MyModel) -> dict:
+def _transport_state(model: PolicyValueNet) -> dict:
     """State dict as numpy arrays. Tensors sent through the worker pool use torch's
     fd-based shared memory (one fd per tensor), which exhausts file descriptors over
     many pool.map calls ('Too many open files'). numpy pickles to plain bytes instead.
@@ -271,8 +273,8 @@ def _transport_state(model: MyModel) -> dict:
     return {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
 
 
-def _build_cpu_model(state_dict) -> MyModel:
-    model = MyModel(*model_args_from_state_dict(state_dict))
+def _build_cpu_model(state_dict) -> PolicyValueNet:
+    model = PolicyValueNet(*model_args_from_state_dict(state_dict))
     model.load_state_dict({k: torch.from_numpy(v) for k, v in state_dict.items()})
     model.eval()
     return model
@@ -516,7 +518,7 @@ def run_training_loop(
         init_checkpoint_path = _resolve_init_checkpoint(init_checkpoint, "pokemon-tcg-ai-battle", comp_dir)
         init_state_dict = torch.load(init_checkpoint_path, map_location=device)
         actual_model_args = model_args_from_state_dict(init_state_dict)
-    model = MyModel(*actual_model_args).to(device)
+    model = PolicyValueNet(*actual_model_args).to(device)
     if init_state_dict is not None:
         model.load_state_dict(init_state_dict)
         print(f"Warm-started model from {init_checkpoint_path}", flush=True)

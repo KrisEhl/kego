@@ -6,13 +6,13 @@ import torch
 from cg.api import Observation, SearchState
 
 from .encoding import SparseVector
-from .model import MyModel
+from .model import PolicyValueNet
 
 # The cg API exposes match results as raw integers: player 0, player 1, or draw.
 RESULT_DRAW = 2
 
 
-def eval_nn(sv_enc: SparseVector, sv_dec: SparseVector, model: MyModel) -> tuple[float, list[float]]:
+def evaluate_position(sv_enc: SparseVector, sv_dec: SparseVector, model: PolicyValueNet) -> tuple[float, list[float]]:
     device = next(model.parameters()).device
     with torch.no_grad():
         value, policy = model(

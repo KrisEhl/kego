@@ -65,7 +65,7 @@ class DecoderLayer(torch.nn.Module):
         return self.norm2(res + y)
 
 
-class MyModel(torch.nn.Module):
+class PolicyValueNet(torch.nn.Module):
     def __init__(
         self, d_model: int, num_heads: int, d_feedforward: int, num_layers_encoder: int, num_layers_decoder: int
     ):
@@ -97,3 +97,6 @@ class MyModel(torch.nn.Module):
         p = p.transpose(0, 1).view(batch_size, -1)
         p = torch.tanh(p)
         return (v, p)
+
+
+MyModel = PolicyValueNet
