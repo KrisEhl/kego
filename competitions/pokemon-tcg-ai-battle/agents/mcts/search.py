@@ -43,14 +43,14 @@ def evaluate_position(sv_enc: SparseVector, sv_dec: SparseVector, model: PolicyV
 
 
 class Child:
-    def __init__(self, select: list[int], prob: float):
+    def __init__(self, select: list[int], prob: float) -> None:
         self.node = None
         self.select = select
         self.prob = prob
 
 
 class Node:
-    def __init__(self, parent: "Node | None", state: SearchState):
+    def __init__(self, parent: "Node | None", state: SearchState) -> None:
         self.value = -2.0
         self.total = 0.0
         self.visit = 0
@@ -58,7 +58,7 @@ class Node:
         self.children = []
         self.state = state
 
-    def backprop(self, value: float):
+    def backprop(self, value: float) -> None:
         self.total += value
         self.visit += 1
         if self.parent is not None:
@@ -101,7 +101,7 @@ def build_children(node: Node, actions: list[list[int]], policy: list[float]) ->
         c.prob /= total_prob
 
 
-def select_child(current: Node, your_index: int):
+def select_child(current: Node, your_index: int) -> Child | None:
     """UCB-select the best child of ``current`` (None if it has none)."""
     best, chosen = -1e18, None
     c = EXPLORATION_C * math.sqrt(current.visit)

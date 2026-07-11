@@ -451,6 +451,13 @@ deck_file = "decks/mock_deck.csv"
 
         main_content = tar.extractfile("main.py").read().decode()
         assert f"from {package_name} import agent" in main_content
+        extracted = tmp_path / "extracted"
+        tar.extractall(extracted, filter="data")
+
+    from kego.pipeline.battle import load_agent
+
+    packaged_agent = load_agent(str(extracted / "main.py"))
+    assert packaged_agent.agent({}) == [0]
 
     notebook_path = tarball_path.parent / "kernel" / "submission_notebook.py"
     assert notebook_path.exists()
@@ -500,6 +507,7 @@ deck_file = "decks/mock_deck.csv"
         members = {member.name for member in tar.getmembers()}
         assert "mcts.pth" in members
         assert "mcts/__init__.py" in members
+        assert "from mcts import agent" in tar.extractfile("main.py").read().decode()
 
 
 def test_load_agent_supports_package_with_relative_imports(tmp_path):

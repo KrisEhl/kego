@@ -17,50 +17,50 @@ except ImportError:
     from agents.base import get_card as get_card_helper
 from cg.api import Card, Observation, OptionType, PlayerState, Pokemon
 
-from .model import card_count, decoder_attack_offset, decoder_card_offset, decoder_main_feature
+from .model import DECODER_ATTACK_OFFSET, DECODER_CARD_OFFSET, DECODER_MAIN_FEATURE, card_count
 
 
 class SparseVector:
-    def __init__(self):
+    def __init__(self) -> None:
         self.index = []
         self.value = []
         self.offset = []
         self.pos = 0
 
-    def add(self, index: int, value: float | int | bool):
+    def add(self, index: int, value: float | int | bool) -> None:
         value = float(value)
         if value != 0.0:
             self.index.append(self.pos + index)
             self.value.append(value)
 
-    def add_pos(self, pos: int):
+    def add_pos(self, pos: int) -> None:
         self.pos += pos
 
-    def add_single(self, value: float | int | bool):
+    def add_single(self, value: float | int | bool) -> None:
         value = float(value)
         if value != 0.0:
             self.index.append(self.pos)
             self.value.append(value)
         self.pos += 1
 
-    def word_start(self):
+    def word_start(self) -> None:
         self.offset.append(len(self.index))
 
 
-def add_card(sv: SparseVector, card: Card | Pokemon | None):
+def add_card(sv: SparseVector, card: Card | Pokemon | None) -> None:
     if card is not None:
         sv.add(card.id, 1)
     sv.add_pos(card_count)
 
 
-def add_cards(sv: SparseVector, cards: list[Card] | None, value: float):
+def add_cards(sv: SparseVector, cards: list[Card] | None, value: float) -> None:
     if cards is not None:
         for card in cards:
             sv.add(card.id, value)
     sv.add_pos(card_count)
 
 
-def add_pokemon(sv: SparseVector, poke: Pokemon | None):
+def add_pokemon(sv: SparseVector, poke: Pokemon | None) -> None:
     if poke is None:
         sv.add_single(1)
         sv.add_pos(1 + 3 * card_count)
@@ -72,7 +72,7 @@ def add_pokemon(sv: SparseVector, poke: Pokemon | None):
         add_cards(sv, poke.energyCards, 0.5)
 
 
-def add_player(sv: SparseVector, ps: PlayerState):
+def add_player(sv: SparseVector, ps: PlayerState) -> None:
     sv.add_single(ps.deckCount / 60.0)
     sv.add_single(len(ps.discard) / 60.0)
     sv.add_single(ps.handCount / 8.0)
@@ -136,16 +136,16 @@ def encode_state(obs: Observation, your_deck: list[int]) -> SparseVector:
     return sv
 
 
-def add_role_card_feature(sv: SparseVector, feature_index: int, card: Card | Pokemon | None):
+def add_role_card_feature(sv: SparseVector, feature_index: int, card: Card | Pokemon | None) -> None:
     if card is not None:
-        sv.add(decoder_card_offset + feature_index * card_count + card.id, 1)
+        sv.add(DECODER_CARD_OFFSET + feature_index * card_count + card.id, 1)
 
 
-def add_context_card_id(sv: SparseVector, context: int, card_id: int):
-    sv.add(decoder_card_offset + (decoder_main_feature + context) * card_count + card_id, 1)
+def add_context_card_id(sv: SparseVector, context: int, card_id: int) -> None:
+    sv.add(DECODER_CARD_OFFSET + (DECODER_MAIN_FEATURE + context) * card_count + card_id, 1)
 
 
-def add_context_card(sv: SparseVector, context: int, card: Card | Pokemon | None):
+def add_context_card(sv: SparseVector, context: int, card: Card | Pokemon | None) -> None:
     if card is not None:
         add_context_card_id(sv, context, card.id)
 
@@ -176,7 +176,7 @@ def encode_actions(obs: Observation, actions: list[list[int]]) -> SparseVector:
             elif o_type == OptionType.NUMBER:
                 sv.add(9 + min(o.number, 4), 1)
             elif o_type == OptionType.ATTACK:
-                sv.add(decoder_attack_offset + o.attackId, 1)
+                sv.add(DECODER_ATTACK_OFFSET + o.attackId, 1)
             elif o_type == OptionType.PLAY:
                 add_role_card_feature(sv, 0, ps.hand[o.index] if ps.hand else None)
             elif o_type == OptionType.ATTACH:

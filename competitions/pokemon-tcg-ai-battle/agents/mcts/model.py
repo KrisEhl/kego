@@ -19,12 +19,12 @@ except Exception:
     card_count = 2000
     attack_count = 2000
 
-num_words_encoder = 24
-encoder_size = 22000
-decoder_main_feature = 8
-decoder_attack_offset = 14
-decoder_card_offset = decoder_attack_offset + attack_count
-decoder_size = decoder_card_offset + (1 + decoder_main_feature + 48) * card_count
+NUM_WORDS_ENCODER = 24
+ENCODER_SIZE = 22000
+DECODER_MAIN_FEATURE = 8
+DECODER_ATTACK_OFFSET = 14
+DECODER_CARD_OFFSET = DECODER_ATTACK_OFFSET + attack_count
+DECODER_SIZE = DECODER_CARD_OFFSET + (1 + DECODER_MAIN_FEATURE + 48) * card_count
 
 # (d_model, num_heads, d_feedforward, n_encoder_layers, n_decoder_layers).
 # Single source of truth: training and inference both build PolicyValueNet
@@ -32,7 +32,7 @@ decoder_size = decoder_card_offset + (1 + decoder_main_feature + 48) * card_coun
 MODEL_ARGS = (256, 4, 512, 2, 2)
 
 
-def _layer_count(state_dict, prefix: str, suffix: str) -> int:
+def _layer_count(state_dict: dict, prefix: str, suffix: str) -> int:
     found = []
     for key in state_dict:
         if key.startswith(prefix) and key.endswith(suffix):
@@ -43,7 +43,7 @@ def _layer_count(state_dict, prefix: str, suffix: str) -> int:
     return max(found) + 1 if found else 0
 
 
-def model_args_from_state_dict(state_dict) -> tuple[int, int, int, int, int]:
+def model_args_from_state_dict(state_dict: dict) -> tuple[int, int, int, int, int]:
     d_model = int(state_dict["encoder_bag.weight"].shape[1])
     d_feedforward = int(state_dict["encoder.layers.0.linear1.weight"].shape[0])
     num_heads = MODEL_ARGS[1] if d_model % MODEL_ARGS[1] == 0 else 4
@@ -57,7 +57,7 @@ def model_args_from_state_dict(state_dict) -> tuple[int, int, int, int, int]:
 
 
 class DecoderLayer(torch.nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_feedforward: int):
+    def __init__(self, d_model: int, num_heads: int, d_feedforward: int) -> None:
         super().__init__()
         self.attention = torch.nn.MultiheadAttention(d_model, num_heads)
         self.fc1 = torch.nn.Linear(d_model, d_feedforward)
@@ -77,22 +77,30 @@ class DecoderLayer(torch.nn.Module):
 class PolicyValueNet(torch.nn.Module):
     def __init__(
         self, d_model: int, num_heads: int, d_feedforward: int, num_layers_encoder: int, num_layers_decoder: int
-    ):
+    ) -> None:
         super().__init__()
         self.d_model = d_model
-        self.encoder_bag = torch.nn.EmbeddingBag(encoder_size, d_model, mode="sum")
+        self.encoder_bag = torch.nn.EmbeddingBag(ENCODER_SIZE, d_model, mode="sum")
         encoder_layer = torch.nn.TransformerEncoderLayer(d_model, num_heads, d_feedforward, 0)
         self.encoder = torch.nn.TransformerEncoder(encoder_layer, num_layers_encoder, enable_nested_tensor=False)
         self.encoder_fc = torch.nn.Linear(d_model, 1)
-        self.decoder_bag = torch.nn.EmbeddingBag(decoder_size, d_model, mode="sum")
+        self.decoder_bag = torch.nn.EmbeddingBag(DECODER_SIZE, d_model, mode="sum")
         self.decoder = torch.nn.ModuleList()
         for _ in range(num_layers_decoder):
             self.decoder.append(DecoderLayer(d_model, num_heads, d_feedforward))
         self.decoder_fc = torch.nn.Linear(d_model, 1)
 
-    def forward(self, index_encoder, value_encoder, offset_encoder, index_decoder, value_decoder, offset_decoder):
+    def forward(
+        self,
+        index_encoder: torch.Tensor,
+        value_encoder: torch.Tensor,
+        offset_encoder: torch.Tensor,
+        index_decoder: torch.Tensor,
+        value_decoder: torch.Tensor,
+        offset_decoder: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         v = self.encoder_bag(index_encoder, offset_encoder, value_encoder)
-        v = v.reshape(-1, num_words_encoder, self.d_model).transpose(0, 1)
+        v = v.reshape(-1, NUM_WORDS_ENCODER, self.d_model).transpose(0, 1)
         batch_size = v.size(1)
         encoder_out = self.encoder(v)
         v = self.encoder_fc(encoder_out)
