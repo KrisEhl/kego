@@ -1,6 +1,6 @@
 [project]
 name = "kego"
-version = "0.8.0"
+version = "0.8.1"
 description = "Helpers for quick ML analysis of kaggle competitions."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,6 +27,12 @@ kego = "kego.pipeline.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+only-include = ["kego", "tests", "README.md"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["kego"]
 
 
 [dependency-groups]
