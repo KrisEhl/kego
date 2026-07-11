@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from cg.api import State
 
@@ -273,10 +273,13 @@ SIGNATURE_MAP = {
 }
 
 
+T = TypeVar("T")
+
+
 class RandomSource(Protocol):
-    def choice(self, sequence): ...
-    def choices(self, population, *, k: int): ...
-    def shuffle(self, values: list[int]) -> None: ...
+    def choice(self, sequence: list[T]) -> T: ...
+    def choices(self, population: tuple[T, ...], *, k: int) -> list[T]: ...
+    def shuffle(self, values: list[T]) -> None: ...
 
 
 @dataclass(frozen=True)

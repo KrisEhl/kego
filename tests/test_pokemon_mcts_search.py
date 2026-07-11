@@ -144,7 +144,7 @@ def test_agent_infers_model_architecture_from_checkpoint(env, tmp_path, monkeypa
     assert agent.model_args == (128, 4, 256, 1, 1)
 
 
-def test_opponent_hidden_cards_use_revealed_signature_and_subtract_visible_cards(env):
+def test_opponent_hidden_cards_use_revealed_signature_and_subtract_visible_cards(env) -> None:
     torchic = types.SimpleNamespace(id=324, tools=[], energyCards=[])
     opponent = types.SimpleNamespace(
         active=[torchic], bench=[], discard=[], deckCount=50, prize=[None] * 6, handCount=3
@@ -160,7 +160,7 @@ def test_opponent_hidden_cards_use_revealed_signature_and_subtract_visible_cards
     assert Counter(hidden.deck + hidden.prize + hidden.hand)[324] == 1
 
 
-def test_opponent_archetype_decks_have_60_cards(env):
+def test_opponent_archetype_decks_have_60_cards(env) -> None:
     assert {name: len(deck) for name, deck in env.ARCHETYPE_DECKS.items()} == {
         "abomasnow": 60,
         "dragapult": 60,
