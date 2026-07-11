@@ -1,3 +1,4 @@
+import io
 import tarfile
 from pathlib import Path
 
@@ -160,6 +161,27 @@ class PokemonTCGAIBattleTask:
         target_path = comp_dir / "submission.tar.gz"
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # The agent can be a single file (rule agents) or a package directory
+        # (e.g. the MCTS agent). Directory agents are packaged recursively under
+        # their own basename and fronted by a thin main.py shim that re-exports
+        # `agent` from the package, so Kaggle's flat /kaggle_simulations/agent/
+        # layout still finds a callable main.py:agent(obs_dict) entry point.
+        is_package_agent = agent_path.is_dir()
+        package_name = agent_path.name if is_package_agent else None
+
+        if is_package_agent:
+            main_py_content = (
+                f'"""Kaggle submission shim for the {package_name} agent package."""\n'
+                "\n"
+                f"from {package_name} import agent  # noqa: F401\n"
+            )
+        else:
+            with open(agent_path) as f:
+                main_py_content = f.read()
+
+        with open(deck_path) as f:
+            deck_csv_content = f.read()
+
         # Collect auxiliary helper files in the competition folder that might be imported by the agent
         helpers = {}
         base_path = comp_dir / "agents/base.py"
@@ -170,6 +192,20 @@ class PokemonTCGAIBattleTask:
             except Exception:
                 pass
 
+        if is_package_agent:
+            for file_path in sorted(agent_path.rglob("*")):
+                if file_path.is_dir():
+                    continue
+                rel_parts = file_path.relative_to(agent_path).parts
+                if "__pycache__" in rel_parts or file_path.suffix in (".pyc", ".pyo"):
+                    continue
+                arcname = "/".join((package_name, *rel_parts))
+                try:
+                    with open(file_path) as f:
+                        helpers[arcname] = f.read()
+                except Exception:
+                    pass
+
         def submission_tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
             parts = Path(info.name).parts
             if "__pycache__" in parts or info.name.endswith((".pyc", ".pyo")):
@@ -178,7 +214,14 @@ class PokemonTCGAIBattleTask:
 
         # Create local tar.gz
         with tarfile.open(target_path, "w:gz") as tar:
-            tar.add(agent_path, arcname="main.py")
+            if is_package_agent:
+                main_py_bytes = main_py_content.encode()
+                main_py_info = tarfile.TarInfo(name="main.py")
+                main_py_info.size = len(main_py_bytes)
+                tar.addfile(main_py_info, io.BytesIO(main_py_bytes))
+                tar.add(agent_path, arcname=package_name, filter=submission_tar_filter)
+            else:
+                tar.add(agent_path, arcname="main.py")
             tar.add(deck_path, arcname="deck.csv")
             if base_path.exists():
                 tar.add(base_path, arcname="base_agent.py")
@@ -196,12 +239,6 @@ class PokemonTCGAIBattleTask:
                         tar.add(pth_path, arcname="mcts.pth")
                         break
 
-        # Read contents for kernel notebook generation
-        with open(agent_path) as f:
-            main_py_content = f.read()
-        with open(deck_path) as f:
-            deck_csv_content = f.read()
-
         kernel_dir = comp_dir / "kernel"
         kernel_dir.mkdir(parents=True, exist_ok=True)
         notebook_path = kernel_dir / "submission_notebook.py"
@@ -209,11 +246,13 @@ class PokemonTCGAIBattleTask:
         # Helper codes generation for the notebook
         helpers_code = ""
         for h_name, h_content in helpers.items():
-            safe_var_name = h_name.replace(".", "_").replace("-", "_")
+            safe_var_name = h_name.replace(".", "_").replace("-", "_").replace("/", "_")
+            dest_expr = f'os.path.join(WORKING_DIR, "{h_name}")'
+            makedirs_code = f"os.makedirs(os.path.dirname({dest_expr}), exist_ok=True)\n" if "/" in h_name else ""
             helpers_code += f"""
 # Write helper: {h_name}
 {safe_var_name}_content = {repr(h_content)}
-with open(os.path.join(WORKING_DIR, "{h_name}"), "w") as f:
+{makedirs_code}with open({dest_expr}, "w") as f:
     f.write({safe_var_name}_content)
 """
 
