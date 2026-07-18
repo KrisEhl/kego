@@ -4,17 +4,35 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
-def register_checkpoint(uri: str, name: str, checkpoint_path: str, tags: dict) -> str:
+@dataclass(frozen=True)
+class TrainingResume:
+    version: str
+    completed_iterations: int
+    path: Path
+
+
+def register_checkpoint(
+    uri: str,
+    name: str,
+    checkpoint_path: str,
+    tags: dict,
+    *,
+    training_state_path: str | None = None,
+) -> str:
     """Log ``checkpoint_path`` as an artifact and register a Model Registry version of
     ``name`` carrying ``tags`` (values coerced to strings). Uses the active MLflow run if
     one is open, else creates an ephemeral one. Returns the new version string."""
     import mlflow
     from mlflow.tracking import MlflowClient
 
+    from kego.tracking.tracker import fail_fast_http
+
+    fail_fast_http()
     mlflow.set_tracking_uri(uri)
     client = MlflowClient(tracking_uri=uri)
     try:
@@ -23,6 +41,8 @@ def register_checkpoint(uri: str, name: str, checkpoint_path: str, tags: dict) -
         client.create_registered_model(name)
 
     str_tags = {**{k: str(v) for k, v in tags.items()}, "checkpoint_filename": Path(checkpoint_path).name}
+    if training_state_path:
+        str_tags["training_state_filename"] = Path(training_state_path).name
     run = mlflow.active_run()
     owns_run = run is None
     if owns_run:
@@ -30,12 +50,58 @@ def register_checkpoint(uri: str, name: str, checkpoint_path: str, tags: dict) -
         run = mlflow.start_run()
     try:
         mlflow.log_artifact(checkpoint_path, artifact_path="checkpoint")
+        if training_state_path:
+            mlflow.log_artifact(training_state_path, artifact_path="checkpoint")
         source = mlflow.get_artifact_uri("checkpoint")
         version = client.create_model_version(name, source=source, run_id=run.info.run_id, tags=str_tags)
         return str(version.version)
     finally:
         if owns_run:
             mlflow.end_run()
+
+
+def resolve_training_resume(
+    uri: str,
+    name: str,
+    fingerprint: str,
+    target_iterations: int,
+    cache_dir: str | Path,
+) -> TrainingResume | None:
+    """Download the most advanced compatible training state at or below the target."""
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient(tracking_uri=uri)
+    try:
+        versions = client.search_model_versions(f"name='{name}'")
+    except Exception:
+        return None
+
+    candidates = []
+    for version in versions:
+        tags = dict(version.tags or {})
+        if tags.get("training_fingerprint") != fingerprint or not tags.get("training_state_filename"):
+            continue
+        if getattr(version, "current_stage", None) == "Archived":
+            continue
+        if tags.get("dropped") == "true" or tags.get("status") == "archived":
+            continue
+        if not version.run_id:
+            continue
+        try:
+            completed = int(tags["completed_iterations"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if completed <= target_iterations:
+            candidates.append((completed, version, tags["training_state_filename"], version.run_id))
+    if not candidates:
+        return None
+
+    completed, version, filename, run_id = max(candidates, key=lambda candidate: candidate[0])
+    downloaded = Path(client.download_artifacts(run_id, "checkpoint", dst_path=str(cache_dir)))
+    paths = [downloaded] if downloaded.is_file() else list(downloaded.rglob(filename))
+    if not paths:
+        raise FileNotFoundError(f"Training state {filename!r} is missing from registry:{version.version}")
+    return TrainingResume(version=str(version.version), completed_iterations=completed, path=paths[0])
 
 
 def leaderboard(uri: str, name: str, sort_by: str = "elo", desc: bool = True) -> list[dict]:
@@ -49,6 +115,10 @@ def leaderboard(uri: str, name: str, sort_by: str = "elo", desc: bool = True) ->
     versions = client.search_model_versions(f"name='{name}'")
     rows = []
     for v in versions:
+        if getattr(v, "current_stage", None) == "Archived":
+            continue
+        if v.tags and (v.tags.get("dropped") == "true" or v.tags.get("status") == "archived"):
+            continue
         dt = datetime.fromtimestamp(v.creation_timestamp / 1000.0, tz=timezone.utc)
         created_str = dt.astimezone().strftime("%Y-%m-%d %H:%M")
         rows.append({"version": str(v.version), "created": created_str, **dict(v.tags)})

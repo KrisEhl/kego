@@ -129,6 +129,7 @@ def test_training_logs_and_registers_best(tm, deck, tmp_path, monkeypatch):
         batched=True,
         selfplay_opponents=["self"],
         eval_opponents=["random"],
+        config_fingerprint="test-fingerprint",
     )
 
     board = leaderboard(uri, "pokemon-tcg-ai-battle", sort_by="gauntlet_avg")
@@ -136,3 +137,108 @@ def test_training_logs_and_registers_best(tm, deck, tmp_path, monkeypatch):
     assert board[0]["machine"] == "test-box"
     assert "gauntlet_avg" in board[0]
     assert board[0]["git_sha"] != ""
+    assert board[0]["training_fingerprint"] == "test-fingerprint"
+    assert board[0]["completed_iterations"] == "1"
+    assert board[0]["training_state_filename"].endswith(".train.pt")
+
+
+def test_training_uses_exact_compatible_registry_state_without_retraining(tm, tmp_path, monkeypatch, capsys):
+    pytest.importorskip("mlflow")
+    from kego.tracking import register_checkpoint
+
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    monkeypatch.setenv("KEGO_MLFLOW", uri)
+    model = tm.PolicyValueNet(*tm.MODEL_ARGS)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda step: 1.0)
+    weights = tmp_path / "weights.pth"
+    state = tmp_path / "weights_iter1.train.pt"
+    torch.save(model.state_dict(), weights)
+    torch.save(
+        {
+            "format_version": 1,
+            "training_fingerprint": "compatible",
+            "completed_iterations": 1,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict(),
+            "replay": [],
+            "best_state": model.state_dict(),
+            "best_score": 50.0,
+            "best_results": {"random": 50},
+            "python_rng_state": __import__("random").getstate(),
+            "torch_rng_state": torch.get_rng_state(),
+            "target_iterations": 1,
+        },
+        state,
+    )
+    register_checkpoint(
+        uri,
+        "pokemon-tcg-ai-battle",
+        str(weights),
+        tags={"training_fingerprint": "compatible", "completed_iterations": 1},
+        training_state_path=str(state),
+    )
+    output = tmp_path / "resumed.pth"
+
+    tm.run_training_loop(
+        iterations=1,
+        eval_games=0,
+        self_play_games=0,
+        output_path=str(output),
+        config_fingerprint="compatible",
+    )
+
+    assert output.exists()
+    assert "already reached target iteration 1" in capsys.readouterr().out
+
+
+def test_training_resumes_only_remaining_iterations(tm, tmp_path, monkeypatch, capsys):
+    pytest.importorskip("mlflow")
+    from kego.tracking import register_checkpoint
+
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    monkeypatch.setenv("KEGO_MLFLOW", uri)
+    model = tm.PolicyValueNet(*tm.MODEL_ARGS)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda step: 1.0)
+    weights = tmp_path / "weights.pth"
+    state = tmp_path / "weights_iter1.train.pt"
+    torch.save(model.state_dict(), weights)
+    torch.save(
+        {
+            "format_version": 1,
+            "training_fingerprint": "compatible",
+            "completed_iterations": 1,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict(),
+            "replay": [],
+            "best_state": model.state_dict(),
+            "best_score": 50.0,
+            "best_results": {"random": 50},
+            "python_rng_state": __import__("random").getstate(),
+            "torch_rng_state": torch.get_rng_state(),
+            "target_iterations": 1,
+        },
+        state,
+    )
+    register_checkpoint(
+        uri,
+        "pokemon-tcg-ai-battle",
+        str(weights),
+        tags={"training_fingerprint": "compatible", "completed_iterations": 1},
+        training_state_path=str(state),
+    )
+
+    tm.run_training_loop(
+        iterations=2,
+        eval_games=0,
+        self_play_games=0,
+        output_path=str(tmp_path / "resumed.pth"),
+        config_fingerprint="compatible",
+    )
+
+    out = capsys.readouterr().out
+    assert "--- Iteration 2/2 ---" in out
+    assert "--- Iteration 1/2 ---" not in out

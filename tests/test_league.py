@@ -98,6 +98,17 @@ def test_download_checkpoint_uses_cached_single_pth_without_filename_tag(tmp_pat
     assert Path(module.download_checkpoint(object(), version, str(cache), debug=False)) == expected
 
 
+def test_registry_cache_helpers_use_stable_run_ids(tmp_path):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module._registry_cache_root(None) == module.comp_dir / "outputs" / "cached_registry"
+    assert module._registry_cache_root(str(tmp_path / "cache_root")) == tmp_path / "cache_root"
+    assert module._registry_cache_dir(tmp_path / "cache_root", "abc123") == tmp_path / "cache_root" / "run_abc123"
+
+
 def test_download_checkpoint_discovers_remote_pth_before_scp(tmp_path, monkeypatch):
     league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
     spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
@@ -217,3 +228,150 @@ def test_aggregate_completed_results_skips_pending_and_failed_games():
     assert completed == 3
     assert wins.tolist() == [[0, 1, 0], [1, 0, 0], [0, 0, 0]]
     assert games.tolist() == [[0, 2, 0], [2, 0, 0], [0, 0, 0]]
+
+
+def test_filter_worse_versions():
+    from kego.tracking.prune import filter_worse_versions
+
+    # Dummy versions:
+    # Group 1: abomasnow (256)
+    # v1: rated, low Elo, low RD. Difference is 1500 - 1300 = 200.
+    # rd_best + rd = 20 + 30 = 50. 1.96 * 50 = 98. 200 > 98 => Statistically significantly worse. Dropped!
+    v1 = SimpleNamespace(
+        version="1", tags={"variant": "large256_abomasnow", "elo": "1300", "elo_rd": "30", "games": "50"}
+    )
+    v2 = SimpleNamespace(
+        version="2", tags={"variant": "large256_abomasnow", "elo": "1500", "elo_rd": "20", "games": "50"}
+    )
+    v3 = SimpleNamespace(
+        version="3", tags={"variant": "large256_abomasnow", "elo": "1200", "elo_rd": "50", "games": "5"}
+    )
+    v3b = SimpleNamespace(
+        version="3b", tags={"variant": "large256_abomasnow", "elo": "1450", "elo_rd": "60", "games": "50"}
+    )
+    v4 = SimpleNamespace(
+        version="4", tags={"variant": "small192_lucario", "elo": "1600", "elo_rd": "15", "games": "100"}
+    )
+    v5 = SimpleNamespace(
+        version="5", tags={"variant": "small192_lucario", "elo": "1580", "elo_rd": "15", "games": "100"}
+    )
+
+    filtered, dropped = filter_worse_versions([v1, v2, v3, v3b, v4, v5], min_games=20, k=1.96)
+
+    versions_kept = {v.version for v in filtered}
+    assert versions_kept == {"2", "3", "3b", "4", "5"}
+    assert {v.version for v in dropped} == {"1"}
+
+
+def test_persist_league_artifacts_saves_dropped_variants(tmp_path):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    module.comp_dir = tmp_path
+
+    class DummyClient:
+        def log_artifacts(self, run_id, local_dir, artifact_path):
+            pass
+
+    import numpy as np
+
+    args = SimpleNamespace(
+        task="pokemon-tcg-ai-battle",
+        games=2,
+        search_count=10,
+        workers=2,
+        write_ratings=False,
+    )
+
+    dropped = [
+        {
+            "version": "1",
+            "deck": "abomasnow",
+            "model_args": "256",
+            "elo": "1400",
+            "games": "5",
+            "reason": "Worse variant",
+        }
+    ]
+
+    out_dir = module._persist_league_artifacts(
+        client=DummyClient(),
+        run_id="test_run",
+        participant_names=["v2", "v4"],
+        wins_matrix=np.zeros((2, 2)),
+        games_matrix=np.zeros((2, 2)),
+        results=[],
+        name_to_version={"v2": "2", "v4": "4"},
+        anchor_elos={},
+        args=args,
+        dropped_variants=dropped,
+    )
+
+    participants_file = out_dir / "participants.json"
+    assert participants_file.exists()
+
+    data = json.loads(participants_file.read_text())
+    assert data["dropped_variants"] == dropped
+
+
+def test_models_prune_drop_worse(monkeypatch, tmp_path, capsys):
+    from kego.pipeline import cli
+
+    monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+
+    transitioned = []
+    tagged = []
+
+    class FakeMlflowClient:
+        def __init__(self, tracking_uri=None):
+            pass
+
+        def search_model_versions(self, filter_string):
+            v1 = SimpleNamespace(
+                version="1",
+                tags={"deck": "abomasnow", "model_args": "256", "elo": "1300", "elo_rd": "30", "games": "50"},
+                current_stage="None",
+            )
+            v2 = SimpleNamespace(
+                version="2",
+                tags={"deck": "abomasnow", "model_args": "256", "elo": "1500", "elo_rd": "20", "games": "50"},
+                current_stage="None",
+            )
+            return [v1, v2]
+
+        def transition_model_version_stage(self, name, version, stage):
+            transitioned.append((name, version, stage))
+
+        def set_model_version_tag(self, name, version, key, value):
+            tagged.append((name, version, key, value))
+
+    import mlflow.tracking
+
+    monkeypatch.setattr(mlflow.tracking, "MlflowClient", FakeMlflowClient)
+
+    assert (
+        cli.main(
+            [
+                "models",
+                "prune",
+                "--task",
+                "pokemon-tcg-ai-battle",
+                "--drop-worse",
+                "--drop-worse-min-games",
+                "20",
+                "--drop-worse-k",
+                "1.96",
+            ]
+        )
+        == 0
+    )
+
+    assert ("pokemon-tcg-ai-battle", "1", "Archived") in transitioned
+    assert ("pokemon-tcg-ai-battle", "1", "status", "archived") in tagged
+    assert ("pokemon-tcg-ai-battle", "1", "dropped", "true") in tagged
+    out = capsys.readouterr().out
+    assert "Drop-worse selected 1 version(s): v1" in out
+    assert "Pruned version 1" in out

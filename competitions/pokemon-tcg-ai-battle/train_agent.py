@@ -1,3 +1,4 @@
+import math
 import os
 import random
 import sys
@@ -468,6 +469,8 @@ def run_training_loop(
     deck_file: str | None = None,
     init_checkpoint: str | None = None,
     model_args=None,
+    variant: str | None = None,
+    config_fingerprint: str | None = None,
 ):
     import multiprocessing as mp
 
@@ -513,27 +516,88 @@ def run_training_loop(
     num_workers = max(1, min(num_workers, max(self_play_games, eval_games, 1)))
     print(f"Starting MCTS self-play training on {device} | rollout workers: {num_workers}...")
 
+    from kego.tracking import default_tracking_uri, resolve_training_resume
+
+    _uri = default_tracking_uri()
+    _task = "pokemon-tcg-ai-battle"
+    resume = None
+    resume_payload = None
+    if config_fingerprint and not init_checkpoint:
+        try:
+            resume = resolve_training_resume(
+                _uri,
+                _task,
+                config_fingerprint,
+                target_iterations=iterations,
+                cache_dir=comp_dir / "outputs" / "training_resume",
+            )
+            if resume:
+                resume_payload = torch.load(resume.path, map_location=device, weights_only=False)
+                required = {
+                    "model_state",
+                    "optimizer_state",
+                    "scheduler_state",
+                    "replay",
+                    "python_rng_state",
+                    "torch_rng_state",
+                }
+                if resume_payload.get("format_version") != 1:
+                    raise ValueError(f"unsupported training-state format {resume_payload.get('format_version')!r}")
+                if resume_payload.get("training_fingerprint") != config_fingerprint:
+                    raise ValueError("training-state fingerprint does not match its registry metadata")
+                if int(resume_payload.get("completed_iterations", -1)) != resume.completed_iterations:
+                    raise ValueError("training-state iteration does not match its registry metadata")
+                if missing := required - resume_payload.keys():
+                    raise ValueError(f"training state is missing required fields: {sorted(missing)}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"Automatic resume unavailable; starting fresh ({exc})", flush=True)
+            resume = None
+            resume_payload = None
+
     init_checkpoint_path = None
     init_state_dict = None
     actual_model_args = _parse_model_args(model_args) or MODEL_ARGS
-    if init_checkpoint:
+    if resume_payload:
+        actual_model_args = model_args_from_state_dict(resume_payload["model_state"])
+    elif init_checkpoint:
         init_checkpoint_path = _resolve_init_checkpoint(init_checkpoint, "pokemon-tcg-ai-battle", comp_dir)
         init_state_dict = torch.load(init_checkpoint_path, map_location=device)
         actual_model_args = model_args_from_state_dict(init_state_dict)
     model = PolicyValueNet(*actual_model_args).to(device)
-    if init_state_dict is not None:
+    if resume_payload:
+        assert resume is not None
+        model.load_state_dict(resume_payload["model_state"])
+        print(
+            f"Resuming compatible registry:{resume.version} from iteration {resume.completed_iterations}/{iterations}",
+            flush=True,
+        )
+    elif init_state_dict is not None:
         model.load_state_dict(init_state_dict)
         print(f"Warm-started model from {init_checkpoint_path}", flush=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-    # Cosine LR decay over the run so late iterations settle instead of wandering.
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, iterations), eta_min=3e-5)
+    # Target-independent decay: iteration 250 has the same LR history whether the
+    # run stops there or is later extended to iteration 300.
+    decay_horizon = 250
+    min_lr_ratio = 0.1
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lr_lambda=lambda step: (
+            min_lr_ratio
+            + (1.0 - min_lr_ratio) * 0.5 * (1.0 + math.cos(math.pi * min(step, decay_horizon) / decay_horizon))
+        ),
+    )
+    start_iteration = 0
+    if resume_payload:
+        optimizer.load_state_dict(resume_payload["optimizer_state"])
+        scheduler.load_state_dict(resume_payload["scheduler_state"])
+        start_iteration = int(resume_payload["completed_iterations"])
     loss_fn_enc = torch.nn.HuberLoss(delta=0.2)
     loss_fn_dec = torch.nn.HuberLoss(reduction="none", delta=0.1)
 
     # Replay buffer: train on a sliding window of recent self-play instead of only the
     # latest iteration's games — larger, more diverse batches => lower-variance updates
     # and less forgetting (the main source of the win-rate wobble).
-    replay: list[LearnSample] = []
+    replay: list[LearnSample] = list(resume_payload.get("replay", [])) if resume_payload else []
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -544,15 +608,17 @@ def run_training_loop(
     # and register the best checkpoint in the model registry. Crash-safe — a no-op if MLflow
     # is unreachable, so training never blocks on telemetry. See the fleet-fabric spec.
     from kego.fleet import git_sha, machine_name
-    from kego.tracking import Tracker, default_tracking_uri, register_checkpoint
+    from kego.tracking import Tracker, register_checkpoint_or_queue
 
-    _uri = default_tracking_uri()
-    _task = "pokemon-tcg-ai-battle"
     _repo_root = Path(__file__).resolve().parents[2]
     _agent_name = (
-        f"mcts-{deck_path.stem}-"
-        f"d{actual_model_args[0]}-h{actual_model_args[1]}-ff{actual_model_args[2]}-"
-        f"enc{actual_model_args[3]}-dec{actual_model_args[4]}"
+        variant
+        if variant
+        else (
+            f"mcts-{deck_path.stem}-"
+            f"d{actual_model_args[0]}-h{actual_model_args[1]}-ff{actual_model_args[2]}-"
+            f"enc{actual_model_args[3]}-dec{actual_model_args[4]}"
+        )
     )
     _run_tags = {
         "agent_name": _agent_name,
@@ -565,8 +631,14 @@ def run_training_loop(
         "batched": str(batched),
         "model_args": str(actual_model_args),
     }
+    if variant:
+        _run_tags["variant"] = variant
     if init_checkpoint:
         _run_tags["continued_from"] = init_checkpoint
+    if config_fingerprint:
+        _run_tags["training_fingerprint"] = config_fingerprint
+    if resume:
+        _run_tags["continued_from"] = f"registry:{resume.version}"
     # Attach to the dispatcher's run when dispatched (KEGO_MLFLOW_RUN_ID injected over SSH),
     # else open a fresh run. set_tags after open so our tags land whether new or resumed.
     _run_id = os.environ.get("KEGO_MLFLOW_RUN_ID")
@@ -576,6 +648,7 @@ def run_training_loop(
     _track.set_tags(_run_tags)
     _track.log_params(
         {
+            "variant": variant,
             "iterations": iterations,
             "eval_games": eval_games,
             "self_play_games": self_play_games,
@@ -592,10 +665,49 @@ def run_training_loop(
             "deck_file": deck_file,
             "init_checkpoint": init_checkpoint or "",
             "init_checkpoint_resolved": str(init_checkpoint_path) if init_checkpoint_path else "",
+            "start_iteration": start_iteration,
+            "training_fingerprint": config_fingerprint or "",
             "output_path": output_path,
         }
     )
-    best_results: dict[str, float] = {}  # per-opponent WRs at the best gauntlet_avg, for registry tags
+    best_results: dict[str, float] = dict(resume_payload.get("best_results", {})) if resume_payload else {}
+    best_score = float(resume_payload.get("best_score", -1.0)) if resume_payload else -1.0
+    best_state = (
+        resume_payload.get("best_state") if resume_payload else _transport_state(model) if init_checkpoint else None
+    )
+    if resume_payload:
+        random.setstate(resume_payload["python_rng_state"])
+        torch.set_rng_state(resume_payload["torch_rng_state"].cpu())
+        if torch.cuda.is_available() and resume_payload.get("cuda_rng_state"):
+            torch.cuda.set_rng_state_all(resume_payload["cuda_rng_state"])
+        torch.save(best_state or resume_payload["model_state"], str(output_file))
+    if start_iteration >= iterations:
+        print(f"Compatible checkpoint already reached target iteration {iterations}; no training needed.", flush=True)
+        _track.close()
+        return
+
+    last_completed_iteration = start_iteration
+
+    def _save_training_state(completed_iterations: int, path: Path) -> None:
+        torch.save(
+            {
+                "format_version": 1,
+                "training_fingerprint": config_fingerprint,
+                "completed_iterations": completed_iterations,
+                "target_iterations": iterations,
+                "model_state": _transport_state(model),
+                "optimizer_state": optimizer.state_dict(),
+                "scheduler_state": scheduler.state_dict(),
+                "replay": replay,
+                "best_state": best_state,
+                "best_score": best_score,
+                "best_results": best_results,
+                "python_rng_state": random.getstate(),
+                "torch_rng_state": torch.get_rng_state(),
+                "cuda_rng_state": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            },
+            path,
+        )
 
     # Self-play/eval run on CPU-only worker processes: batch-1 inference is far cheaper
     # on CPU than via per-call GPU launches/syncs, and the games are independent. The
@@ -651,11 +763,9 @@ def run_training_loop(
         print(f"  gauntlet avg (rule agents): {avg:.1f}%")
         return results, avg
 
-    best_score = -1.0  # best rule-agent average; output_file always holds this checkpoint
-    best_state = _transport_state(model) if init_checkpoint else None
-
+    training_completed_normally = False
     try:
-        for iter_idx in range(iterations):
+        for iter_idx in range(start_iteration, iterations):
             print(f"\n--- Iteration {iter_idx + 1}/{iterations} ---")
             cpu_state = _transport_state(model)
 
@@ -758,38 +868,41 @@ def run_training_loop(
                     f"Training complete. avg loss: value={sum_enc / train_steps:.4f} "
                     f"policy={sum_dec / train_steps:.4f} | lr={scheduler.get_last_lr()[0]:.2e}"
                 )
-            scheduler.step()
+                scheduler.step()
             run_timings.add("train", time.perf_counter() - _train_start)
             run_timings.report(f"timings @ iter {iter_idx + 1}")
+            last_completed_iteration = iter_idx + 1
 
             # Save and register intermediate checkpoint every 50 iterations
             checkpoint_interval = 50
             if (iter_idx + 1) % checkpoint_interval == 0:
                 iter_output_file = output_file.parent / f"{output_file.stem}_iter{iter_idx + 1}.pth"
+                iter_state_file = output_file.parent / f"{output_file.stem}_iter{iter_idx + 1}.train.pt"
                 torch.save(model.state_dict(), str(iter_output_file))
+                _save_training_state(iter_idx + 1, iter_state_file)
                 print(f"  -> Intermediate checkpoint saved to {iter_output_file}")
-                try:
-                    iter_score = (
-                        avg
-                        if (
-                            eval_games > 0 and (iter_idx % eval_every == 0 or (iter_idx + 1) % checkpoint_interval == 0)
-                        )
-                        else best_score
-                    )
-                    register_checkpoint(
-                        _uri,
-                        _task,
-                        str(iter_output_file),
-                        tags={
-                            **_run_tags,
-                            "epoch": str(iter_idx + 1),
-                            "deck": deck_path.stem,
-                            "gauntlet_avg": round(iter_score, 2) if iter_score >= 0 else 0.0,
-                        },
-                    )
+                iter_score = (
+                    avg
+                    if (eval_games > 0 and (iter_idx % eval_every == 0 or (iter_idx + 1) % checkpoint_interval == 0))
+                    else best_score
+                )
+                _version = register_checkpoint_or_queue(
+                    _uri,
+                    _task,
+                    str(iter_output_file),
+                    tags={
+                        **_run_tags,
+                        "epoch": str(iter_idx + 1),
+                        "completed_iterations": str(iter_idx + 1),
+                        "deck": deck_path.stem,
+                        "gauntlet_avg": round(iter_score, 2) if iter_score >= 0 else 0.0,
+                    },
+                    training_state_path=str(iter_state_file),
+                )
+                if _version:
                     print("  -> Registered intermediate checkpoint as registry model version.")
-                except Exception as exc:  # noqa: BLE001
-                    print(f"  (Registry unavailable, intermediate checkpoint not registered: {exc})")
+                else:
+                    print("  (Registry unavailable, checkpoint queued to outbox — run `kego sync` later.)")
 
         # Final gauntlet on the fully-trained model (pool still open); keep it if best.
         if eval_games > 0:
@@ -802,33 +915,33 @@ def run_training_loop(
                 best_results = results
                 torch.save(model.state_dict(), str(output_file))
                 print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
+        training_completed_normally = True
     finally:
         if pool is not None:
             pool.close()
             pool.join()
-        # Register the best checkpoint (best-checkpointing already wrote it to output_file).
-        # Skipped when we never evaluated (best_score < 0) — nothing to rank. Best-effort:
-        # a registry outage must not fail an otherwise-good training run.
-        if best_score >= 0:
-            try:
-                register_checkpoint(
-                    _uri,
-                    _task,
-                    str(output_file),
-                    tags={
-                        **_run_tags,
-                        "deck": deck_path.stem,
-                        "gauntlet_avg": round(best_score, 2),
-                        **{f"wr_{n}": round(w, 2) for n, w in best_results.items()},
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(f"  (registry unavailable, checkpoint not registered: {exc})")
+        # A completed run is resumable even when evaluation was disabled.
+        if training_completed_normally:
+            if best_score < 0:
+                torch.save(model.state_dict(), str(output_file))
+            final_state_file = output_file.parent / f"{output_file.stem}_iter{last_completed_iteration}.train.pt"
+            _save_training_state(last_completed_iteration, final_state_file)
+            _version = register_checkpoint_or_queue(
+                _uri,
+                _task,
+                str(output_file),
+                tags={
+                    **_run_tags,
+                    "completed_iterations": str(last_completed_iteration),
+                    "deck": deck_path.stem,
+                    **({"gauntlet_avg": round(best_score, 2)} if best_score >= 0 else {}),
+                    **({f"wr_{n}": round(w, 2) for n, w in best_results.items()} if best_score >= 0 else {}),
+                },
+                training_state_path=str(final_state_file),
+            )
+            if not _version:
+                print("  (Registry unavailable, best checkpoint queued to outbox — run `kego sync` later.)")
         _track.close()
-
-    # If we never evaluated (eval_games=0), fall back to saving the final model.
-    if best_score < 0:
-        torch.save(model.state_dict(), str(output_file))
 
     run_timings.report("timings @ final")
     print(f"Done. Best rule-agent avg: {best_score:.1f}%. Model saved to {output_file}")

@@ -110,12 +110,14 @@ echo "CPU_UTIL: $CPU_UTIL%"
 echo "LOAD: $(cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null || echo 'unknown')"
 echo "CORES: $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 'unknown')"
 if command -v nvidia-smi >/dev/null 2>&1; then
-    echo "GPU: $(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1)"
+    nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null | while read -r gpuline; do
+        echo "GPU: $gpuline"
+    done
 else
     echo "GPU: N/A"
 fi
 echo "PROCS:"
-$PS_CMD 2>/dev/null | grep -E 'train-agent|train_agent|kego leaderboard|run_league' | grep -v grep || true
+$PS_CMD 2>/dev/null | grep -E 'train-agent|train_agent|kego league|run_league' | grep -v grep || true
 echo "LOGS:"
 ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 20 | while read -r logpath; do
     TAIL_LINES=$(tail -c 20000 "$logpath" 2>/dev/null | tr '\r' '\n')
@@ -144,7 +146,7 @@ ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 20 | while read -r logpath; do
             CURRENT_ITER="${BASH_REMATCH[1]}"
             TOTAL_ITER="${BASH_REMATCH[2]}"
             STEP="ETA ${BASH_REMATCH[3]}"
-            KIND="leaderboard"
+            KIND="league"
         elif [[ "$line" =~ $EVAL_REGEX ]]; then
             STEP="Evaluating gauntlet"
         elif [[ "$line" =~ $PLAY_REGEX ]]; then
@@ -172,7 +174,7 @@ done
         is_local = machine.name == machine_name()
     except Exception:
         is_local = False
-    connect_timeout = os.environ.get("KEGO_STATUS_CONNECT_TIMEOUT", "4")
+    connect_timeout = os.environ.get("KEGO_STATUS_CONNECT_TIMEOUT", "1")
     command_timeout = float(os.environ.get("KEGO_STATUS_TIMEOUT", "8"))
     cmd = (
         ["bash", "-lc", remote_script]
@@ -183,6 +185,12 @@ done
             f"ConnectTimeout={connect_timeout}",
             "-o",
             "BatchMode=yes",
+            "-o",
+            "ControlMaster=auto",
+            "-o",
+            "ControlPath=~/.ssh/kego-%r@%h:%p",
+            "-o",
+            "ControlPersist=600",
             machine.ssh,
             remote_script,
         ]
@@ -196,7 +204,7 @@ done
         load = "unknown"
         cores = "unknown"
         cpu_util = "unknown"
-        gpu = "N/A"
+        gpus_raw = []
         procs = []
         parsed_logs = {}
 
@@ -216,17 +224,7 @@ done
             elif line.startswith("GPU:"):
                 val = line.split(":", 1)[1].strip()
                 if val and val != "N/A":
-                    parts = [p.strip() for p in val.split(",")]
-                    if len(parts) >= 3:
-                        util, used_mb, total_mb = parts[:3]
-                        try:
-                            used_gb = float(used_mb) / 1024.0
-                            total_gb = float(total_mb) / 1024.0
-                            gpu = f"{util}% ({used_gb:.1f}/{total_gb:.1f} GB)"
-                        except ValueError:
-                            gpu = val
-                    else:
-                        gpu = val
+                    gpus_raw.append(val)
             elif line.startswith("PROCS:"):
                 mode = "procs"
             elif line.startswith("LOGS:"):
@@ -245,6 +243,24 @@ done
                 if "run_id" in log_data:
                     parsed_logs[log_data["run_id"]] = log_data
 
+        gpu = "N/A"
+        if gpus_raw:
+            utils = []
+            total_used_mb = 0.0
+            total_mem_mb = 0.0
+            for val in gpus_raw:
+                parts = [p.strip() for p in val.split(",")]
+                if len(parts) >= 3:
+                    util, used_mb, total_mb = parts[:3]
+                    utils.append(f"{util}%")
+                    try:
+                        total_used_mb += float(used_mb)
+                        total_mem_mb += float(total_mb)
+                    except ValueError:
+                        pass
+            if utils:
+                gpu = f"{'/'.join(utils)} ({total_used_mb / 1024.0:.1f}/{total_mem_mb / 1024.0:.1f} GB)"
+
         running_runs = []
         seen_run_ids = set()
         seen_cmds = set()
@@ -253,7 +269,7 @@ done
             if len(parts) < 3:
                 continue
             pid, etime, cmd = parts[0], parts[1], parts[2]
-            if is_local and cmd.startswith("ssh ") and "kego leaderboard" in cmd:
+            if is_local and cmd.startswith("ssh ") and "kego league" in cmd:
                 continue
 
             run_ids = re.findall(r"[a-f0-9]{32}", cmd)
@@ -270,7 +286,7 @@ done
                     kind = log_data.get("kind", "train")
 
                     eta_str = ""
-                    if kind == "leaderboard" and step.startswith("ETA "):
+                    if kind == "league" and step.startswith("ETA "):
                         eta_str = step.removeprefix("ETA ").strip()
                     if curr and total:
                         try:
@@ -293,9 +309,9 @@ done
                     if done:
                         progress_desc = done
                     elif curr:
-                        label = "Games" if kind == "leaderboard" else "Iter"
+                        label = "Games" if kind == "league" else "Iter"
                         progress_desc = f"{label} {curr}/{total}"
-                        if step and kind != "leaderboard":
+                        if step and kind != "league":
                             progress_desc += f" - {step}"
                     else:
                         progress_desc = "Running"
@@ -321,6 +337,7 @@ done
             "role": machine.role,
             "load": cpu_val,
             "gpu": gpu,
+            "gpu_count": len(gpus_raw),
             "runs": running_runs,
         }
 
@@ -399,12 +416,18 @@ class Pipeline:
             # discarded working_dir and can be scp'd back.
             remote_output = f"/home/kristian/projects/kego/{output_path}" if output_path else None
             cmd = f"/home/kristian/projects/kego/.venv/bin/python -m kego.pipeline.cli train-agent --task {self.task.name}"
+            if kwargs.get("agent"):
+                cmd += f" --agent {kwargs['agent']}"
+            if kwargs.get("variant"):
+                cmd += f" --variant {kwargs['variant']}"
             if epochs:
                 cmd += f" --epochs {epochs}"
             if remote_output:
                 cmd += f" --output {remote_output}"
             if init_checkpoint:
                 cmd += f" --init-checkpoint {init_checkpoint}"
+            if kwargs.get("num_workers"):
+                cmd += f" --num-workers {kwargs['num_workers']}"
 
             print(f"Submitting job to Ray cluster (working_dir={repo_root}): {cmd}")
             # Keep the upload light: drop VCS/venv/data/caches and every competition
@@ -467,7 +490,56 @@ class Pipeline:
                     print("Error: failed to download trained weights via scp.")
             return
 
-        train_fn(self.config, epochs=epochs, output_path=output_path, **kwargs)
+        import json
+        import os
+        from pathlib import Path
+
+        # Outbox guard: un-synced checkpoints from a previous run of this task must reach
+        # the registry before training starts — resume/lineage decisions read the registry,
+        # so training against stale registry state can silently fork from the wrong parent
+        # (and the new run overwrites the outputs/ files the queued entries came from).
+        if os.environ.get("KEGO_IGNORE_OUTBOX") != "1":
+            from kego.tracking.outbox import pending_for, sync_outbox
+
+            if pending_for(self.task.name):
+                print(f"Un-synced checkpoint registration(s) for '{self.task.name}' in the outbox; syncing...")
+                for entry, model, version in sync_outbox()[0]:
+                    print(f"  Synced {entry} -> {model} v{version}")
+                still_pending = pending_for(self.task.name)
+                if still_pending:
+                    raise RuntimeError(
+                        f"{len(still_pending)} checkpoint registration(s) for '{self.task.name}' are queued "
+                        f"in the outbox and the registry is still unreachable. Starting a new run now could "
+                        f"resume from a stale parent. Run `kego sync` once the hub is back "
+                        f"(or set KEGO_IGNORE_OUTBOX=1 to train anyway)."
+                    )
+
+        active_runs_dir = Path(".kego/active_runs")
+        active_runs_dir.mkdir(parents=True, exist_ok=True)
+
+        pid = os.getpid()
+        run_file = active_runs_dir / f"{pid}.json"
+
+        variant_name = kwargs.get("variant", "default")
+        run_info = {
+            "task": self.task.name,
+            "config": variant_name,
+            "pid": pid,
+            "progress": "running",
+            "active_workers": [],
+        }
+
+        import contextlib
+
+        with contextlib.suppress(Exception), open(run_file, "w") as f:
+            json.dump(run_info, f)
+
+        try:
+            train_fn(self.config, epochs=epochs, output_path=output_path, **kwargs)
+        finally:
+            if run_file.exists():
+                with contextlib.suppress(Exception):
+                    run_file.unlink()
 
     def ensemble(
         self,
@@ -521,30 +593,44 @@ class Pipeline:
         active_runs_dir = Path(".kego/active_runs")
         if active_runs_dir.exists():
             runs = list(active_runs_dir.glob("*.json"))
-            if runs:
+            active_list = []
+            for run_file in runs:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    with open(run_file) as f:
+                        data = json.load(f)
+                    pid = data.get("pid")
+                    if isinstance(pid, int):
+                        import os
+
+                        try:
+                            os.kill(pid, 0)
+                        except OSError:
+                            # Process is dead, delete the stale active run file
+                            run_file.unlink()
+                            continue
+                    active_list.append((run_file, data))
+
+            if active_list:
                 local_found = True
                 print("Active Runs:")
                 print("=" * 80)
-                for run_file in runs:
-                    try:
-                        with open(run_file) as f:
-                            data = json.load(f)
-                        run_id = run_file.stem
-                        task = data.get("task", "unknown")
-                        config = data.get("config", "unknown")
-                        pid = data.get("pid", "unknown")
-                        progress = data.get("progress", "0/0")
-                        active_workers = data.get("active_workers", [])
+                for run_file, data in active_list:
+                    run_id = run_file.stem
+                    task = data.get("task", "unknown")
+                    config = data.get("config", "unknown")
+                    pid = data.get("pid", "unknown")
+                    progress = data.get("progress", "0/0")
+                    active_workers = data.get("active_workers", [])
 
-                        print(f"[Run {run_id}] - task: {task} | config: {config}")
-                        print(f"PID: {pid} | Progress: {progress}")
-                        if active_workers:
-                            print("Active Workers:")
-                            for w in active_workers:
-                                print(f"  - {w}")
-                        print("-" * 80)
-                    except Exception:  # noqa: S110
-                        pass
+                    print(f"[Run {run_id}] - task: {task} | config: {config}")
+                    print(f"PID: {pid} | Progress: {progress}")
+                    if active_workers:
+                        print("Active Workers:")
+                        for w in active_workers:
+                            print(f"  - {w}")
+                    print("-" * 80)
                 print("=" * 80)
 
         # 2. Check remote Ray jobs
@@ -593,52 +679,78 @@ class Pipeline:
             try:
                 fleet = load_fleet(fleet_path)
                 if fleet.machines:
-                    print("\nFleet Status:")
-                    print("=" * 132)
-                    print(
-                        f"{'Machine':<25} {'Status':<8} {'Role':<6} {'CPU Util/Load (Cores)':<32} {'GPU Util/Mem':<18} {'ETA':<15} {'Active Runs / Latest Log'}"
-                    )
-                    print("-" * 132)
-
                     import concurrent.futures
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=len(fleet.machines)) as executor:
                         results = list(executor.map(_poll_machine, fleet.machines))
 
+                    def gpu_label(res: dict) -> str:
+                        value = res.get("gpu", "-").replace(" GB", "G")
+                        count = res.get("gpu_count", 0)
+                        return f"{count} GPUs: {value}" if count > 1 else value
+
+                    import contextlib
+
+                    def cpu_label(res: dict) -> str:
+                        load_str = res.get("load", "-")
+                        cpu = load_str.split("/")[0].strip() if "/" in load_str else load_str
+                        if cpu.endswith("%"):
+                            with contextlib.suppress(ValueError):
+                                cpu = f"{float(cpu.rstrip('%')):.1f}%"
+                        return cpu
+
+                    online = [res for res in results if res["status"] == "Online"]
+                    name_width = max(15, *(len(res["name"]) for res in results))
+                    cpu_width = max(6, *(len(cpu_label(res)) for res in online)) if online else 6
+                    gpu_width = max(15, *(len(gpu_label(res)) for res in online)) if online else 15
+                    eta_width = max(6, *(len(eta) for res in online for _, _, _, eta in res.get("runs", []) if eta), 0)
+                    table_width = max(80, name_width + 1 + cpu_width + 2 + gpu_width + 1 + eta_width + 1 + 24)
+                    print("\nFleet Status:")
+                    print("=" * table_width)
+                    print(
+                        f"{'Machine':<{name_width}} {'CPU':>{cpu_width}}  {'GPU':<{gpu_width}} "
+                        f"{'ETA':<{eta_width}} {'Active Runs / Latest Log'}"
+                    )
+                    print("-" * table_width)
+
                     for res in results:
-                        name = res["name"]
+                        name = res["name"][:name_width]
                         status_str = res["status"]
                         if status_str == "Online":
-                            role = res.get("role", "cpu")
-                            load = res.get("load", "-")
-                            gpu = res.get("gpu", "-")
+                            cpu = cpu_label(res)
+                            gpu = gpu_label(res)
                             runs = res.get("runs", [])
 
                             if not runs:
-                                print(f"{name:<25} {status_str:<8} {role:<6} {load:<32} {gpu:<18} {'-':<15} None")
+                                print(
+                                    f"{name:<{name_width}} {cpu:>{cpu_width}}  {gpu:<{gpu_width}} "
+                                    f"{'-':<{eta_width}} None"
+                                )
                             else:
                                 first = True
                                 for pid, run_desc, last_log, eta in runs:
                                     run_info = (
-                                        f"PID {pid} ({run_desc[:8]}...)"
+                                        f"PID {pid} ({run_desc[:8]})"
                                         if len(run_desc) == 32
                                         else f"PID {pid} ({run_desc})"
                                     )
                                     log_info = f" -> {last_log}" if last_log else ""
+                                    if len(log_info) > 30:
+                                        log_info = log_info[:27] + "..."
                                     eta_val = eta if eta else "-"
-                                    if first:
-                                        print(
-                                            f"{name:<25} {status_str:<8} {role:<6} {load:<32} {gpu:<18} {eta_val:<15} {run_info}{log_info}"
-                                        )
-                                        first = False
-                                    else:
-                                        print(
-                                            f"{'':<25} {'':<8} {'':<6} {'':<32} {'':<18} {eta_val:<15} {run_info}{log_info}"
-                                        )
+                                    lead = (
+                                        f"{name:<{name_width}} {cpu:>{cpu_width}}  {gpu:<{gpu_width}}"
+                                        if first
+                                        else f"{'':<{name_width}} {'':>{cpu_width}}  {'':<{gpu_width}}"
+                                    )
+                                    print(f"{lead} {eta_val:<{eta_width}} {run_info}{log_info}")
+                                    first = False
                         else:
                             err = res.get("error", "Offline")
-                            print(f"{name:<25} {status_str:<8} {'-':<6} {'-':<32} {'-':<18} {'-':<15} ({err})")
-                    print("=" * 132)
+                            if len(err) > 50:
+                                err = err[:47] + "..."
+                            print(f"{name:<{name_width}} Offline ({err})")
+                    print("=" * table_width)
             except Exception as e:
                 print(f"\nWarning: could not query fleet status from {fleet_path}: {e}")
 

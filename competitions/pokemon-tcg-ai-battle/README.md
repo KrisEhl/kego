@@ -23,7 +23,8 @@
 | Pre-2026-07-04 `submit-leader` packaging | Kaggle LB below hardcoded agents despite strong local league | Submitted `main.py` did not auto-load packaged `mcts.pth`; kernel also only searched the competition input path, missing attached weight datasets. |
 
 ## Operational notes
-- Continue training by setting `[train].init_checkpoint` to a local `.pth` path or `registry:<version>`. This warm-starts model weights only; optimizer, LR scheduler, replay buffer, and epoch offset start fresh.
+- `--epochs` is the target total iteration count. Training automatically resumes the highest registry checkpoint with the same effective variant and source/data fingerprint, restoring model, optimizer, LR scheduler, replay buffer, RNG, best score, and iteration offset. For example, requesting 300 after a compatible 250-iteration run executes iterations 251–300.
+- Setting `[train].init_checkpoint` or passing `--init-checkpoint` remains an explicit weight-only warm start and disables automatic selection for that run.
 - Before spending a Kaggle submission, build `submission.tar.gz`, extract it locally, confirm `main.py` loads packaged `mcts.pth` with no `MCTS_MODEL_PATH`, and run smoke games against the rule agents.
 
 ## Decks

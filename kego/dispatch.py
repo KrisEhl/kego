@@ -25,6 +25,8 @@ DEFAULT_EXCLUDES = [
     "__pycache__",
     "__pycache__/",
     "*.tar.gz",
+    "*.gguf",
+    "*.pth",
     "data",
     "data/",
     "model_data",
@@ -41,18 +43,25 @@ DEFAULT_EXCLUDES = [
     "cluster/",
     "catboost_info",
     "catboost_info/",
-    # Explicitly exclude nested outputs inside competition dirs (e.g. large .pth checkpoints)
-    "competitions/*/outputs/",
-    "competitions/*/mlruns/",
+    # Explicitly exclude nested outputs inside competition dirs (e.g. large .pth checkpoints).
+    # Leading "/" anchors to the transfer root; without it rsync matches the pattern against
+    # the END of any path, which also protects stale copies elsewhere from --delete.
+    "/competitions/*/outputs/",
+    "/competitions/*/mlruns/",
 ]
 
 
 def other_competition_excludes(repo_root: str | Path, keep: str) -> list[str]:
-    """Exclude every ``competitions/<name>`` except the active task ``keep`` (cg/ is kept)."""
+    """Exclude every top-level ``competitions/<name>`` except the active task ``keep`` (cg/ is kept).
+
+    Patterns are anchored with a leading "/" so they only match the top-level directory;
+    unanchored slash patterns match the end of any path, which would also protect stale
+    same-named directories elsewhere in the remote tree from ``--delete``.
+    """
     comps = Path(repo_root) / "competitions"
     if not comps.is_dir():
         return []
-    return [f"competitions/{p.name}" for p in sorted(comps.iterdir()) if p.is_dir() and p.name != keep]
+    return [f"/competitions/{p.name}" for p in sorted(comps.iterdir()) if p.is_dir() and p.name != keep]
 
 
 def rsync_command(local_dir: str | Path, machine: Machine, excludes: Sequence[str]) -> list[str]:
@@ -87,7 +96,7 @@ def remote_launch_command(machine: Machine, cmd_args: Sequence[str], run_id: str
 
 def ssh_command(machine: Machine, remote_cmd: str) -> list[str]:
     """Wrap a remote command in a login shell over SSH (login shell => uv/PATH available)."""
-    return ["ssh", machine.ssh, f"bash -lc {shlex.quote(remote_cmd)}"]
+    return ["ssh", "-f", "-n", machine.ssh, f"bash -lc {shlex.quote(remote_cmd)}"]
 
 
 def dispatch(

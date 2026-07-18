@@ -39,7 +39,7 @@ def test_ssh_command_wraps_remote_in_login_shell():
     from kego.dispatch import ssh_command
 
     m = Machine(name="m5", ssh="k@m5", role="cpu", repo="/r")
-    assert ssh_command(m, "echo hi") == ["ssh", "k@m5", "bash -lc 'echo hi'"]
+    assert ssh_command(m, "echo hi") == ["ssh", "-f", "-n", "k@m5", "bash -lc 'echo hi'"]
 
 
 def test_other_competition_excludes_keeps_active_only(tmp_path):
@@ -49,8 +49,11 @@ def test_other_competition_excludes_keeps_active_only(tmp_path):
     (comps / "keep").mkdir(parents=True)
     (comps / "drop").mkdir()
     ex = other_competition_excludes(tmp_path, keep="keep")
-    assert "competitions/drop" in ex
-    assert "competitions/keep" not in ex
+    assert "/competitions/drop" in ex
+    assert not any("keep" in e for e in ex)
+    # Anchored to the transfer root so --delete can still clean up stale
+    # same-named directories elsewhere in the remote tree (e.g. kego/competitions/).
+    assert all(e.startswith("/competitions/") for e in ex)
 
 
 def test_dispatch_ships_then_launches():
@@ -104,4 +107,4 @@ def test_dispatch_raises_if_ssh_launch_fails():
 
     m = Machine(name="m5", ssh="k@m5", role="cpu", repo="/r")
     with pytest.raises(RuntimeError, match="ssh launch"):
-        dispatch(m, ["leaderboard"], run_id="x", local_dir="/l", excludes=[], runner=failing_run)
+        dispatch(m, ["league"], run_id="x", local_dir="/l", excludes=[], runner=failing_run)

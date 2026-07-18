@@ -93,6 +93,22 @@ def test_default_tracking_uri_uses_fleet_hub(monkeypatch, tmp_path):
     assert default_tracking_uri(fleet_path=fp) == "http://hub:5000"
 
 
+def test_default_tracking_uri_finds_fleet_toml_without_git_marker(monkeypatch, tmp_path):
+    """A fleet-dispatched tree is rsynced without .git; fleet.toml must still be found
+    by walking up from the module/cwd so remote runs register to the hub, not offline."""
+    import kego.tracking.resolve as resolve
+
+    monkeypatch.delenv("KEGO_MLFLOW", raising=False)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    repo = tmp_path / "repo"
+    (repo / "kego" / "tracking").mkdir(parents=True)
+    (repo / "competitions" / "some-task").mkdir(parents=True)
+    (repo / "fleet.toml").write_text('[hub]\nname = "omarchyd"\nmlflow = "http://hub:5000"\n')
+    monkeypatch.setattr(resolve, "__file__", str(repo / "kego" / "tracking" / "resolve.py"))
+    monkeypatch.chdir(repo / "competitions" / "some-task")
+    assert resolve.default_tracking_uri() == "http://hub:5000"
+
+
 def test_default_tracking_uri_offline_fallback(monkeypatch, tmp_path):
     from kego.tracking import default_tracking_uri
 

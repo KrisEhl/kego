@@ -96,5 +96,11 @@ def get_task(name: str) -> Task:
                     print(f"Warning: failed to load dynamic task from {path}: {e}")
 
     if name not in _REGISTRY:
+        if not name:
+            raise KeyError(
+                "No task configured (empty task name). Run from a competition directory "
+                "containing kego.toml, pass --task <name>, or set 'task' in the config file. "
+                f"Registered: {sorted(_REGISTRY)}"
+            )
         raise KeyError(f"Unknown task {name!r}. Registered: {sorted(_REGISTRY)}")
     return _REGISTRY[name]()

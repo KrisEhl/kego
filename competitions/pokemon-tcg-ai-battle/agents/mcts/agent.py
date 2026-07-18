@@ -40,7 +40,38 @@ class MCTSTransformerAgent(BaseAgent):
         model_path: str | None = None,
         model_args: tuple[int, int, int, int, int] | None = None,
     ) -> None:
-        self.deck = self._load_deck(deck)
+        # Load variant config if present
+        variant_data = {}
+        candidate_paths = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "variant.toml"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "../variant.toml"),
+            os.path.join(os.getcwd(), "variant.toml"),
+            "/kaggle_simulations/agent/variant.toml",
+        ]
+        var_path = next((p for p in candidate_paths if os.path.exists(p)), None)
+        if var_path:
+            try:
+                try:
+                    import tomllib
+                except ImportError:
+                    import tomli as tomllib  # type: ignore
+                with open(var_path, "rb") as f:
+                    variant_data = tomllib.load(f)
+                print(f"[MCTSTransformerAgent] Loaded configuration from {var_path}", flush=True)
+            except Exception as e:
+                print(f"[MCTSTransformerAgent] Error reading variant config {var_path}: {e}", flush=True)
+
+        # Resolve deck path
+        deck_to_load = deck
+        if "deck_file" in variant_data:
+            # If variant config defines a deck file, check if it exists (locally)
+            # Otherwise fall back to Kaggle's deck.csv or the parameter
+            comp_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            local_deck_path = os.path.join(comp_dir, variant_data["deck_file"])
+            if os.path.exists(local_deck_path):
+                deck_to_load = local_deck_path
+
+        self.deck = self._load_deck(deck_to_load)
         forced = os.environ.get("MCTS_DEVICE")
         self.device = (
             torch.device(forced)
@@ -54,7 +85,13 @@ class MCTSTransformerAgent(BaseAgent):
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"[MCTSTransformerAgent] model_path not found: {model_path}")
             state = torch.load(model_path, map_location=self.device)
-        self.model_args = tuple(model_args or (model_args_from_state_dict(state) if state is not None else MODEL_ARGS))
+
+        # Determine model_args prioritizing: parameter -> variant.toml -> weights state_dict shapes -> default
+        self.model_args = tuple(
+            model_args
+            or variant_data.get("model_args")
+            or (model_args_from_state_dict(state) if state is not None else MODEL_ARGS)
+        )
         self.model = PolicyValueNet(*self.model_args).to(self.device)
         self.model.eval()
 
@@ -62,7 +99,7 @@ class MCTSTransformerAgent(BaseAgent):
             self.model.load_state_dict(state)
             print(f"[MCTSTransformerAgent] loaded weights from {model_path}", flush=True)
 
-        self.SEARCH_COUNT = int(os.environ.get("MCTS_SEARCH_COUNT", "10"))
+        self.SEARCH_COUNT = int(os.environ.get("MCTS_SEARCH_COUNT", str(variant_data.get("search_count", 10))))
         print(f"[MCTSTransformerAgent] SEARCH_COUNT={self.SEARCH_COUNT}", flush=True)
 
     def get_deck(self) -> list[int]:

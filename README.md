@@ -42,10 +42,12 @@ Configs are YAML resolved from `competitions/<task>/configs/<name>.yaml`
 Simulation-style competitions (e.g. `pokemon-tcg-ai-battle`) add:
 
 ```bash
-kego train-agent --task pokemon-tcg-ai-battle         # self-play / policy training
+kego train-agent --agent mcts --variant small192_zacian --task pokemon-tcg-ai-battle  # self-play / policy training
 kego battle --config mcts_vs_random                   # battle local agents
-kego leaderboard / leaderboard-show / leaderboard-merge  # Elo league over agents
-kego models --task <slug>                             # model-registry leaderboard
+kego league / league matrix / league merge            # play Elo league / view / merge matrices
+kego models --task <slug>                             # Elo standings from the model registry
+kego models prune / unprune                           # retire or restore registry versions
+kego sync [--list]                                    # replay checkpoint registrations queued while the hub was down
 ```
 
 ## Repository layout

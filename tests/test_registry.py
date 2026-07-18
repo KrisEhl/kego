@@ -1,6 +1,6 @@
 import pytest
 
-from kego.tracking import leaderboard, register_checkpoint
+from kego.tracking import leaderboard, register_checkpoint, resolve_training_resume
 
 
 def test_leaderboard_ranks_by_elo_descending(tmp_path):
@@ -84,6 +84,51 @@ def test_register_checkpoint_increments_version(tmp_path):
     v2 = register_checkpoint(uri, "pokemon", str(ckpt), tags={"elo": 1700})
 
     assert v2 == "2"
+
+
+def test_resolve_training_resume_selects_highest_compatible_iteration(tmp_path):
+    pytest.importorskip("mlflow")
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    weights = tmp_path / "model.pth"
+    weights.write_bytes(b"weights")
+
+    for iteration, fingerprint in [(50, "same"), (250, "same"), (290, "different"), (350, "same")]:
+        state = tmp_path / f"model_iter{iteration}.train.pt"
+        state.write_text(f"state-{iteration}")
+        register_checkpoint(
+            uri,
+            "pokemon",
+            str(weights),
+            tags={"training_fingerprint": fingerprint, "completed_iterations": iteration},
+            training_state_path=str(state),
+        )
+
+    resume = resolve_training_resume(uri, "pokemon", "same", target_iterations=300, cache_dir=tmp_path / "cache")
+
+    assert resume is not None
+    assert resume.completed_iterations == 250
+    assert resume.path.read_text() == "state-250"
+
+
+def test_resolve_training_resume_accepts_exact_completed_target(tmp_path):
+    pytest.importorskip("mlflow")
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    weights = tmp_path / "model.pth"
+    state = tmp_path / "model_iter300.train.pt"
+    weights.write_bytes(b"weights")
+    state.write_bytes(b"state")
+    register_checkpoint(
+        uri,
+        "pokemon",
+        str(weights),
+        tags={"training_fingerprint": "same", "completed_iterations": 300},
+        training_state_path=str(state),
+    )
+
+    resume = resolve_training_resume(uri, "pokemon", "same", target_iterations=300, cache_dir=tmp_path / "cache")
+
+    assert resume is not None
+    assert resume.completed_iterations == 300
 
 
 def test_format_leaderboard_has_header_and_ranked_rows():
@@ -190,3 +235,24 @@ def test_read_ratings_skips_unrated(tmp_path):
     ckpt.write_bytes(b"w")
     register_checkpoint(uri, "pokemon", str(ckpt), tags={"gauntlet_avg": 90.2})
     assert read_ratings(uri, "pokemon") == {}
+
+
+def test_leaderboard_excludes_archived_or_dropped_versions(tmp_path):
+    mlflow = pytest.importorskip("mlflow")
+    from mlflow.tracking import MlflowClient
+
+    uri = f"sqlite:///{tmp_path / 'ml.db'}"
+    mlflow.set_tracking_uri(uri)
+    client = MlflowClient(tracking_uri=uri)
+    client.create_registered_model("pokemon")
+    client.create_model_version("pokemon", source="file:///tmp/a", tags={"elo": "1600"})
+    client.create_model_version("pokemon", source="file:///tmp/b", tags={"elo": "1700", "status": "archived"})
+    v3 = client.create_model_version("pokemon", source="file:///tmp/c", tags={"elo": "1800"})
+
+    client.transition_model_version_stage("pokemon", v3.version, stage="Archived")
+
+    board = leaderboard(uri, "pokemon", sort_by="elo")
+
+    assert len(board) == 1
+    assert board[0]["version"] == "1"
+    assert board[0]["elo"] == "1600"

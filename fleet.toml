@@ -12,7 +12,7 @@
 
 [hub]
 name = "omarchyd"
-mlflow = "http://192.168.178.32:5000"
+mlflow = "http://omarchyd:5000"
 
 
 # This machine — Apple Silicon MacBook Pro, CPU self-play only (no CUDA).

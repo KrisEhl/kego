@@ -17,6 +17,7 @@ mlruns/
 *.zip
 *.tif
 model_data/
+*.gguf
 
 # images
 *.png
@@ -62,3 +63,7 @@ tmp/
 # competition-provided game engine (downloaded with competition data, 5.3MB of
 # compiled .dll/.so/.dylib binaries) — re-obtained per machine, not vendored
 cg/
+
+# AI agent workspace directories
+.agents/
+.claude/

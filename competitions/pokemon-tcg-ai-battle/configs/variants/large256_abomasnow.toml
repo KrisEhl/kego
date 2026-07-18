@@ -1,0 +1,4 @@
+# Variant config for large256_abomasnow
+deck_file = "decks/abomasnow.csv"
+model_args = [256, 4, 512, 2, 2]
+search_count = 25

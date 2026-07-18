@@ -36,6 +36,15 @@ class PokemonTCGAIBattleTask:
         import sys
         from pathlib import Path
 
+        trainable_agents = ("mcts",)
+        agent = kwargs.get("agent")
+        if agent not in trainable_agents:
+            raise ValueError(
+                f"Unknown trainable agent {agent!r}. Specify one via --agent <NAME>; "
+                f"trainable agents: {sorted(trainable_agents)} "
+                f"(rule agents under agents/ are heuristics and cannot be trained)."
+            )
+
         comp_dir = Path(__file__).resolve().parent
         train_file = comp_dir / "train_agent.py"
 
@@ -52,6 +61,7 @@ class PokemonTCGAIBattleTask:
         except ImportError:
             import tomli as tomllib  # type: ignore
 
+        # 1. Base defaults
         eval_games = 5
         self_play_games = 10
         num_workers = None
@@ -63,11 +73,14 @@ class PokemonTCGAIBattleTask:
         replay_buffer_size = 100000
         train_steps = 100
         init_checkpoint = None
-        config_path = comp_dir / "kego.toml"
+        model_args = None
         deck_file = "decks/abomasnow.csv"
-        if config_path.exists():
+
+        # Load kego.toml [train] defaults
+        kego_path = comp_dir / "kego.toml"
+        if kego_path.exists():
             try:
-                with open(config_path, "rb") as f:
+                with open(kego_path, "rb") as f:
                     toml_data = tomllib.load(f)
                 train_cfg = toml_data.get("train", {})
                 eval_games = train_cfg.get("eval_games", eval_games)
@@ -81,21 +94,71 @@ class PokemonTCGAIBattleTask:
                 replay_buffer_size = train_cfg.get("replay_buffer_size", replay_buffer_size)
                 train_steps = train_cfg.get("train_steps", train_steps)
                 init_checkpoint = train_cfg.get("init_checkpoint", init_checkpoint)
-
                 comp_cfg = toml_data.get("competition", {})
                 deck_file = comp_cfg.get("deck_file", deck_file)
             except Exception:
                 pass
 
+        # 2. Variant overrides
+        variant = kwargs.get("variant")
+        if not variant:
+            raise ValueError("Training requires specifying a model variant via --variant <NAME>.")
+
+        variant_path = comp_dir / "configs" / "variants" / f"{variant}.toml"
+        if not variant_path.exists():
+            raise FileNotFoundError(f"Variant config not found at {variant_path}")
+
+        try:
+            with open(variant_path, "rb") as f:
+                var_cfg = tomllib.load(f)
+            deck_file = var_cfg.get("deck_file", deck_file)
+            model_args = var_cfg.get("model_args", model_args)
+            search_count = var_cfg.get("search_count", search_count)
+            train_steps = var_cfg.get("train_steps", train_steps)
+            self_play_games = var_cfg.get("self_play_games", self_play_games)
+            eval_games = var_cfg.get("eval_games", eval_games)
+            eval_every = var_cfg.get("eval_every", eval_every)
+            eval_opponents = var_cfg.get("eval_opponents", eval_opponents)
+            selfplay_opponents = var_cfg.get("selfplay_opponents", selfplay_opponents)
+            replay_buffer_size = var_cfg.get("replay_buffer_size", replay_buffer_size)
+            batched = var_cfg.get("batched", batched)
+        except Exception as e:
+            raise ValueError(f"Failed to parse variant configuration: {e}")
+
+        # 3. Runtime overrides
         iterations = epochs if epochs is not None else 3
         out_path = output_path if output_path is not None else "outputs/mcts_model.pth"
         init_checkpoint = kwargs.get("init_checkpoint", init_checkpoint)
-        deck_file = kwargs.get("deck_file", deck_file)
-        self_play_games = kwargs.get("self_play_games", self_play_games)
-        search_count = kwargs.get("search_count", search_count)
-        train_steps = kwargs.get("train_steps", train_steps)
         num_workers = kwargs.get("num_workers", num_workers)
-        model_args = kwargs.get("model_args")
+
+        if isinstance(model_args, list):
+            model_args = tuple(model_args)
+
+        from kego.training_resume import training_fingerprint
+
+        fingerprint_config = {
+            "agent": agent,
+            "variant": variant,
+            "deck_file": deck_file,
+            "model_args": model_args,
+            "search_count": search_count,
+            "train_steps": train_steps,
+            "self_play_games": self_play_games,
+            "eval_games": eval_games,
+            "eval_every": eval_every,
+            "eval_opponents": eval_opponents,
+            "selfplay_opponents": selfplay_opponents,
+            "replay_buffer_size": replay_buffer_size,
+            "batched": batched,
+            "num_workers": num_workers,
+        }
+        source_paths = [train_file, Path(__file__), variant_path, comp_dir / deck_file]
+        source_paths += sorted((comp_dir / "agents" / "mcts").rglob("*.py"))
+        source_paths += sorted((comp_dir / "agents").glob("*.py"))
+        cg_dir = Path(train_module.cg_parent) / "cg"
+        if cg_dir.exists():
+            source_paths += sorted(cg_dir.rglob("*.py"))
+        config_fingerprint = training_fingerprint(fingerprint_config, source_paths)
 
         train_module.run_training_loop(
             iterations=iterations,
@@ -113,6 +176,8 @@ class PokemonTCGAIBattleTask:
             deck_file=deck_file,
             init_checkpoint=init_checkpoint,
             model_args=model_args,
+            variant=variant,
+            config_fingerprint=config_fingerprint,
         )
 
     def make_submission(self, ids: np.ndarray, preds: np.ndarray) -> Path:
@@ -142,6 +207,14 @@ class PokemonTCGAIBattleTask:
             comp_cfg = cfg.get("competition", {})
             agent_file = comp_cfg.get("agent_file")
             deck_file = comp_cfg.get("deck_file")
+            variant_name = comp_cfg.get("variant")
+            if variant_name:
+                var_toml_path = comp_dir / "configs" / "variants" / f"{variant_name}.toml"
+                if var_toml_path.exists():
+                    with open(var_toml_path, "rb") as vf:
+                        var_cfg = tomllib.load(vf)
+                    if "deck_file" in var_cfg:
+                        deck_file = var_cfg["deck_file"]
         except Exception as e:
             raise ValueError(f"Failed to read kego.toml: {e}")
 
@@ -238,6 +311,17 @@ class PokemonTCGAIBattleTask:
                     if pth_path.exists():
                         tar.add(pth_path, arcname="mcts.pth")
                         break
+                if variant_name:
+                    var_toml_path = comp_dir / "configs" / "variants" / f"{variant_name}.toml"
+                    if var_toml_path.exists():
+                        tar.add(var_toml_path, arcname="variant.toml")
+
+        var_content = ""
+        if variant_name:
+            var_toml_path = comp_dir / "configs" / "variants" / f"{variant_name}.toml"
+            if var_toml_path.exists():
+                with open(var_toml_path) as vf:
+                    var_content = vf.read()
 
         kernel_dir = comp_dir / "kernel"
         kernel_dir.mkdir(parents=True, exist_ok=True)
@@ -254,6 +338,16 @@ class PokemonTCGAIBattleTask:
 {safe_var_name}_content = {repr(h_content)}
 {makedirs_code}with open({dest_expr}, "w") as f:
     f.write({safe_var_name}_content)
+"""
+
+        # Write variant.toml if present
+        write_var_toml_code = ""
+        if var_content:
+            write_var_toml_code = f"""
+# Write custom variant.toml
+variant_content = {repr(var_content)}
+with open(os.path.join(WORKING_DIR, "variant.toml"), "w") as f:
+    f.write(variant_content)
 """
 
         notebook_content = f"""\"\"\"PTCG AI Battle — Submission Kernel
@@ -277,6 +371,8 @@ with open(os.path.join(WORKING_DIR, "main.py"), "w") as f:
 deck_csv_content = {repr(deck_csv_content)}
 with open(os.path.join(WORKING_DIR, "deck.csv"), "w") as f:
     f.write(deck_csv_content)
+
+{write_var_toml_code}
 {helpers_code}
 # Copy cg directory
 import glob
@@ -322,6 +418,8 @@ with tarfile.open(submission_path, "w:gz") as tar:
     items = ["main.py", "deck.csv", "cg"] + {list(helpers.keys())}
     if os.path.exists(os.path.join(WORKING_DIR, "mcts.pth")):
         items.append("mcts.pth")
+    if os.path.exists(os.path.join(WORKING_DIR, "variant.toml")):
+        items.append("variant.toml")
     for item in items:
         full_path = os.path.join(WORKING_DIR, item)
         if os.path.exists(full_path):

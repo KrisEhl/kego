@@ -21,13 +21,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kego")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--config", help="config name/path (YAML)")
-    common.add_argument("--params", nargs="*", default=[], help="overrides or parameters")
-    common.add_argument("--executor", choices=["serial", "ray"], default="serial")
-    common.add_argument("--force", action="store_true", help="ignore cache; retrain everything")
-    common.add_argument("--tag", default="", help="experiment tag")
-    common.add_argument("--task", help="task name (competition slug)")
+    common_base = argparse.ArgumentParser(add_help=False)
+    common_base.add_argument("--config", help="config name/path (YAML)")
+    common_base.add_argument(
+        "--executor", choices=["serial", "ray"], default="serial", help="execution backend (default: %(default)s)"
+    )
+    common_base.add_argument("--force", action="store_true", help="ignore cache; retrain everything")
+    common_base.add_argument("--tag", default="", help="experiment tag")
+    common_base.add_argument("--task", help="task name (competition slug)")
+
+    common = argparse.ArgumentParser(add_help=False, parents=[common_base])
+    common.add_argument("--params", nargs="*", default=[], help="OmegaConf config overrides")
 
     run = sub.add_parser("run", parents=[common], help="train grid (cached) + ensemble")
     run.add_argument("--fast", action="store_true")
@@ -56,33 +60,63 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("submissions", parents=[common], help="list submissions")
 
-    leaderboard = sub.add_parser("leaderboard", parents=[common], help="run a task-specific model league")
-    leaderboard.add_argument("--games", type=int, default=200)
-    leaderboard.add_argument("--search-count", type=int, default=10)
-    leaderboard.add_argument("--workers", type=int)
-    leaderboard.add_argument("--debug", action="store_true")
-    leaderboard.add_argument("--cache-dir")
-    leaderboard.add_argument("--write-ratings", action=argparse.BooleanOptionalAction, default=True)
-    leaderboard.add_argument("--include-local-mcts", action="store_true")
-    leaderboard.add_argument("--partial-save-every", type=int, default=5000)
-    leaderboard.add_argument("--target", help="fleet machine name to dispatch to (rsync + SSH-launch); omit locally")
+    sync = sub.add_parser("sync", help="replay queued checkpoint registrations from the outbox to the hub")
+    sync.add_argument("--uri", help="target MLflow URI (default: resolved hub from fleet.toml)")
+    sync.add_argument("--list", action="store_true", help="show pending outbox entries without syncing")
 
-    leaderboard_show = sub.add_parser("leaderboard-show", parents=[common], help="show a saved task league matrix")
-    leaderboard_show.add_argument("--run-id", help="MLflow run id to show; defaults to latest leaderboard run")
+    league = sub.add_parser("league", parents=[common], help="run a task-specific model league")
+    league.add_argument(
+        "--games", type=int, default=200, help="games per pairing in the round-robin (default: %(default)s)"
+    )
+    league.add_argument("--search-count", type=int, default=10, help="MCTS simulations per move (default: %(default)s)")
+    league.add_argument("--workers", type=int, help="parallel game workers (default: CPU count - 2)")
+    league.add_argument("--debug", action="store_true", help="show per-game engine output (default: suppressed)")
+    league.add_argument(
+        "--cache-dir",
+        help="cache directory for downloaded registry checkpoints "
+        "(default: competitions/<task>/outputs/cached_registry)",
+    )
+    league.add_argument(
+        "--write-ratings",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="write Elo ratings back to the model registry (default: enabled)",
+    )
+    league.add_argument(
+        "--include-local-mcts",
+        action="store_true",
+        help="also enter the local outputs/mcts.pth checkpoint as a participant",
+    )
+    league.add_argument(
+        "--partial-save-every",
+        type=int,
+        default=5000,
+        help="save partial league artifacts to MLflow every N games; 0 disables (default: %(default)s)",
+    )
+    league.add_argument("--target", help="fleet machine name to dispatch to (rsync + SSH-launch); omit locally")
+    league_sub = league.add_subparsers(dest="league_cmd")
 
-    leaderboard_merge = sub.add_parser("leaderboard-merge", parents=[common], help="merge saved league matrices")
-    leaderboard_merge.add_argument(
+    league_matrix = league_sub.add_parser("matrix", parents=[common], help="show a saved task league matrix")
+    league_matrix.add_argument("--run-id", help="MLflow run id to show; defaults to latest league run")
+
+    league_merge = league_sub.add_parser("merge", parents=[common], help="merge saved league matrices")
+    league_merge.add_argument(
         "--run-ids",
         nargs="*",
         default=[],
-        help="MLflow leaderboard run ids to merge; defaults to finished unmerged leaderboard runs",
+        help="MLflow league run ids to merge; defaults to finished unmerged league runs",
     )
-    leaderboard_merge.add_argument(
+    league_merge.add_argument(
         "--latest",
         type=int,
-        help="limit automatic selection to the N latest finished unmerged leaderboard runs",
+        help="limit automatic selection to the N latest finished unmerged league runs",
     )
-    leaderboard_merge.add_argument("--write-ratings", action=argparse.BooleanOptionalAction, default=False)
+    league_merge.add_argument(
+        "--write-ratings",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="write merged Elo ratings back to the model registry (default: enabled)",
+    )
 
     battle = sub.add_parser("battle", parents=[common], help="battle local pokemon agents against each other")
     battle.add_argument("--agent1", help="path to first agent python file")
@@ -92,22 +126,32 @@ def build_parser() -> argparse.ArgumentParser:
     battle.add_argument("--deck2", help="optional path to deck CSV for agent 2")
 
     train_parser = sub.add_parser(
-        "train-agent", parents=[common], help="run task-specific simulation agent/policy training"
+        "train-agent", parents=[common_base], help="run task-specific simulation agent/policy training"
     )
-    train_parser.add_argument("--epochs", type=int, help="number of training epochs or iterations")
+    train_parser.add_argument(
+        "--agent", required=True, help="agent implementation to train (directory under agents/, e.g. mcts)"
+    )
+    train_parser.add_argument(
+        "--epochs",
+        type=int,
+        help="target total training iterations; automatically resumes a compatible shorter run",
+    )
     train_parser.add_argument("--output", help="path to save the trained model/weights")
     train_parser.add_argument("--init-checkpoint", help="warm-start from a local .pth path or registry:<version>")
-    train_parser.add_argument("--deck-file", help="training deck CSV path relative to the competition directory")
-    train_parser.add_argument("--self-play-games", type=int, help="self-play games per training iteration")
-    train_parser.add_argument("--search-count", type=int, help="MCTS search count target for self-play")
-    train_parser.add_argument("--train-steps", type=int, help="optimizer steps per training iteration")
-    train_parser.add_argument("--num-workers", type=int, help="parallel rollout/eval workers")
-    train_parser.add_argument("--model-args", help="MCTS model tuple, e.g. 192,4,384,2,2")
+    train_parser.add_argument(
+        "--num-workers",
+        type=int,
+        help="parallel rollout/eval workers (default: [train] num_workers in the competition's "
+        "kego.toml, else CPU count - 2, capped at the per-phase game count)",
+    )
+    train_parser.add_argument(
+        "--variant", required=True, help="name of the variant configuration under configs/variants/"
+    )
     train_parser.add_argument(
         "--target", help="fleet machine name to dispatch to (rsync + SSH-launch); omit to run locally"
     )
 
-    models = sub.add_parser("models", parents=[common], help="show the model-registry leaderboard for a task")
+    models = sub.add_parser("models", parents=[common], help="show the model-registry Elo standings for a task")
     models.add_argument("--sort-by", default="elo", help="metric tag to rank agents by")
     models.add_argument(
         "--breakdown",
@@ -118,6 +162,32 @@ def build_parser() -> argparse.ArgumentParser:
     models.add_argument(
         "--color", action=argparse.BooleanOptionalAction, default=None, help="color Elo by rating uncertainty"
     )
+    models_sub = models.add_subparsers(dest="models_cmd")
+
+    models_prune = models_sub.add_parser(
+        "prune", parents=[common], help="retire model versions from standings and league runs"
+    )
+    models_prune.add_argument("versions", nargs="*", help="model version numbers to retire")
+    models_prune.add_argument(
+        "--drop-worse",
+        action="store_true",
+        help="retire statistically worse variants of the same model architecture",
+    )
+    models_prune.add_argument(
+        "--drop-worse-min-games",
+        type=int,
+        default=20,
+        help="minimum games required for a version to be considered rated and subject to drop-worse",
+    )
+    models_prune.add_argument(
+        "--drop-worse-k",
+        type=float,
+        default=1.96,
+        help="confidence multiplier for drop-worse (default 1.96 for 95% confidence interval)",
+    )
+
+    models_unprune = models_sub.add_parser("unprune", parents=[common], help="restore retired model versions")
+    models_unprune.add_argument("versions", nargs="+", help="model version numbers to restore")
 
     return parser
 
@@ -125,10 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
 def detect_task() -> str:
     from pathlib import Path
 
-    try:
-        import tomllib  # ty: ignore[unresolved-import]
-    except ImportError:
-        import tomli as tomllib  # ty: ignore[unresolved-import]
+    import tomllib
 
     curr = Path.cwd()
     for parent in [curr, *curr.parents]:
@@ -155,13 +222,10 @@ def detect_task() -> str:
 
 def _train_agent_overrides(args) -> dict:
     keys = [
+        "agent",
         "init_checkpoint",
-        "deck_file",
-        "self_play_games",
-        "search_count",
-        "train_steps",
         "num_workers",
-        "model_args",
+        "variant",
     ]
     return {k: getattr(args, k, None) for k in keys if getattr(args, k, None) is not None}
 
@@ -206,13 +270,10 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
     if output:
         cmd_args += ["--output", output]
     for key, flag in [
+        ("agent", "--agent"),
         ("init_checkpoint", "--init-checkpoint"),
-        ("deck_file", "--deck-file"),
-        ("self_play_games", "--self-play-games"),
-        ("search_count", "--search-count"),
-        ("train_steps", "--train-steps"),
         ("num_workers", "--num-workers"),
-        ("model_args", "--model-args"),
+        ("variant", "--variant"),
     ]:
         if key in overrides:
             cmd_args += [flag, str(overrides[key])]
@@ -229,7 +290,7 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
     return 0
 
 
-def _dispatch_leaderboard(task_name: str, target: str, args) -> int:
+def _dispatch_league(task_name: str, target: str, args) -> int:
     import contextlib
     from pathlib import Path
 
@@ -262,11 +323,11 @@ def _dispatch_leaderboard(task_name: str, target: str, args) -> int:
     }
     run_id = create_run(uri, experiment=task_name, run_name=f"{machine.name}-{task_name}-leaderboard", tags=tags)
     if not run_id:
-        print(f"Could not create an MLflow run at {uri}; aborting leaderboard dispatch.")
+        print(f"Could not create an MLflow run at {uri}; aborting league dispatch.")
         return 1
 
     cmd_args = [
-        "leaderboard",
+        "league",
         "--task",
         task_name,
         "--games",
@@ -286,7 +347,7 @@ def _dispatch_leaderboard(task_name: str, target: str, args) -> int:
     cmd_args.append("--write-ratings" if args.write_ratings else "--no-write-ratings")
 
     excludes = DEFAULT_EXCLUDES + other_competition_excludes(repo_root, keep=task_name)
-    print(f"Dispatching leaderboard for {task_name} to {machine.name} ({machine.ssh}) — run {run_id}")
+    print(f"Dispatching league for {task_name} to {machine.name} ({machine.ssh}) — run {run_id}")
     try:
         dispatch(machine, cmd_args, run_id=run_id, local_dir=str(repo_root), excludes=excludes)
     except Exception as e:
@@ -294,18 +355,18 @@ def _dispatch_leaderboard(task_name: str, target: str, args) -> int:
         with contextlib.suppress(Exception):
             MlflowClient(tracking_uri=uri).set_terminated(run_id, status="FAILED")
         return 1
-    print(f"Launched leaderboard on {machine.name}. Track run/log metadata in MLflow at: {uri}")
+    print(f"Launched league on {machine.name}. Track run/log metadata in MLflow at: {uri}")
     print(f"To view remote logs, run:  ssh {machine.ssh} 'cat ~/.kego/logs/{run_id}.log'")
     return 0
 
 
-def _run_leaderboard_locally(task_name: str, args) -> int:
+def _run_league_locally(task_name: str, args) -> int:
     import runpy
     import sys
     from pathlib import Path
 
     if task_name != "pokemon-tcg-ai-battle":
-        print(f"Task '{task_name}' does not implement a leaderboard runner.")
+        print(f"Task '{task_name}' does not implement a league runner.")
         return 1
 
     repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
@@ -339,7 +400,7 @@ def _run_leaderboard_locally(task_name: str, args) -> int:
     return 0
 
 
-def _show_leaderboard(task_name: str, run_id: str | None = None) -> int:
+def _show_league_matrix(task_name: str, run_id: str | None = None) -> int:
     import tempfile
     from pathlib import Path
 
@@ -356,24 +417,31 @@ def _show_leaderboard(task_name: str, run_id: str | None = None) -> int:
             return 1
         runs = client.search_runs(
             [exp.experiment_id],
-            "tags.job = 'leaderboard'",
+            "tags.job = 'leaderboard' and attributes.status = 'FINISHED'",
             order_by=["attributes.start_time DESC"],
-            max_results=1,
+            max_results=100,
         )
         if not runs:
-            print(f"No saved leaderboard runs found for {task_name}.")
+            print(f"No saved league runs found for {task_name}.")
             return 1
-        run_id = runs[0].info.run_id
+        run_id = next((run.info.run_id for run in runs if _has_league_artifacts(client, run.info.run_id)), None)
+        if not run_id:
+            print(f"No saved league runs with league artifacts found for {task_name}.")
+            return 1
 
     with tempfile.TemporaryDirectory() as tmp:
-        try:
-            path = Path(client.download_artifacts(run_id, "league/matrix.md", dst_path=tmp))
-        except Exception as e:
-            print(f"Could not download league matrix for run {run_id}: {e}")
-            return 1
-        print(f"{task_name} leaderboard matrix from MLflow run {run_id}")
-        print(path.read_text().rstrip())
-    return 0
+        last_error = None
+        for artifact_path in ("league/matrix.md", "matrix.md"):
+            try:
+                path = Path(client.download_artifacts(run_id, artifact_path, dst_path=tmp))
+            except Exception as e:
+                last_error = f"{artifact_path}: {e}"
+                continue
+            print(f"{task_name} league matrix from MLflow run {run_id}")
+            print(path.read_text().rstrip())
+            return 0
+        print(f"Could not download league matrix for run {run_id}: {last_error or 'no matching artifact path'}")
+        return 1
 
 
 def _load_league_module(task_name: str):
@@ -410,22 +478,28 @@ def _has_league_artifacts(client, run_id: str) -> bool:
     try:
         names = {a.path for a in client.list_artifacts(run_id, "league")}
     except Exception:
+        names = set()
+    if {
+        "league/matrix.md",
+        "league/wins.csv",
+        "league/games.csv",
+        "league/results.json",
+        "league/participants.json",
+    } <= names:
+        return True
+    try:
+        names = {a.path for a in client.list_artifacts(run_id, "")}
+    except Exception:
         local_dir = Path.cwd() / "outputs" / "league_runs" / run_id
         return all(
             (local_dir / name).exists()
             for name in ["matrix.md", "wins.csv", "games.csv", "results.json", "participants.json"]
         )
     else:
-        return {
-            "league/matrix.md",
-            "league/wins.csv",
-            "league/games.csv",
-            "league/results.json",
-            "league/participants.json",
-        } <= names
+        return {"matrix.md", "wins.csv", "games.csv", "results.json", "participants.json"} <= names
 
 
-def _auto_leaderboard_run_ids(task_name: str, latest: int | None = None) -> list[str]:
+def _auto_league_run_ids(task_name: str, latest: int | None = None) -> list[str]:
     from mlflow.tracking import MlflowClient
 
     from kego.tracking import default_tracking_uri
@@ -445,7 +519,7 @@ def _auto_leaderboard_run_ids(task_name: str, latest: int | None = None) -> list
     for run in merge_runs:
         consumed.update(rid for rid in run.data.tags.get("source_run_ids", "").split(",") if rid)
 
-    leaderboard_runs = client.search_runs(
+    league_runs = client.search_runs(
         [exp.experiment_id],
         "tags.job = 'leaderboard' and attributes.status = 'FINISHED'",
         order_by=["attributes.start_time DESC"],
@@ -453,13 +527,13 @@ def _auto_leaderboard_run_ids(task_name: str, latest: int | None = None) -> list
     )
     selected = [
         run.info.run_id
-        for run in leaderboard_runs
+        for run in league_runs
         if run.info.run_id not in consumed and _has_league_artifacts(client, run.info.run_id)
     ]
     return selected[:latest] if latest is not None else selected
 
 
-def _merge_leaderboards(task_name: str, run_ids: list[str], write_ratings: bool, latest: int | None = None) -> int:
+def _merge_leagues(task_name: str, run_ids: list[str], write_ratings: bool, latest: int | None = None) -> int:
     import json
     import tempfile
     from pathlib import Path
@@ -476,12 +550,12 @@ def _merge_leaderboards(task_name: str, run_ids: list[str], write_ratings: bool,
     client = MlflowClient(tracking_uri=uri)
     league_module = _load_league_module(task_name)
     if not run_ids:
-        print("No leaderboard run ids provided; selecting finished unmerged leaderboard runs automatically.")
-        run_ids = _auto_leaderboard_run_ids(task_name, latest=latest)
+        print("No league run ids provided; selecting finished unmerged league runs automatically.")
+        run_ids = _auto_league_run_ids(task_name, latest=latest)
     if not run_ids:
-        print("No finished unmerged leaderboard runs with league artifacts found.")
+        print("No finished unmerged league runs with league artifacts found.")
         return 1
-    print(f"Merging {len(run_ids)} leaderboard run(s): {' '.join(run_ids)}")
+    print(f"Merging {len(run_ids)} league run(s): {' '.join(run_ids)}")
 
     names: list[str] = []
     wins_by_pair: dict[tuple[str, str], int] = {}
@@ -612,6 +686,11 @@ def _rule_agent_rows(task_name: str) -> list[dict]:
 
 
 def _registry_agent_name(row: dict) -> str:
+    if row.get("variant"):
+        version = row.get("version", "-")
+        epoch = row.get("epoch")
+        suffix = f" @{epoch}" if epoch and str(epoch) != "-" else ""
+        return f"v{version} {row['variant']}{suffix}"
     if row.get("agent_name"):
         return str(row["agent_name"])
 
@@ -628,14 +707,7 @@ def _registry_agent_name(row: dict) -> str:
             parts.append(f"@{epoch}")
         return " ".join(parts)
 
-    parts = [f"Registry v{version}"]
-    if deck:
-        parts.append(str(deck))
-    if model_args:
-        parts.append(str(model_args))
-    if epoch:
-        parts.append(f"epoch {epoch}")
-    return " · ".join(parts)
+    return f"Registry v{version}"
 
 
 def _numeric_row_value(row: dict, key: str) -> float:
@@ -657,6 +729,10 @@ def _use_color(force: bool | None = None) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import os
+
+    os.environ.setdefault("MLFLOW_SUPPRESS_PRINTING_URL_TO_STDOUT", "true")
+
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -668,10 +744,94 @@ def main(argv: list[str] | None = None) -> int:
 
     task_name = getattr(args, "task", None) or detect_task()
 
+    if args.command == "sync":
+        import json
+
+        from kego.tracking import pending_registrations, sync_outbox
+
+        pending = pending_registrations()
+        if args.list:
+            if not pending:
+                print("Outbox empty — nothing queued.")
+                return 0
+            for entry_dir in pending:
+                meta = json.loads((entry_dir / "entry.json").read_text())
+                print(
+                    f"{entry_dir.name}  model={meta['name']}  checkpoint={meta['checkpoint']}  "
+                    f"queued={meta['queued_at']}"
+                )
+            return 0
+        if not pending:
+            print("Outbox empty — nothing to sync.")
+            return 0
+        synced, errors = sync_outbox(uri=getattr(args, "uri", None))
+        for entry, model, version in synced:
+            print(f"Synced {entry} -> {model} v{version}")
+        for err in errors:
+            print(f"Failed: {err}")
+        return 1 if errors else 0
+
     if args.command == "models":
-        from kego.tracking import default_tracking_uri, format_leaderboard, leaderboard
+        from mlflow.tracking import MlflowClient
+
+        from kego.tracking import (
+            archive_version,
+            default_tracking_uri,
+            filter_worse_versions,
+            format_leaderboard,
+            leaderboard,
+            unarchive_version,
+        )
+        from kego.tracking.prune import active_model_versions
 
         uri = default_tracking_uri()
+        models_cmd = getattr(args, "models_cmd", None)
+
+        if models_cmd == "prune":
+            client = MlflowClient(tracking_uri=uri)
+            versions = list(getattr(args, "versions", []) or [])
+            drop_worse = getattr(args, "drop_worse", False)
+            if bool(versions) == bool(drop_worse):
+                print("Specify either version numbers or --drop-worse (not both, not neither).")
+                return 1
+            to_archive: list[str] = []
+            if drop_worse:
+                active = active_model_versions(client, task_name)
+                _, dropped = filter_worse_versions(
+                    active,
+                    min_games=args.drop_worse_min_games,
+                    k=args.drop_worse_k,
+                )
+                to_archive = [str(v.version) for v in dropped]
+                if not to_archive:
+                    print(f"No worse variants to prune for '{task_name}'.")
+                    return 0
+                print(f"Drop-worse selected {len(to_archive)} version(s): {', '.join(f'v{v}' for v in to_archive)}")
+            else:
+                to_archive = [str(v) for v in versions]
+
+            for version in to_archive:
+                try:
+                    archive_version(client, task_name, version, dropped=drop_worse)
+                    print(f"Pruned version {version} of model '{task_name}'.")
+                except Exception as e:
+                    print(f"Error pruning version {version}: {e}")
+                    return 1
+            print("Pruned versions are excluded from standings and league runs.")
+            return 0
+
+        if models_cmd == "unprune":
+            client = MlflowClient(tracking_uri=uri)
+            for version in args.versions:
+                try:
+                    unarchive_version(client, task_name, str(version))
+                    print(f"Unpruned version {version} of model '{task_name}'.")
+                except Exception as e:
+                    print(f"Error unpruning version {version}: {e}")
+                    return 1
+            print("Restored versions are included back on standings and league runs.")
+            return 0
+
         rows = leaderboard(uri, task_name, sort_by=args.sort_by)
         for row in rows:
             row.setdefault("agent", _registry_agent_name(row))
@@ -681,7 +841,7 @@ def main(argv: list[str] | None = None) -> int:
         seen: set[str] = set()
         if args.breakdown:
             wr_cols = sorted({k for r in rows for k in r if k.startswith("wr_")})
-            base = ["agent", "type", args.sort_by, "gauntlet_avg", *wr_cols, "version"]
+            base = ["agent", "type", args.sort_by, "gauntlet_avg", *wr_cols, "created", "version"]
         else:
             base = [
                 "agent",
@@ -694,6 +854,7 @@ def main(argv: list[str] | None = None) -> int:
                 "epoch",
                 "machine",
                 "git_sha",
+                "created",
                 "version",
             ]
         cols = [c for c in base if not (c in seen or seen.add(c))]
@@ -704,23 +865,26 @@ def main(argv: list[str] | None = None) -> int:
         print(format_leaderboard(rows, cols, max_widths={"git_sha": 8}, color_elo=use_color))
         return 0
 
-    if args.command == "leaderboard":
+    if args.command == "league":
+        league_cmd = getattr(args, "league_cmd", None)
+        if league_cmd == "matrix":
+            return _show_league_matrix(task_name, getattr(args, "run_id", None))
+        if league_cmd == "merge":
+            return _merge_leagues(task_name, args.run_ids, args.write_ratings, latest=args.latest)
         target = getattr(args, "target", None)
         if target:
-            return _dispatch_leaderboard(task_name, target, args)
-        return _run_leaderboard_locally(task_name, args)
-
-    if args.command == "leaderboard-show":
-        return _show_leaderboard(task_name, getattr(args, "run_id", None))
-
-    if args.command == "leaderboard-merge":
-        return _merge_leaderboards(task_name, args.run_ids, args.write_ratings, latest=args.latest)
+            return _dispatch_league(task_name, target, args)
+        return _run_league_locally(task_name, args)
 
     if args.command == "run" and not args.config and not getattr(args, "model", None):
         parser.error("Either --config or --model must be specified.")
 
     if args.config:
-        config = load_config(args.config, args.params, task_name=task_name)
+        try:
+            config = load_config(args.config, getattr(args, "params", []), task_name=task_name)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Error: {e}")
+            return 1
     else:
         config = PipelineConfig(task=task_name)
 

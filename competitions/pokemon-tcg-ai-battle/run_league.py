@@ -202,6 +202,7 @@ def _persist_league_artifacts(
     name_to_version,
     anchor_elos,
     args,
+    dropped_variants=None,
 ) -> Path:
     artifact_id = run_id or f"local_{uuid.uuid4().hex[:12]}"
     out_dir = comp_dir / "outputs" / "league_runs" / artifact_id
@@ -218,6 +219,7 @@ def _persist_league_artifacts(
                 "participants": participant_names,
                 "name_to_version": name_to_version,
                 "anchor_elos": anchor_elos,
+                "dropped_variants": dropped_variants or [],
                 "args": {
                     "task": args.task,
                     "games": args.games,
@@ -326,6 +328,14 @@ def _select_checkpoint(path: str, wanted: str | None) -> str | None:
     return next((str(candidate) for candidate in pths if candidate.name == "mcts.pth"), None)
 
 
+def _registry_cache_root(cache_dir: str | None) -> Path:
+    return Path(cache_dir) if cache_dir else comp_dir / "outputs" / "cached_registry"
+
+
+def _registry_cache_dir(cache_root: Path, run_id: str) -> Path:
+    return cache_root / f"run_{run_id}"
+
+
 def _fleet_ssh_targets(machine_tag: str) -> list[str]:
     fallback = {
         "omarchyd": "kristian@omarchyd",
@@ -428,7 +438,7 @@ def main():
         "--cache-dir",
         type=str,
         default=None,
-        help="Directory for downloaded registry checkpoints (default: outputs/cached_registry[/run_id])",
+        help="Directory root for downloaded registry checkpoints (default: outputs/cached_registry)",
     )
     parser.add_argument(
         "--write-ratings",
@@ -480,37 +490,48 @@ def main():
             pass
 
     try:
-        versions = client.search_model_versions(f"name='{args.task}'")
+        from kego.tracking.prune import active_model_versions
+
+        versions = active_model_versions(client, args.task)
     except Exception as e:
         if args.debug:
             print(f"Warning: Could not fetch models from registry ({e}).")
         versions = []
 
+    dropped_variants: list[dict] = []
+
     model_checkpoints = {}
-    run_id = os.environ.get("KEGO_MLFLOW_RUN_ID") or os.environ.get("KEGO_LEAGUE_RUN_ID")
-    if args.cache_dir:
-        cache_base_dir = Path(args.cache_dir)
-    elif run_id:
-        cache_base_dir = comp_dir / "outputs" / "cached_registry" / run_id
-    else:
-        cache_base_dir = comp_dir / "outputs" / "cached_registry" / f"league_{uuid.uuid4().hex[:12]}"
+    cache_base_dir = _registry_cache_root(args.cache_dir)
 
     if not args.debug and len(versions) > 0:
-        print("Caching registered checkpoints from hub...")
+        print(f"Caching registered checkpoints from hub ({len(versions)} versions)...")
 
-    for v in versions:
+    for i, v in enumerate(versions, 1):
         v_name = f"Registry v{v.version}"
-        if args.debug:
+        if not args.debug:
+            print(f"  [{i}/{len(versions)}] Caching {v_name}... ", end="", flush=True)
+        else:
             print(f"Loading checkpoint for {v_name} (run {v.run_id})...")
         try:
-            local_dir = cache_base_dir / f"v{v.version}"
+            local_dir = _registry_cache_dir(cache_base_dir, v.run_id)
+            wanted = v.tags.get("checkpoint_filename") if v.tags else None
+            cached = _select_checkpoint(str(local_dir), wanted)
+
             checkpoint_path = download_checkpoint(client, v, str(local_dir), args.debug)
             model_checkpoints[v_name] = checkpoint_path
+
             if args.debug:
                 print(f"  Checkpoint ready: {checkpoint_path}")
+            else:
+                if cached:
+                    print("already cached.")
+                else:
+                    print("done.")
         except Exception as e:
             if args.debug:
                 print(f"  Error obtaining checkpoint: {e}")
+            else:
+                print(f"failed: {e}")
 
     # Check for local checkpoints as well. Disabled by default so fleet runs do not
     # depend on machine-local output files.
@@ -654,6 +675,7 @@ def main():
             name_to_version,
             anchor_elos,
             args,
+            dropped_variants=dropped_variants,
         )
         print(f"League artifacts written to {artifact_dir}")
         if mlflow_run_id:
@@ -696,6 +718,7 @@ def main():
                     name_to_version,
                     anchor_elos,
                     args,
+                    dropped_variants=dropped_variants,
                 )
                 print(f"\nPartial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
                 next_partial_save += partial_save_every
@@ -714,6 +737,7 @@ def main():
             name_to_version,
             anchor_elos,
             args,
+            dropped_variants=dropped_variants,
         )
         print(f"Partial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
         _finish_mlflow_run(client, mlflow_run_id, status="KILLED")
@@ -733,6 +757,7 @@ def main():
             name_to_version,
             anchor_elos,
             args,
+            dropped_variants=dropped_variants,
         )
         print(f"Partial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
         _finish_mlflow_run(client, mlflow_run_id, status="FAILED")
@@ -799,6 +824,7 @@ def main():
         name_to_version,
         anchor_elos,
         args,
+        dropped_variants=dropped_variants,
     )
     print(f"\nLeague artifacts written to {artifact_dir}")
 

@@ -15,16 +15,18 @@ def default_tracking_uri(fleet_path: str | Path | None = None) -> str:
     if explicit:
         return explicit
     if fleet_path:
-        fp = Path(fleet_path)
+        candidates = [Path(fleet_path)]
     else:
-        repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
-        fp = repo_root / "fleet.toml"
-        if not fp.exists():
-            fp = Path.cwd() / "fleet.toml"
-    if fp.exists():
-        from kego.fleet import load_fleet
+        # Search for fleet.toml itself rather than a .git marker: fleet-dispatched trees
+        # are rsynced without .git, but fleet.toml ships with them.
+        module_dir = Path(__file__).resolve().parent
+        cwd = Path.cwd()
+        candidates = [d / "fleet.toml" for base in (module_dir, cwd) for d in (base, *base.parents)]
+    for fp in candidates:
+        if fp.exists():
+            from kego.fleet import load_fleet
 
-        return load_fleet(fp).hub.mlflow
+            return load_fleet(fp).hub.mlflow
     return f"sqlite:///{Path.home() / '.kego' / 'offline.db'}"
 
 

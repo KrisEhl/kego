@@ -68,36 +68,27 @@ def test_parser_new_commands():
     args = parser.parse_args(
         [
             "train-agent",
+            "--agent",
+            "mcts",
             "--epochs",
             "10",
             "--output",
             "my_model.pth",
             "--init-checkpoint",
             "registry:12",
-            "--deck-file",
-            "decks/dragapult.csv",
-            "--self-play-games",
-            "96",
-            "--search-count",
-            "40",
-            "--train-steps",
-            "80",
             "--num-workers",
             "12",
-            "--model-args",
-            "192,4,384,2,2",
+            "--variant",
+            "small192_zacian",
         ]
     )
     assert args.command == "train-agent"
+    assert args.agent == "mcts"
     assert args.epochs == 10
     assert args.output == "my_model.pth"
     assert args.init_checkpoint == "registry:12"
-    assert args.deck_file == "decks/dragapult.csv"
-    assert args.self_play_games == 96
-    assert args.search_count == 40
-    assert args.train_steps == 80
     assert args.num_workers == 12
-    assert args.model_args == "192,4,384,2,2"
+    assert args.variant == "small192_zacian"
 
 
 def test_status_execution(tmp_path, monkeypatch, capsys):
@@ -125,18 +116,20 @@ def test_status_execution(tmp_path, monkeypatch, capsys):
     assert "No active training runs found." in captured.out
 
     # Create a mock active run file
+    import os
+
     active_dir = tmp_path / ".kego" / "active_runs"
     active_dir.mkdir(parents=True)
     run_file = active_dir / "run123.json"
     run_file.write_text(
-        '{"task": "dummy-comp", "config": "baseline", "pid": 1234, "progress": "2/5", "active_workers": ["worker-1"]}'
+        f'{{"task": "dummy-comp", "config": "baseline", "pid": {os.getpid()}, "progress": "2/5", "active_workers": ["worker-1"]}}'
     )
 
     pipeline.status()
     captured = capsys.readouterr()
     assert "Active Runs:" in captured.out
     assert "[Run run123]" in captured.out
-    assert "PID: 1234" in captured.out
+    assert f"PID: {os.getpid()}" in captured.out
     assert "Progress: 2/5" in captured.out
     assert "worker-1" in captured.out
 
@@ -491,6 +484,42 @@ def test_status_surfaces_remote_query_error(tmp_path, monkeypatch, capsys):
     assert "No active training runs found." not in out
 
 
+def test_status_labels_two_gpus_and_keeps_eta_column_aligned(tmp_path, monkeypatch, capsys):
+    """This catches multi-GPU telemetry being ambiguous and overrunning the GPU column."""
+    monkeypatch.chdir(tmp_path)
+    from kego.fleet import Fleet, Hub, Machine
+    from kego.pipeline import runner
+
+    pipeline = Pipeline(PipelineConfig(task="dummy-comp"))
+    pipeline.task = DummyTask()
+    fleet = Fleet(
+        hub=Hub("gpu-box", "http://gpu-box:5000"),
+        machines=(Machine("gpu-box", "user@gpu-box", "gpu", "/repo", gpus=("rtx3090", "rtx3090")),),
+    )
+    monkeypatch.setattr(runner, "_is_port_open", lambda _address, timeout=0.2: False)
+    monkeypatch.setattr("kego.fleet.load_fleet", lambda _path: fleet)
+    monkeypatch.setattr(
+        runner,
+        "_poll_machine",
+        lambda _machine: {
+            "name": "gpu-box",
+            "status": "Online",
+            "load": "26.4% / 1.0 1.0 1.0 (32c)",
+            "gpu": "0%/0% (5.5/48.0 GB)",
+            "gpu_count": 2,
+            "runs": [("9809", "1569e637" * 4, "Iter 202/250 - Training", "19m")],
+        },
+    )
+
+    pipeline.status()
+    lines = capsys.readouterr().out.splitlines()
+    header = next(line for line in lines if "Machine" in line and "GPU" in line and "ETA" in line)
+    row = next(line for line in lines if line.startswith("gpu-box"))
+
+    assert "2 GPUs: 0%/0% (5.5/48.0G)" in row
+    assert row.index("19m") == header.index("ETA")
+
+
 def test_poll_machine_parses_darwin_process_commands(monkeypatch):
     from kego.fleet import Machine
     from kego.pipeline import runner
@@ -522,7 +551,7 @@ LOG_PARSED: run_id={run_id} | curr=15 | total=80 | step=Training complete (value
     assert res["runs"] == [("15845", run_id, "Iter 15/80 - Training complete (value=0.0062 policy=0.0073)", "34m")]
 
 
-def test_poll_machine_parses_leaderboard_progress(monkeypatch):
+def test_poll_machine_parses_league_progress(monkeypatch):
     from kego.fleet import Machine
     from kego.pipeline import runner
 
@@ -537,11 +566,11 @@ LOAD: 18.10 18.06 18.02
 CORES: 20
 GPU: 0, 0, 6144
 PROCS:
-26452    02:30:59 bash -lc mkdir -p ~/.kego/logs && cd /repo/competitions/pokemon-tcg-ai-battle && KEGO_MLFLOW_RUN_ID={run_id} nohup uv run kego leaderboard --task pokemon-tcg-ai-battle --games 200 --search-count 10 > ~/.kego/logs/{run_id}.log 2>&1 < /dev/null &
-26454    02:30:59 uv run kego leaderboard --task pokemon-tcg-ai-battle --games 200 --search-count 10
-26457    02:30:59 /repo/.venv/bin/python3 /repo/.venv/bin/kego leaderboard --task pokemon-tcg-ai-battle --games 200 --search-count 10
+26452    02:30:59 bash -lc mkdir -p ~/.kego/logs && cd /repo/competitions/pokemon-tcg-ai-battle && KEGO_MLFLOW_RUN_ID={run_id} nohup uv run kego league --task pokemon-tcg-ai-battle --games 200 --search-count 10 > ~/.kego/logs/{run_id}.log 2>&1 < /dev/null &
+26454    02:30:59 uv run kego league --task pokemon-tcg-ai-battle --games 200 --search-count 10
+26457    02:30:59 /repo/.venv/bin/python3 /repo/.venv/bin/kego league --task pokemon-tcg-ai-battle --games 200 --search-count 10
 LOGS:
-LOG_PARSED: run_id={run_id} | curr=35650 | total=65000 | step=ETA 02:04:18 | done= | kind=leaderboard
+LOG_PARSED: run_id={run_id} | curr=35650 | total=65000 | step=ETA 02:04:18 | done= | kind=league
 """
 
     monkeypatch.setattr("subprocess.run", lambda *_args, **_kwargs: FakeCompleted())
@@ -578,7 +607,7 @@ def test_poll_machine_uses_local_shell_for_current_machine(monkeypatch):
     assert res["status"] == "Online"
 
 
-def test_poll_machine_ignores_local_leaderboard_dispatch_ssh(monkeypatch):
+def test_poll_machine_ignores_local_league_dispatch_ssh(monkeypatch):
     from kego.fleet import Machine
     from kego.pipeline import runner
 
@@ -593,9 +622,9 @@ LOAD: 0.1 0.2 0.3
 CORES: 4
 GPU: N/A
 PROCS:
-73274 27:53 ssh kristian@omarchyd bash -lc 'mkdir -p ~/.kego/logs && cd /repo && KEGO_MLFLOW_RUN_ID={run_id} nohup uv run kego leaderboard --task pokemon-tcg-ai-battle > ~/.kego/logs/{run_id}.log 2>&1 < /dev/null &'
+73274 27:53 ssh kristian@omarchyd bash -lc 'mkdir -p ~/.kego/logs && cd /repo && KEGO_MLFLOW_RUN_ID={run_id} nohup uv run kego league --task pokemon-tcg-ai-battle > ~/.kego/logs/{run_id}.log 2>&1 < /dev/null &'
 LOGS:
-LOG_PARSED: run_id={run_id} | curr=3771 | total=16250 | step=ETA 01:30:02 | done= | kind=leaderboard
+LOG_PARSED: run_id={run_id} | curr=3771 | total=16250 | step=ETA 01:30:02 | done= | kind=league
 """
 
     monkeypatch.setattr("kego.fleet.machine_name", lambda: "localbox")
@@ -698,6 +727,7 @@ def test_models_forced_color_shows_elo_trust_legend(monkeypatch, capsys):
     assert "elo color:" in out
     assert "Registry v1" in out
     assert "\x1b[32m1700\x1b[0m" in out
+    assert "created" in out
 
 
 def test_models_no_color_suppresses_elo_trust_colors(monkeypatch, capsys):
@@ -716,11 +746,103 @@ def test_models_no_color_suppresses_elo_trust_colors(monkeypatch, capsys):
     assert "\x1b[" not in out
 
 
-def test_leaderboard_parser():
+def test_models_prune(monkeypatch, capsys):
+    from kego.pipeline import cli
+
+    monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+
+    transitioned = []
+    tagged = []
+
+    class FakeMlflowClient:
+        def __init__(self, tracking_uri):
+            pass
+
+        def transition_model_version_stage(self, name, version, stage):
+            transitioned.append((name, version, stage))
+
+        def set_model_version_tag(self, name, version, key, value):
+            tagged.append((name, version, key, value))
+
+    import mlflow.tracking
+
+    monkeypatch.setattr(mlflow.tracking, "MlflowClient", FakeMlflowClient)
+
+    assert cli.main(["models", "prune", "--task", "pokemon-tcg-ai-battle", "5"]) == 0
+    out = capsys.readouterr().out
+
+    assert transitioned == [("pokemon-tcg-ai-battle", "5", "Archived")]
+    assert tagged == [("pokemon-tcg-ai-battle", "5", "status", "archived")]
+    assert "Pruned version 5" in out
+
+
+def test_models_unprune(monkeypatch, capsys):
+    from kego.pipeline import cli
+
+    monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+
+    transitioned = []
+    tagged = []
+
+    class FakeMlflowClient:
+        def __init__(self, tracking_uri):
+            pass
+
+        def transition_model_version_stage(self, name, version, stage):
+            transitioned.append((name, version, stage))
+
+        def set_model_version_tag(self, name, version, key, value):
+            tagged.append((name, version, key, value))
+
+    import mlflow.tracking
+
+    monkeypatch.setattr(mlflow.tracking, "MlflowClient", FakeMlflowClient)
+
+    assert cli.main(["models", "unprune", "--task", "pokemon-tcg-ai-battle", "5"]) == 0
+    out = capsys.readouterr().out
+
+    assert transitioned == [("pokemon-tcg-ai-battle", "5", "None")]
+    assert tagged == [
+        ("pokemon-tcg-ai-battle", "5", "status", "active"),
+        ("pokemon-tcg-ai-battle", "5", "dropped", "false"),
+    ]
+    assert "Unpruned version 5" in out
+
+
+def test_models_prune_parser():
     parser = build_parser()
     args = parser.parse_args(
         [
-            "leaderboard",
+            "models",
+            "prune",
+            "--task",
+            "pokemon-tcg-ai-battle",
+            "--drop-worse",
+            "--drop-worse-min-games",
+            "40",
+            "--drop-worse-k",
+            "2.5",
+        ]
+    )
+    assert args.command == "models"
+    assert args.models_cmd == "prune"
+    assert args.drop_worse is True
+    assert args.drop_worse_min_games == 40
+    assert args.drop_worse_k == 2.5
+    assert args.versions == []
+
+    args = parser.parse_args(["models", "prune", "--task", "pokemon-tcg-ai-battle", "3", "5"])
+    assert args.versions == ["3", "5"]
+    assert args.drop_worse is False
+
+
+def test_league_parser():
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "league",
             "--task",
             "pokemon-tcg-ai-battle",
             "--target",
@@ -739,7 +861,8 @@ def test_leaderboard_parser():
         ]
     )
 
-    assert args.command == "leaderboard"
+    assert args.command == "league"
+    assert args.league_cmd is None
     assert args.target == "mn"
     assert args.games == 8
     assert args.search_count == 12
@@ -749,19 +872,21 @@ def test_leaderboard_parser():
     assert args.partial_save_every == 123
 
 
-def test_leaderboard_show_parser():
+def test_league_matrix_parser():
     parser = build_parser()
-    args = parser.parse_args(["leaderboard-show", "--task", "pokemon-tcg-ai-battle", "--run-id", "abc123"])
+    args = parser.parse_args(["league", "matrix", "--task", "pokemon-tcg-ai-battle", "--run-id", "abc123"])
 
-    assert args.command == "leaderboard-show"
+    assert args.command == "league"
+    assert args.league_cmd == "matrix"
     assert args.run_id == "abc123"
 
 
-def test_leaderboard_merge_parser():
+def test_league_merge_parser():
     parser = build_parser()
     args = parser.parse_args(
         [
-            "leaderboard-merge",
+            "league",
+            "merge",
             "--task",
             "pokemon-tcg-ai-battle",
             "--run-ids",
@@ -771,21 +896,27 @@ def test_leaderboard_merge_parser():
         ]
     )
 
-    assert args.command == "leaderboard-merge"
+    assert args.command == "league"
+    assert args.league_cmd == "merge"
     assert args.run_ids == ["run1", "run2"]
     assert args.write_ratings is True
 
-    args = parser.parse_args(["leaderboard-merge", "--task", "pokemon-tcg-ai-battle"])
+    args = parser.parse_args(["league", "merge", "--task", "pokemon-tcg-ai-battle"])
     assert args.run_ids == []
     assert args.latest is None
+    assert args.write_ratings is True
 
-    args = parser.parse_args(["leaderboard-merge", "--task", "pokemon-tcg-ai-battle", "--latest", "2"])
-    assert args.command == "leaderboard-merge"
+    args = parser.parse_args(["league", "merge", "--task", "pokemon-tcg-ai-battle", "--latest", "2"])
+    assert args.command == "league"
+    assert args.league_cmd == "merge"
     assert args.run_ids == []
     assert args.latest == 2
 
+    args = parser.parse_args(["league", "merge", "--task", "pokemon-tcg-ai-battle", "--no-write-ratings"])
+    assert args.write_ratings is False
 
-def test_auto_leaderboard_run_ids_skips_consumed_and_missing_artifacts(monkeypatch):
+
+def test_auto_league_run_ids_skips_consumed_and_missing_artifacts(monkeypatch):
     from types import SimpleNamespace
 
     from kego.pipeline import cli
@@ -807,19 +938,105 @@ def test_auto_leaderboard_run_ids_skips_consumed_and_missing_artifacts(monkeypat
         def list_artifacts(self, run_id, path):
             if run_id == "bad":
                 return []
-            return [
-                SimpleNamespace(path="league/matrix.md"),
-                SimpleNamespace(path="league/wins.csv"),
-                SimpleNamespace(path="league/games.csv"),
-                SimpleNamespace(path="league/results.json"),
-                SimpleNamespace(path="league/participants.json"),
-            ]
+            if path == "league":
+                return [
+                    SimpleNamespace(path="league/matrix.md"),
+                    SimpleNamespace(path="league/wins.csv"),
+                    SimpleNamespace(path="league/games.csv"),
+                    SimpleNamespace(path="league/results.json"),
+                    SimpleNamespace(path="league/participants.json"),
+                ]
+            return []
 
-    monkeypatch.setattr("mlflow.tracking.MlflowClient", lambda tracking_uri: Client())
+    monkeypatch.setattr("mlflow.tracking.MlflowClient", lambda tracking_uri=None: Client())
     monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
 
-    assert cli._auto_leaderboard_run_ids("pokemon-tcg-ai-battle") == ["new2", "new1"]
-    assert cli._auto_leaderboard_run_ids("pokemon-tcg-ai-battle", latest=1) == ["new2"]
+    assert cli._auto_league_run_ids("pokemon-tcg-ai-battle") == ["new2", "new1"]
+    assert cli._auto_league_run_ids("pokemon-tcg-ai-battle", latest=1) == ["new2"]
+
+
+def test_show_league_matrix_falls_back_to_root_artifact(monkeypatch, capsys):
+
+    from kego.pipeline import cli
+
+    class Client:
+        def download_artifacts(self, run_id, path, dst_path):
+            if path == "league/matrix.md":
+                raise RuntimeError("missing league/")
+            out = Path(dst_path) / "matrix.md"
+            out.write_text("# matrix\n")
+            return str(out)
+
+    monkeypatch.setattr("mlflow.tracking.MlflowClient", lambda tracking_uri=None: Client())
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+
+    assert cli._show_league_matrix("pokemon-tcg-ai-battle", run_id="run1") == 0
+    out = capsys.readouterr().out
+    assert "league matrix from MLflow run run1" in out
+    assert "# matrix" in out
+
+
+def test_show_league_matrix_skips_running_runs(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    from kego.pipeline import cli
+
+    class Client:
+        def get_experiment_by_name(self, name):
+            return SimpleNamespace(experiment_id="1")
+
+        def search_runs(self, *_args, **_kwargs):
+            return [
+                SimpleNamespace(info=SimpleNamespace(run_id="running")),
+                SimpleNamespace(info=SimpleNamespace(run_id="done")),
+            ]
+
+        def list_artifacts(self, run_id, path):
+            if run_id != "done":
+                return []
+            if path == "league":
+                return [
+                    SimpleNamespace(path="league/matrix.md"),
+                    SimpleNamespace(path="league/wins.csv"),
+                    SimpleNamespace(path="league/games.csv"),
+                    SimpleNamespace(path="league/results.json"),
+                    SimpleNamespace(path="league/participants.json"),
+                ]
+            return []
+
+        def download_artifacts(self, run_id, path, dst_path):
+            out = Path(dst_path) / "matrix.md"
+            out.write_text(f"matrix for {run_id}\n")
+            return str(out)
+
+    monkeypatch.setattr("mlflow.tracking.MlflowClient", lambda tracking_uri=None: Client())
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr(cli, "_has_league_artifacts", lambda client, run_id: run_id == "done")
+
+    assert cli._show_league_matrix("pokemon-tcg-ai-battle") == 0
+    out = capsys.readouterr().out
+    assert "run done" in out
+    assert "matrix for done" in out
+
+
+def test_has_league_artifacts_accepts_root_layout(monkeypatch):
+    from types import SimpleNamespace
+
+    from kego.pipeline import cli
+
+    class Client:
+        def list_artifacts(self, run_id, path):
+            if path == "league":
+                return []
+            return [
+                SimpleNamespace(path="matrix.md"),
+                SimpleNamespace(path="wins.csv"),
+                SimpleNamespace(path="games.csv"),
+                SimpleNamespace(path="results.json"),
+                SimpleNamespace(path="participants.json"),
+            ]
+
+    assert cli._has_league_artifacts(Client(), "run1") is True
 
 
 def test_train_agent_target_parser():
@@ -827,6 +1044,8 @@ def test_train_agent_target_parser():
     args = parser.parse_args(
         [
             "train-agent",
+            "--agent",
+            "mcts",
             "--task",
             "pkmn",
             "--target",
@@ -835,31 +1054,19 @@ def test_train_agent_target_parser():
             "200",
             "--init-checkpoint",
             "registry:7",
-            "--deck-file",
-            "decks/lucario.csv",
-            "--self-play-games",
-            "72",
-            "--search-count",
-            "35",
-            "--train-steps",
-            "80",
             "--num-workers",
             "10",
-            "--model-args",
-            "192,4,384,2,2",
+            "--variant",
+            "large256_abomasnow",
         ]
     )
     assert args.command == "train-agent"
     assert args.target == "m5"
     assert args.epochs == 200
     assert args.init_checkpoint == "registry:7"
-    assert args.deck_file == "decks/lucario.csv"
-    assert args.self_play_games == 72
-    assert args.search_count == 35
-    assert args.train_steps == 80
     assert args.num_workers == 10
-    assert args.model_args == "192,4,384,2,2"
+    assert args.variant == "large256_abomasnow"
 
     # --target is optional (local run when omitted)
-    args = parser.parse_args(["train-agent", "--epochs", "5"])
+    args = parser.parse_args(["train-agent", "--agent", "mcts", "--variant", "small192_zacian", "--epochs", "5"])
     assert args.target is None

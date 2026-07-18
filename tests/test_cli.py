@@ -1,3 +1,5 @@
+import pytest
+
 from kego.pipeline.cli import build_parser
 from kego.pipeline.config import PipelineConfig, expand_grid, load_config
 from kego.pipeline.tune import HPSpace
@@ -47,6 +49,27 @@ def test_cli_parser_structure():
     assert args.params == ["learning_rate:0.01"]
     assert args.hp_tune is True
     assert args.hp_params == ["max_trees::0:9:log"]
+
+
+def test_train_agent_rejects_config_params():
+    """Catch train-agent silently accepting overrides that its training task ignores."""
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["train-agent", "--agent", "mcts", "--variant", "small192_zacian", "--params", "train_steps=500"]
+        )
+
+
+def test_train_agent_requires_agent_and_variant():
+    """--agent and --variant are mandatory so training is always fully specified."""
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["train-agent", "--variant", "small192_zacian"])
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["train-agent", "--agent", "mcts"])
 
 
 def test_config_load_and_override(tmp_path, monkeypatch):

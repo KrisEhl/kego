@@ -3,10 +3,9 @@ name = "kego"
 version = "0.8.1"
 description = "Helpers for quick ML analysis of kaggle competitions."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "omegaconf>=2.3.0",
-    "tomli>=2.0.1; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

@@ -2230,7 +2230,6 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'ml'", specifier = ">=2.2.0" },
     { name = "polars", marker = "extra == 'ml'", specifier = ">=1.31.0" },
     { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.5.0" },
-    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
     { name = "tqdm", marker = "extra == 'ml'", specifier = ">=4.66.4" },
 ]
 provides-extras = ["ml"]

@@ -1,0 +1,4 @@
+# Variant config for small192_zacian
+deck_file = "decks/zacian.csv"
+model_args = [192, 4, 384, 2, 2]
+search_count = 10

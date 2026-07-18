@@ -136,7 +136,7 @@ def main():
         print(f"Error: Could not find registry model version {version} object.")
         sys.exit(1)
 
-    local_dir = comp_dir / "outputs" / "latest"
+    local_dir = comp_dir / "outputs" / "cached_registry" / f"run_{v_obj.run_id}"
     print(f"\nDownloading checkpoint for Version {version} to {local_dir}...")
     try:
         checkpoint_path = download_checkpoint(client, v_obj, str(local_dir), debug=True)

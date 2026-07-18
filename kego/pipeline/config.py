@@ -305,6 +305,13 @@ def load_config(path: str, overrides: list[str] | None = None, task_name: str | 
         if not found:
             raise FileNotFoundError(f"Config file not found: {path}")
 
+    if p.suffix == ".toml":
+        raise ValueError(
+            f"--config expects a YAML pipeline config, but {p} is TOML. "
+            f"Variant configs under configs/variants/ are selected by name via --variant "
+            f"(e.g. kego train-agent --variant {p.stem})."
+        )
+
     # Load YAML file config without strict schema
     yaml_conf = OmegaConf.load(p)
 
@@ -365,5 +372,10 @@ def load_config(path: str, overrides: list[str] | None = None, task_name: str | 
 
     config_dict = OmegaConf.to_container(yaml_conf, resolve=True)
     if not isinstance(config_dict, dict):
-        config_dict = {}
+        # ValueError, not TypeError: the user's config file is malformed (a CLI input
+        # problem the CLI reports cleanly), not a wrongly-typed Python argument.
+        raise ValueError(  # noqa: TRY004
+            f"Config file {p} did not parse to a mapping (got {type(config_dict).__name__}); "
+            f"expected a YAML pipeline config with keys like 'task' and 'models'."
+        )
     return _hydrate_config(cast(dict, config_dict))

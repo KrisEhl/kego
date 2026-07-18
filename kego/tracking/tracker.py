@@ -6,6 +6,17 @@ store is unreachable, the tracker degrades to a silent no-op instead of raising.
 
 from __future__ import annotations
 
+import os
+
+
+def fail_fast_http() -> None:
+    """Cap MLflow's HTTP timeout/retries (default: 120s x 7 retries, exponential backoff)
+    so an unreachable hub costs seconds per call instead of stalling training for minutes.
+    ``setdefault`` — explicit user env always wins. Timeouts are between-bytes, so slow
+    checkpoint uploads on a live link are unaffected."""
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "10")
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "1")
+
 
 def create_run(uri: str, experiment: str, run_name: str | None = None, tags: dict | None = None) -> str | None:
     """Create an MLflow run (left RUNNING) and return its id, so a dispatched remote worker
@@ -45,6 +56,7 @@ class Tracker:
         try:
             import mlflow
 
+            fail_fast_http()
             mlflow.set_tracking_uri(uri)
             mlflow.set_experiment(experiment)
             mlflow.start_run(run_id=run_id, run_name=run_name, tags=tags or {})
