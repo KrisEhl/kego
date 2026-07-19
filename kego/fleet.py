@@ -42,6 +42,19 @@ def machine_name() -> str:
     return os.environ.get("KEGO_MACHINE") or _tailscale_name() or socket.gethostname()
 
 
+def repo_root(anchor: str | Path | None = None) -> Path:
+    """The kego repo root: nearest ancestor of ``anchor`` (default: this file) holding
+    ``.git`` or ``fleet.toml``, else the same search from cwd, else cwd. Fleet-dispatched
+    trees are rsynced WITHOUT ``.git`` but with ``fleet.toml`` — a ``.git``-only marker
+    breaks every dispatched remote run."""
+    start = Path(anchor).resolve() if anchor else Path(__file__).resolve()
+    for base in (start, Path.cwd()):
+        for p in (base, *base.parents):
+            if (p / ".git").exists() or (p / "fleet.toml").exists():
+                return p
+    return Path.cwd()
+
+
 def git_sha(path: str | Path) -> str:
     """Short git SHA of the repo at ``path``, or ``"unknown"`` if it is not a git repo."""
     try:

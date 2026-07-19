@@ -104,6 +104,9 @@ class PokemonTCGAIBattleTask:
         if not variant:
             raise ValueError("Training requires specifying a model variant via --variant <NAME>.")
 
+        if variant.endswith(".toml"):
+            variant = variant[:-5]
+
         variant_path = comp_dir / "configs" / "variants" / f"{variant}.toml"
         if not variant_path.exists():
             raise FileNotFoundError(f"Variant config not found at {variant_path}")

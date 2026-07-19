@@ -116,8 +116,8 @@ league-matrix:
 league-merge:
 	uv run kego league merge --task $(TASK) $(if $(RUN_IDS),--run-ids $(RUN_IDS),) $(if $(LATEST),--latest $(LATEST),) $(RATING_FLAG)
 
-# Automatically identify, download, configure, and submit the current Elo leader model.
+# Submit VERSION=<registry version>, or omit VERSION to submit the current Elo leader.
 submit-leader:
-	uv run python submit_leader.py
+	uv run kego submit $(VERSION)
 
 .PHONY: train-agent train-agent-cluster train-agent-fleet ray-head ray-status ray-stop models league league-fleet league-matrix league-merge submit-leader

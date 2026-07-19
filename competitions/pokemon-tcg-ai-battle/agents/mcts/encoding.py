@@ -22,9 +22,9 @@ from .model import CARD_COUNT, DECODER_ATTACK_OFFSET, DECODER_CARD_OFFSET, DECOD
 
 class SparseVector:
     def __init__(self) -> None:
-        self.index = []
-        self.value = []
-        self.offset = []
+        self.index: list[int] = []
+        self.value: list[float] = []
+        self.offset: list[int] = []
         self.pos = 0
 
     def add(self, index: int, value: float | int | bool) -> None:

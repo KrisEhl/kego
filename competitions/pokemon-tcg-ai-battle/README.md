@@ -25,6 +25,9 @@
 ## Operational notes
 - `--epochs` is the target total iteration count. Training automatically resumes the highest registry checkpoint with the same effective variant and source/data fingerprint, restoring model, optimizer, LR scheduler, replay buffer, RNG, best score, and iteration offset. For example, requesting 300 after a compatible 250-iteration run executes iterations 251–300.
 - Setting `[train].init_checkpoint` or passing `--init-checkpoint` remains an explicit weight-only warm start and disables automatic selection for that run.
+- Submit an exact registry model with `uv run kego submit 30 --task pokemon-tcg-ai-battle`. Omitting the version selects the current Elo leader. Submission preparation resolves the checkpoint, deck, and variant from that registry version rather than trusting stale local configuration.
+- `uv run kego models` joins registry versions to Kaggle submissions by their `Registry vN` description and shows whether each version was submitted plus its best public-leaderboard rank.
+- Add `--mlflow` to `kego models` to include a direct link to each registry version's originating MLflow run.
 - Before spending a Kaggle submission, build `submission.tar.gz`, extract it locally, confirm `main.py` loads packaged `mcts.pth` with no `MCTS_MODEL_PATH`, and run smoke games against the rule agents.
 
 ## Decks

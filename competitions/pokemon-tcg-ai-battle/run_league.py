@@ -75,6 +75,28 @@ class ProgressBar:
         return f"{m:02d}:{s:02d}"
 
 
+class LeagueGameError(RuntimeError):
+    pass
+
+
+def finite_nonnegative_float(raw: str) -> float:
+    value = float(raw)
+    if not np.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number")
+    return value
+
+
+def iter_pool_results(iterator, total: int, stall_timeout: float):
+    """Yield pool results, failing when no game completes within the timeout."""
+    for _ in range(total):
+        try:
+            yield iterator.next(timeout=stall_timeout) if stall_timeout > 0 else next(iterator)
+        except mp.TimeoutError as error:
+            raise LeagueGameError(
+                f"No league game completed for {stall_timeout:g}s; aborting the league with partial results."
+            ) from error
+
+
 def _worker_init():
     # Avoid core oversubscription
     torch.set_num_threads(1)
@@ -87,7 +109,7 @@ def instantiate_agent(cfg):
         agent_obj = mod.MCTSTransformerAgent(
             deck=cfg["deck"], model_path=cfg["model_path"], model_args=cfg.get("model_args")
         )
-        mod._agent_instance = agent_obj
+        mod.agent = agent_obj.act
     return {"mod": mod, "deck": deck}
 
 
@@ -228,6 +250,7 @@ def _persist_league_artifacts(
                     "write_ratings": args.write_ratings,
                     "include_local_mcts": getattr(args, "include_local_mcts", False),
                     "partial_save_every": getattr(args, "partial_save_every", 0),
+                    "stall_timeout": getattr(args, "stall_timeout", 300),
                 },
             },
             indent=2,
@@ -246,11 +269,9 @@ def _aggregate_completed_results(results_list, task_map, n_participants):
     games_matrix = np.zeros((n_participants, n_participants))
     completed = 0
     for task_idx, winner_val in enumerate(results_list):
-        if winner_val is None:
+        if winner_val is None or winner_val == -1:
             continue
         completed += 1
-        if winner_val == -1:
-            continue
         i, j = task_map[task_idx]
         games_matrix[i][j] += 1
         games_matrix[j][i] += 1
@@ -311,16 +332,33 @@ def _run_single_game(payload):
 def _run_single_game_indexed(payload_and_idx):
     payload, idx = payload_and_idx
     res = _run_single_game(payload)
+    if res == -1:
+        raise LeagueGameError(f"League game {idx} failed; rerun with --debug to show the game error.")
     return idx, res
+
+
+def _valid_checkpoint(path: Path) -> bool:
+    """Reject truncated/partial downloads: torch>=1.6 checkpoints are zip archives, and a
+    failed scp/MLflow fetch can leave a partial file that would poison the cache forever."""
+    import zipfile
+
+    try:
+        if not zipfile.is_zipfile(path):
+            print(f"  Discarding corrupt cached checkpoint {path}", flush=True)
+            path.unlink(missing_ok=True)
+            return False
+        return True
+    except OSError:
+        return False
 
 
 def _select_checkpoint(path: str, wanted: str | None) -> str | None:
     p = Path(path)
     if p.is_file() and p.suffix == ".pth" and (wanted is None or p.name == wanted):
-        return str(p)
+        return str(p) if _valid_checkpoint(p) else None
     if not p.is_dir():
         return None
-    pths = sorted(p.rglob("*.pth"))
+    pths = [candidate for candidate in sorted(p.rglob("*.pth")) if _valid_checkpoint(candidate)]
     if wanted:
         return next((str(candidate) for candidate in pths if candidate.name == wanted), None)
     if len(pths) == 1:
@@ -358,7 +396,7 @@ def _fleet_ssh_targets(machine_tag: str) -> list[str]:
     return list(dict.fromkeys(ordered))
 
 
-def _remote_checkpoint_path(ssh_target: str, source: str, wanted: str | None, debug: bool) -> str | None:
+def _remote_checkpoint_path(ssh_target: str, source: str, wanted: str | None, debug: bool) -> tuple[str | None, str]:
     remote_root = source[7:] if source.startswith("file://") else source
     if remote_root.endswith(".pth"):
         check = f"test -f {shlex.quote(remote_root)} && printf '%s\\n' {shlex.quote(remote_root)}"
@@ -375,10 +413,11 @@ def _remote_checkpoint_path(ssh_target: str, source: str, wanted: str | None, de
         capture_output=True,
         text=True,
     )
+    err = res.stderr.strip().splitlines()[-1] if res.returncode != 0 and res.stderr.strip() else ""
     if debug and res.returncode != 0:
-        print(f"  SSH find on {ssh_target} failed: {res.stderr.strip()}")
+        print(f"  SSH find on {ssh_target} failed: {err}")
     remote_path = res.stdout.strip().splitlines()[0] if res.returncode == 0 and res.stdout.strip() else ""
-    return remote_path or None
+    return remote_path or None, err
 
 
 def download_checkpoint(client, v, local_dir, debug):
@@ -389,6 +428,7 @@ def download_checkpoint(client, v, local_dir, debug):
 
     os.makedirs(local_dir, exist_ok=True)
 
+    errors: list[str] = []
     try:
         if debug:
             downloaded = client.download_artifacts(v.run_id, "checkpoint", dst_path=local_dir)
@@ -400,27 +440,30 @@ def download_checkpoint(client, v, local_dir, debug):
         if selected:
             return selected
     except Exception as e:
+        errors.append(f"mlflow: {e}")
         if debug:
             print(f"  MLflow client download failed: {e}. Trying SCP fallback...")
 
     machine_tag = (v.tags or {}).get("machine", "")
     for ssh_target in _fleet_ssh_targets(machine_tag):
-        remote_path = _remote_checkpoint_path(ssh_target, v.source, wanted, debug)
+        remote_path, ssh_err = _remote_checkpoint_path(ssh_target, v.source, wanted, debug)
         if not remote_path:
+            errors.append(f"{ssh_target}: {ssh_err or 'no checkpoint found'}")
             if debug:
                 print(f"  No checkpoint found under {v.source} on {ssh_target}; trying next...")
             continue
         checkpoint_path = os.path.join(local_dir, os.path.basename(remote_path))
         if debug:
             print(f"  SCP downloading from {ssh_target}:{remote_path} ...")
-        cmd = ["scp", f"{ssh_target}:{remote_path}", checkpoint_path]
+        cmd = ["scp", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", f"{ssh_target}:{remote_path}", checkpoint_path]
         res = subprocess.run(cmd, capture_output=not debug)
-        if res.returncode == 0 and os.path.exists(checkpoint_path):
+        if res.returncode == 0 and os.path.exists(checkpoint_path) and _valid_checkpoint(Path(checkpoint_path)):
             return checkpoint_path
-        elif debug:
+        errors.append(f"{ssh_target}: scp failed")
+        if debug:
             print(f"  SCP from {ssh_target} failed, trying next...")
 
-    raise RuntimeError("Failed to download checkpoint via MLflow and SCP from any fleet machine.")
+    raise RuntimeError("; ".join(errors) or "no fetch source available")
 
 
 def main():
@@ -457,6 +500,12 @@ def main():
         default=5000,
         help="Persist partial league artifacts every N completed games; use 0 to disable",
     )
+    parser.add_argument(
+        "--stall-timeout",
+        type=finite_nonnegative_float,
+        default=300,
+        help="Fail if no game completes for this many seconds; use 0 to disable",
+    )
     args = parser.parse_args()
 
     # Set MCTS search count for all workers
@@ -467,6 +516,11 @@ def main():
     # memory) that exhausts system RAM and hangs the laptop. Inference here is tiny + CPU-parallel
     # is already fast. Override with MCTS_DEVICE=mps/cuda if you really want it.
     os.environ.setdefault("MCTS_DEVICE", "cpu")
+
+    # Bound MLflow HTTP stalls: the client default is ~7 retries with 120s timeouts, which
+    # turns an unreachable artifact store into many silent minutes per cached checkpoint.
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "15")
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "2")
 
     # 2. Get registered models from MLflow
     uri = default_tracking_uri()
@@ -485,6 +539,7 @@ def main():
             client.log_param(mlflow_run_id, "games", args.games)
             client.log_param(mlflow_run_id, "search_count", args.search_count)
             client.log_param(mlflow_run_id, "workers", args.workers)
+            client.log_param(mlflow_run_id, "stall_timeout", args.stall_timeout)
             client.log_param(mlflow_run_id, "write_ratings", args.write_ratings)
         except Exception:
             pass
@@ -604,7 +659,9 @@ def main():
         "Random": {
             "type": "rule",
             "file": "competitions/pokemon-tcg-ai-battle/agents/random_agent.py",
-            "deck": "data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission/deck.csv",
+            # Committed copy of the sample-submission deck: the data/ download is absent on
+            # fleet machines (rsync excludes it), which crashed every game against Random.
+            "deck": "competitions/pokemon-tcg-ai-battle/decks/sample.csv",
         },
     }
 
@@ -700,7 +757,8 @@ def main():
     pool = mp.get_context("spawn").Pool(args.workers, initializer=_worker_init)
     try:
         pbar = ProgressBar(total=len(tasks))
-        for task_idx, winner_val in pool.imap_unordered(_run_single_game_indexed, tasks):
+        results = pool.imap_unordered(_run_single_game_indexed, tasks)
+        for task_idx, winner_val in iter_pool_results(results, len(tasks), args.stall_timeout):
             results_list[task_idx] = winner_val
             pbar.update(1)
             if partial_save_every and pbar.completed >= next_partial_save:
@@ -742,25 +800,32 @@ def main():
         print(f"Partial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
         _finish_mlflow_run(client, mlflow_run_id, status="KILLED")
         return
-    except Exception:
+    except Exception as error:
         print("\nLeague failed; saving completed games before raising the error...")
         pool.terminate()
         wins_matrix, games_matrix, completed = _aggregate_completed_results(results_list, task_map, n_participants)
         partial_results = _build_league_results(participant_names, wins_matrix, games_matrix)
-        artifact_dir = _persist_league_artifacts(
-            client,
-            mlflow_run_id,
-            participant_names,
-            wins_matrix,
-            games_matrix,
-            partial_results,
-            name_to_version,
-            anchor_elos,
-            args,
-            dropped_variants=dropped_variants,
-        )
-        print(f"Partial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
-        _finish_mlflow_run(client, mlflow_run_id, status="FAILED")
+        try:
+            artifact_dir = _persist_league_artifacts(
+                client,
+                mlflow_run_id,
+                participant_names,
+                wins_matrix,
+                games_matrix,
+                partial_results,
+                name_to_version,
+                anchor_elos,
+                args,
+                dropped_variants=dropped_variants,
+            )
+            print(f"Partial league artifacts written to {artifact_dir} ({completed}/{len(tasks)} games)")
+        except Exception as persist_error:
+            print(f"Warning: could not persist partial league artifacts ({persist_error}).")
+        finally:
+            if mlflow_run_id and isinstance(error, LeagueGameError):
+                with contextlib.suppress(Exception):
+                    client.log_metric(mlflow_run_id, "league_games_failed", 1)
+            _finish_mlflow_run(client, mlflow_run_id, status="FAILED")
         raise
     else:
         pool.close()

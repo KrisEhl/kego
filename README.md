@@ -46,6 +46,7 @@ kego train-agent --agent mcts --variant small192_zacian --task pokemon-tcg-ai-ba
 kego battle --config mcts_vs_random                   # battle local agents
 kego league / league matrix / league merge            # play Elo league / view / merge matrices
 kego models --task <slug>                             # Elo standings from the model registry
+kego submit 30 --task pokemon-tcg-ai-battle           # submit exact registry version (omit 30 for Elo leader)
 kego models prune / unprune                           # retire or restore registry versions
 kego sync [--list]                                    # replay checkpoint registrations queued while the hub was down
 ```

@@ -312,8 +312,8 @@ def test_submit_leader_uses_registry_deck_tag():
     submit_leader = Path(__file__).resolve().parents[1] / "competitions/pokemon-tcg-ai-battle/submit_leader.py"
     content = submit_leader.read_text()
 
-    assert 'deck_name = leader.get("deck")' in content
+    assert 'deck_name = selected_model.get("deck")' in content
     assert "missing required 'deck' tag" in content
     assert "Refusing to guess a deck for submission" in content
-    assert 'deck_file = "decks/{deck_name}.csv"' in content
+    assert 'set_competition_value(content, "deck_file", f"decks/{deck_name}.csv")' in content
     assert 'deck_file = "decks/abomasnow.csv"' not in content

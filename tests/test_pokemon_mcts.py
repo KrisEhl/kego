@@ -50,6 +50,41 @@ def _self_play(tm, model, deck, search_count):
         return tm._collect_game(deck, model, search_count, None, deck, 0)
 
 
+def test_sparse_vector_tracks_words_and_absolute_positions(tm):
+    sv = tm.SparseVector()
+    sv.word_start()
+    sv.add(2, 0.5)
+    sv.add_single(1)
+    sv.add_pos(3)
+    sv.word_start()
+    sv.add(1, 2)
+
+    assert sv.index == [2, 0, 5]
+    assert sv.value == [0.5, 1.0, 2.0]
+    assert sv.offset == [0, 2]
+
+
+def test_sparse_vector_omits_zero_values_but_advances_single_position(tm):
+    sv = tm.SparseVector()
+    sv.add(3, 0)
+    sv.add_single(False)
+    sv.add(2, True)
+
+    assert sv.pos == 1
+    assert sv.index == [3]
+    assert sv.value == [1.0]
+
+
+def test_sparse_vector_preserves_empty_word_boundaries(tm):
+    sv = tm.SparseVector()
+    sv.word_start()
+    sv.word_start()
+    sv.add_single(1)
+    sv.word_start()
+
+    assert sv.offset == [0, 0, 1]
+
+
 @pytest.mark.parametrize("batched", ["1", "0"])
 def test_selfplay_game_completes_and_produces_samples(tm, model, deck, batched):
     """A full self-play game runs to completion and yields valid training samples,
@@ -92,8 +127,8 @@ def test_eval_nn_batch_matches_individual(tm, model, deck):
 
 
 def test_leaf_batching_uses_fewer_forwards_per_move(tm, model, deck):
-    """Leaf-batching should do far fewer NN forwards per move than sequential (~2 vs
-    ~search_count+1) — the whole point of the optimization."""
+    """Leaf-batching should use fewer NN forwards than sequential search while still
+    processing additional waves when a frontier is narrower than the search budget."""
     from kego.timing import DEFAULT
 
     ratios = {}
@@ -107,7 +142,64 @@ def test_leaf_batching_uses_fewer_forwards_per_move(tm, model, deck):
         ratios[batched] = nn / moves
 
     assert ratios["1"] < ratios["0"]  # batched does fewer forwards per move
-    assert ratios["1"] < 4.0  # ~2 forwards/move (root + one batched wave)
+    assert ratios["1"] < 5.0
+
+
+def test_leaf_batching_uses_full_budget_without_leaking_virtual_loss(tm, model, deck, monkeypatch):
+    os.environ["MCTS_BATCHED"] = "1"
+    roots = []
+    create_node_train = tm.create_node_train
+
+    def capture_root(parent, *args, **kwargs):
+        node, sample = create_node_train(parent, *args, **kwargs)
+        if parent is None:
+            roots.append(node)
+        return node, sample
+
+    monkeypatch.setattr(tm, "create_node_train", capture_root)
+    from cg.game import battle_finish, battle_start
+
+    obs, _ = battle_start(deck, deck)
+    try:
+        with torch.no_grad():
+            tm.mcts_train_agent(obs, deck, model, search_count=70)
+    finally:
+        battle_finish()
+
+    root = roots[0]
+    assert root.visit == 71
+    assert any(child.node and child.node.children for child in root.children)
+
+
+def test_leaf_batching_restores_virtual_loss_exactly(tm, model, deck, monkeypatch):
+    os.environ["MCTS_BATCHED"] = "1"
+    roots = []
+    initial_totals = []
+    create_node_train = tm.create_node_train
+
+    def capture_root(parent, *args, **kwargs):
+        node, sample = create_node_train(parent, *args, **kwargs)
+        if parent is None:
+            roots.append(node)
+            initial_totals.append(node.total)
+        return node, sample
+
+    def zero_batch(svs, _model):
+        return [(0.0, [0.0] * len(sv_dec.offset)) for _, sv_dec in svs]
+
+    monkeypatch.setattr(tm, "create_node_train", capture_root)
+    monkeypatch.setattr(tm, "eval_nn_batch", zero_batch)
+    from cg.game import battle_finish, battle_start
+
+    obs, _ = battle_start(deck, deck)
+    try:
+        with torch.no_grad():
+            tm.mcts_train_agent(obs, deck, model, search_count=1)
+    finally:
+        battle_finish()
+
+    assert roots[0].visit == 2
+    assert roots[0].total == pytest.approx(initial_totals[0])
 
 
 def test_training_logs_and_registers_best(tm, deck, tmp_path, monkeypatch):
@@ -138,8 +230,12 @@ def test_training_logs_and_registers_best(tm, deck, tmp_path, monkeypatch):
     assert "gauntlet_avg" in board[0]
     assert board[0]["git_sha"] != ""
     assert board[0]["training_fingerprint"] == "test-fingerprint"
+    assert board[0]["training_run_id"] == board[0]["run_id"]
     assert board[0]["completed_iterations"] == "1"
+    assert 0 <= int(board[0]["epoch"]) <= 1
     assert board[0]["training_state_filename"].endswith(".train.pt")
+    state = torch.load(tmp_path / "m_iter1.train.pt", map_location="cpu", weights_only=False)
+    assert state["best_iteration"] == int(board[0]["epoch"])
 
 
 def test_training_uses_exact_compatible_registry_state_without_retraining(tm, tmp_path, monkeypatch, capsys):

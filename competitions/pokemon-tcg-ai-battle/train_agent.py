@@ -139,51 +139,61 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
     in ONE batched forward, then backprop with the virtual loss removed. Gives real search
     depth AND batched inference (a move needs ~2 forwards instead of ~n_leaves)."""
     VLOSS = 1.0
-    pending = []  # (leaf_node, path, actions, sv_enc, sv_dec, leaf_state)
-    for _ in range(n_leaves):
-        current = root
-        path = [root]
-        while current.children:
-            child = select_child(current, your_index)
-            if child is None:
+    completed = 0
+    while completed < n_leaves:
+        pending = []  # (leaf_node, path, actions, sv_enc, sv_dec, leaf_state)
+        for _ in range(n_leaves - completed):
+            current = root
+            path = [root]
+            while current.children:
+                child = select_child(current, your_index)
+                if child is None:
+                    break
+                if child.node is None:
+                    with timer("engine"):
+                        search_state = search_step(current.state.searchId, child.select)
+                    node = Node(current, search_state)
+                    child.node = node
+                    path.append(node)
+                    leaf = search_state.observation.current
+                    if leaf.result >= 0:
+                        node.value = 0.0 if leaf.result == RESULT_DRAW else (1.0 if leaf.result == your_index else -1.0)
+                        node.backprop(node.value)
+                        completed += 1
+                    else:
+                        actions = enumerate_action_combinations(
+                            search_state.observation.select.maxCount, len(search_state.observation.select.option)
+                        )
+                        sv_enc = encode_state(search_state.observation, your_deck)
+                        sv_dec = encode_actions(search_state.observation, actions)
+                        pending.append((node, path, actions, sv_enc, sv_dec, leaf))
+                        for path_node in path:
+                            path_node.visit += 1
+                            path_node.total -= VLOSS
+                    break
+                current = child.node
+                path.append(current)
+                if current.state.observation.current.result >= 0:
+                    current.backprop(current.value)
+                    completed += 1
+                    break
+            if pending and not current.children:
                 break
-            if child.node is None:  # unexpanded -> this is our leaf to evaluate
-                with timer("engine"):
-                    search_state = search_step(current.state.searchId, child.select)
-                node = Node(current, search_state)
-                child.node = node
-                path.append(node)
-                leaf = search_state.observation.current
-                if leaf.result >= 0:  # terminal: value known, no NN needed
-                    node.value = 0.0 if leaf.result == RESULT_DRAW else (1.0 if leaf.result == your_index else -1.0)
-                    node.backprop(node.value)
-                else:
-                    actions = enumerate_action_combinations(
-                        search_state.observation.select.maxCount, len(search_state.observation.select.option)
-                    )
-                    sv_enc = encode_state(search_state.observation, your_deck)
-                    sv_dec = encode_actions(search_state.observation, actions)
-                    pending.append((node, path, actions, sv_enc, sv_dec, leaf))
-                    for pn in path:  # virtual loss so the next selection avoids this path
-                        pn.visit += 1
-                        pn.total -= VLOSS
-                break
-            current = child.node  # descend into an already-expanded child
-            path.append(current)
-            if current.state.observation.current.result >= 0:
-                current.backprop(current.value)
-                break
-    if pending:
+        if not pending:
+            if completed < n_leaves and not root.children:
+                raise RuntimeError("batched MCTS search exhausted a non-terminal tree before using its budget")
+            continue
         for (node, path, actions, _se, _sd, leaf), (value, policy) in zip(
             pending, eval_nn_batch([(p[3], p[4]) for p in pending], model)
         ):
-            for pn in path:  # remove virtual loss before the real backprop
-                pn.visit -= 1
-                pn.total += VLOSS
+            for path_node in path:
+                path_node.visit -= 1
+                path_node.total += VLOSS
             v = -value if leaf.yourIndex != your_index else value
             node.value = v
             node.backprop(v)
             build_children(node, actions, policy)
+            completed += 1
 
 
 @timed("mcts_move")
@@ -403,7 +413,7 @@ def _selfplay_worker(payload):
     opponent pool (None = self-play, else a (kind, file, deck) spec). Returns
     ``(samples, component_timings)`` so the parent can merge per-worker timing.
     """
-    state_dict, n_games, sample_deck, seed, search_count, opp_pool = payload
+    state_dict, n_games, agent_deck, seed, search_count, opp_pool = payload
     random.seed(seed)
     DEFAULT.reset()
     model = _build_cpu_model(state_dict)
@@ -412,12 +422,12 @@ def _selfplay_worker(payload):
         for g in range(n_games):
             spec = opp_pool[(seed + g) % len(opp_pool)]
             if spec is None:
-                out.extend(_collect_game(sample_deck, model, search_count, None, sample_deck, 0))
+                out.extend(_collect_game(agent_deck, model, search_count, None, agent_deck, 0))
             else:
                 kind, opp_file, opp_deck_path = spec
                 opp_move = random_agent if kind == "random" else _opp_agent_fn(opp_file)
-                opp_deck = sample_deck if kind == "random" else load_deck(opp_deck_path)
-                out.extend(_collect_game(sample_deck, model, search_count, opp_move, opp_deck, g % 2))
+                opp_deck = agent_deck if kind == "random" else load_deck(opp_deck_path)
+                out.extend(_collect_game(agent_deck, model, search_count, opp_move, opp_deck, g % 2))
     return out, DEFAULT.as_dict()
 
 
@@ -451,6 +461,91 @@ def _gauntlet_worker(payload):
         for gi in game_indices:
             res[_play_vs_game(mcts_deck, model, opp_deck, opp_move, gi % 2, search_count)] += 1
     return res, DEFAULT.as_dict()
+
+
+def _tracking_tags(
+    task: str,
+    deck_path: Path,
+    model_args: tuple[int, int, int, int, int],
+    search_count: int,
+    self_play_games: int,
+    batched: bool,
+    variant: str | None,
+    init_checkpoint: str | None,
+    config_fingerprint: str | None,
+    resume_version: int | None,
+) -> dict[str, str]:
+    from kego.fleet import git_sha, machine_name
+
+    agent_name = variant or (
+        f"mcts-{deck_path.stem}-d{model_args[0]}-h{model_args[1]}-ff{model_args[2]}-"
+        f"enc{model_args[3]}-dec{model_args[4]}"
+    )
+    tags = {
+        "agent_name": agent_name,
+        "machine": machine_name(),
+        "git_sha": git_sha(Path(__file__).resolve().parents[2]),
+        "task": task,
+        "deck": deck_path.stem,
+        "search_count": str(search_count),
+        "self_play_games": str(self_play_games),
+        "batched": str(batched),
+        "model_args": str(model_args),
+    }
+    if variant:
+        tags["variant"] = variant
+    if continued_from := f"registry:{resume_version}" if resume_version is not None else init_checkpoint:
+        tags["continued_from"] = continued_from
+    if config_fingerprint:
+        tags["training_fingerprint"] = config_fingerprint
+    return tags
+
+
+def _tracking_params(
+    *,
+    variant: str | None,
+    iterations: int,
+    eval_games: int,
+    self_play_games: int,
+    eval_every: int,
+    search_count: int,
+    batched: bool,
+    num_workers: int,
+    eval_opponents: list[str],
+    selfplay_opponents: list[str],
+    replay_buffer_size: int,
+    train_steps: int,
+    model_args: tuple[int, int, int, int, int],
+    deck_path: Path,
+    deck_file: str,
+    init_checkpoint: str | None,
+    init_checkpoint_path: Path | None,
+    start_iteration: int,
+    config_fingerprint: str | None,
+    output_path: str,
+) -> dict[str, object]:
+    return {
+        "variant": variant,
+        "iterations": iterations,
+        "eval_games": eval_games,
+        "self_play_games": self_play_games,
+        "eval_every": eval_every,
+        "search_count": search_count,
+        "batched": batched,
+        "num_workers": num_workers,
+        "eval_opponents": ",".join(eval_opponents),
+        "selfplay_opponents": ",".join(selfplay_opponents),
+        "replay_buffer_size": replay_buffer_size,
+        "train_steps": train_steps,
+        "model_args": model_args,
+        "deck": deck_path.stem,
+        "deck_file": deck_file,
+        "init_checkpoint": init_checkpoint or "",
+        "init_checkpoint_resolved": str(init_checkpoint_path) if init_checkpoint_path else "",
+        "start_iteration": start_iteration,
+        "training_fingerprint": config_fingerprint or "",
+        "output_path": output_path,
+    }
 
 
 def run_training_loop(
@@ -505,7 +600,7 @@ def run_training_loop(
     if deck_file is None:
         deck_file = "decks/abomasnow.csv"
     deck_path = comp_dir / deck_file
-    sample_deck = load_deck(str(deck_path))
+    agent_deck = load_deck(str(deck_path))
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -607,74 +702,61 @@ def run_training_loop(
     # Fleet tracking: log live metrics to the central MLflow (or an offline sqlite fallback)
     # and register the best checkpoint in the model registry. Crash-safe — a no-op if MLflow
     # is unreachable, so training never blocks on telemetry. See the fleet-fabric spec.
-    from kego.fleet import git_sha, machine_name
     from kego.tracking import Tracker, register_checkpoint_or_queue
 
-    _repo_root = Path(__file__).resolve().parents[2]
-    _agent_name = (
-        variant
-        if variant
-        else (
-            f"mcts-{deck_path.stem}-"
-            f"d{actual_model_args[0]}-h{actual_model_args[1]}-ff{actual_model_args[2]}-"
-            f"enc{actual_model_args[3]}-dec{actual_model_args[4]}"
-        )
+    _run_tags = _tracking_tags(
+        _task,
+        deck_path,
+        actual_model_args,
+        search_count,
+        self_play_games,
+        batched,
+        variant,
+        init_checkpoint,
+        config_fingerprint,
+        resume.version if resume else None,
     )
-    _run_tags = {
-        "agent_name": _agent_name,
-        "machine": machine_name(),
-        "git_sha": git_sha(_repo_root),
-        "task": _task,
-        "deck": deck_path.stem,
-        "search_count": str(search_count),
-        "self_play_games": str(self_play_games),
-        "batched": str(batched),
-        "model_args": str(actual_model_args),
-    }
-    if variant:
-        _run_tags["variant"] = variant
-    if init_checkpoint:
-        _run_tags["continued_from"] = init_checkpoint
-    if config_fingerprint:
-        _run_tags["training_fingerprint"] = config_fingerprint
-    if resume:
-        _run_tags["continued_from"] = f"registry:{resume.version}"
     # Attach to the dispatcher's run when dispatched (KEGO_MLFLOW_RUN_ID injected over SSH),
     # else open a fresh run. set_tags after open so our tags land whether new or resumed.
     _run_id = os.environ.get("KEGO_MLFLOW_RUN_ID")
     _track = Tracker.open(
         _uri, experiment=_task, run_id=_run_id, run_name=f"{_run_tags['machine']}-{output_file.stem}", tags=_run_tags
     )
+    if _track.run_id:
+        _run_tags["training_run_id"] = _track.run_id
     _track.set_tags(_run_tags)
     _track.log_params(
-        {
-            "variant": variant,
-            "iterations": iterations,
-            "eval_games": eval_games,
-            "self_play_games": self_play_games,
-            "eval_every": eval_every,
-            "search_count": search_count,
-            "batched": batched,
-            "num_workers": num_workers,
-            "eval_opponents": ",".join(eval_opponents),
-            "selfplay_opponents": ",".join(selfplay_opponents),
-            "replay_buffer_size": replay_buffer_size,
-            "train_steps": train_steps,
-            "model_args": actual_model_args,
-            "deck": deck_path.stem,
-            "deck_file": deck_file,
-            "init_checkpoint": init_checkpoint or "",
-            "init_checkpoint_resolved": str(init_checkpoint_path) if init_checkpoint_path else "",
-            "start_iteration": start_iteration,
-            "training_fingerprint": config_fingerprint or "",
-            "output_path": output_path,
-        }
+        _tracking_params(
+            variant=variant,
+            iterations=iterations,
+            eval_games=eval_games,
+            self_play_games=self_play_games,
+            eval_every=eval_every,
+            search_count=search_count,
+            batched=batched,
+            num_workers=num_workers,
+            eval_opponents=eval_opponents,
+            selfplay_opponents=selfplay_opponents,
+            replay_buffer_size=replay_buffer_size,
+            train_steps=train_steps,
+            model_args=actual_model_args,
+            deck_path=deck_path,
+            deck_file=deck_file,
+            init_checkpoint=init_checkpoint,
+            init_checkpoint_path=init_checkpoint_path,
+            start_iteration=start_iteration,
+            config_fingerprint=config_fingerprint,
+            output_path=output_path,
+        )
     )
     best_results: dict[str, float] = dict(resume_payload.get("best_results", {})) if resume_payload else {}
     best_score = float(resume_payload.get("best_score", -1.0)) if resume_payload else -1.0
     best_state = (
         resume_payload.get("best_state") if resume_payload else _transport_state(model) if init_checkpoint else None
     )
+    best_iteration = resume_payload.get("best_iteration") if resume_payload else None
+    if best_iteration is not None:
+        best_iteration = int(best_iteration)
     if resume_payload:
         random.setstate(resume_payload["python_rng_state"])
         torch.set_rng_state(resume_payload["torch_rng_state"].cpu())
@@ -682,7 +764,12 @@ def run_training_loop(
             torch.cuda.set_rng_state_all(resume_payload["cuda_rng_state"])
         torch.save(best_state or resume_payload["model_state"], str(output_file))
     if start_iteration >= iterations:
-        print(f"Compatible checkpoint already reached target iteration {iterations}; no training needed.", flush=True)
+        message = (
+            f"Compatible checkpoint already reached target iteration {iterations}; no training needed."
+            if resume
+            else f"Target iteration {iterations} requires no training."
+        )
+        print(message, flush=True)
         _track.close()
         return
 
@@ -700,6 +787,7 @@ def run_training_loop(
                 "scheduler_state": scheduler.state_dict(),
                 "replay": replay,
                 "best_state": best_state,
+                "best_iteration": best_iteration,
                 "best_score": best_score,
                 "best_results": best_results,
                 "python_rng_state": random.getstate(),
@@ -744,7 +832,7 @@ def run_training_loop(
             if kind == "self" and best_state is None:
                 continue
             payloads = [
-                (cur_state, kind, opp_file, opp_deck_path, sample_deck, chunk, seed_base + i, search_count, best_state)
+                (cur_state, kind, opp_file, opp_deck_path, agent_deck, chunk, seed_base + i, search_count, best_state)
                 for i, chunk in enumerate(list(range(eval_games))[w::num_workers] for w in range(num_workers))
                 if chunk
             ]
@@ -780,6 +868,7 @@ def run_training_loop(
                 if avg > best_score:
                     best_score = avg
                     best_state = cpu_state
+                    best_iteration = iter_idx
                     best_results = results
                     torch.save(model.state_dict(), str(output_file))
                     print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
@@ -798,7 +887,7 @@ def run_training_loop(
                 f"Collecting self-play training data ({self_play_games} games) with dynamic MCTS search_count={current_search_count}..."
             )
             payloads = [
-                (cpu_state, c, sample_deck, iter_idx * 9973 + i, current_search_count, opp_pool)
+                (cpu_state, c, agent_deck, iter_idx * 9973 + i, current_search_count, opp_pool)
                 for i, c in enumerate(_split_counts(self_play_games, num_workers))
                 if c
             ]
@@ -912,6 +1001,7 @@ def run_training_loop(
             if avg > best_score:
                 best_score = avg
                 best_state = final_state
+                best_iteration = last_completed_iteration
                 best_results = results
                 torch.save(model.state_dict(), str(output_file))
                 print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
@@ -924,6 +1014,7 @@ def run_training_loop(
         if training_completed_normally:
             if best_score < 0:
                 torch.save(model.state_dict(), str(output_file))
+                best_iteration = last_completed_iteration
             final_state_file = output_file.parent / f"{output_file.stem}_iter{last_completed_iteration}.train.pt"
             _save_training_state(last_completed_iteration, final_state_file)
             _version = register_checkpoint_or_queue(
@@ -934,6 +1025,7 @@ def run_training_loop(
                     **_run_tags,
                     "completed_iterations": str(last_completed_iteration),
                     "deck": deck_path.stem,
+                    **({"epoch": str(best_iteration)} if best_iteration is not None else {}),
                     **({"gauntlet_avg": round(best_score, 2)} if best_score >= 0 else {}),
                     **({f"wr_{n}": round(w, 2) for n, w in best_results.items()} if best_score >= 0 else {}),
                 },

@@ -121,7 +121,7 @@ def leaderboard(uri: str, name: str, sort_by: str = "elo", desc: bool = True) ->
             continue
         dt = datetime.fromtimestamp(v.creation_timestamp / 1000.0, tz=timezone.utc)
         created_str = dt.astimezone().strftime("%Y-%m-%d %H:%M")
-        rows.append({"version": str(v.version), "created": created_str, **dict(v.tags)})
+        rows.append({"version": str(v.version), "run_id": v.run_id, "created": created_str, **dict(v.tags)})
 
     def key(row: dict) -> float:
         try:

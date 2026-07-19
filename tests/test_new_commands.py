@@ -2,9 +2,11 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
+import pytest
+
 from kego.pipeline.cli import build_parser
 from kego.pipeline.config import FoldScheme, GridConfig, ModelConfig, PipelineConfig
-from kego.pipeline.runner import Pipeline
+from kego.pipeline.runner import Pipeline, format_submissions
 from kego.pipeline.task import RawData, register_task
 
 
@@ -90,6 +92,36 @@ def test_parser_new_commands():
     assert args.num_workers == 12
     assert args.variant == "small192_zacian"
 
+    args = parser.parse_args(["submit", "30", "--task", "pokemon-tcg-ai-battle"])
+    assert args.command == "submit"
+    assert args.version == "30"
+
+
+def test_submit_registry_version_prepares_selected_model(monkeypatch):
+    from types import SimpleNamespace
+
+    from kego.pipeline import cli
+
+    prepared_versions = []
+    submitted_messages = []
+    helper = SimpleNamespace(
+        prepare_submission=lambda version: (
+            prepared_versions.append(version) or {"version": version, "message": f"Registry v{version}"}
+        )
+    )
+    monkeypatch.setattr(cli, "_load_submission_module", lambda _task: helper)
+    monkeypatch.setattr(
+        Pipeline,
+        "submit",
+        lambda _pipeline, _outcome, message: (
+            submitted_messages.append(message) or SimpleNamespace(status="complete", public_score=None)
+        ),
+    )
+
+    assert cli.main(["submit", "30", "--task", "pokemon-tcg-ai-battle"]) == 0
+    assert prepared_versions == ["30"]
+    assert submitted_messages == ["Registry v30"]
+
 
 def test_status_execution(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
@@ -135,6 +167,8 @@ def test_status_execution(tmp_path, monkeypatch, capsys):
 
 
 def test_submissions_execution(tmp_path, monkeypatch, capsys):
+    import zipfile
+
     monkeypatch.chdir(tmp_path)
 
     task = DummyTask()
@@ -146,20 +180,121 @@ def test_submissions_execution(tmp_path, monkeypatch, capsys):
     with patch("subprocess.run") as mock_run:
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = "List of submissions..."
-        mock_run.return_value = mock_result
+        mock_result.stdout = (
+            "ref,fileName,date,description,status,publicScore,privateScore\n"
+            "54814340,submission.tar.gz,2026-07-18 18:59:31.567000,"
+            "Registry v30 with a deliberately long description that should fit cleanly in one compact row,"
+            "SubmissionStatus.COMPLETE,600.0,\n"
+            "54366384,submission.tar.gz,2026-07-06 12:00:00.000000,Registry v2,"
+            "SubmissionStatus.COMPLETE,500.0,\n"
+            "54366385,submission.tar.gz,2026-07-06 13:00:00.000000,Registry v2,"
+            "SubmissionStatus.COMPLETE,650.0,\n"
+            "54365896,submission.tar.gz,2026-07-05 14:53:53.527000,Registry v2,SubmissionStatus.ERROR,,\n"
+            "54324742,submission.tar.gz,2026-07-04 08:48:22.273000,Registry v1,"
+            "SubmissionStatus.COMPLETE,999.0,\n"
+        )
+
+        def fake_run(cmd, **_kwargs):
+            if "submissions" in cmd:
+                return mock_result
+            leaderboard_dir = Path(cmd[cmd.index("-p") + 1])
+            with zipfile.ZipFile(leaderboard_dir / "leaderboard.zip", "w") as archive:
+                archive.writestr(
+                    "leaderboard.csv",
+                    "Rank,TeamId,TeamName,LastSubmissionDate,Score,SubmissionCount,TeamMemberUserNames\n"
+                    "1,1,A,2026-07-18,900.0,1,a\n"
+                    "2,2,B,2026-07-18,700.0,1,b\n"
+                    "3,3,Us,2026-07-18,650.0,2,us\n",
+                )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        from types import SimpleNamespace
+
+        mock_run.side_effect = fake_run
 
         pipeline.submissions()
-        captured = capsys.readouterr()
+        lines = capsys.readouterr().out.splitlines()
 
-        assert "List of submissions..." in captured.out
+        assert lines[0].split() == ["date", "status", "score", "file", "description"]
+        assert "2026-07-18 18:59" in lines[2]
+        assert "COMPLETE" in lines[2]
+        assert "SubmissionStatus" not in "\n".join(lines)
+        assert "600.0" in lines[2]
+        error_line = next(line for line in lines if "ERROR" in line)
+        assert "  -  " in error_line
+        assert "..." in lines[2]
+        assert "" not in lines
+        ranking = lines.index("Current registry models (latest 2; best public score)")
+        assert lines[ranking + 3].split() == ["v2", "650.0", "3", "2"]
+        assert lines[ranking + 4].split() == ["v30", "600.0", "4", "1"]
+        assert all("v1" not in line for line in lines[ranking:])
 
         # Verify subprocess was called with expected arguments
-        args, _ = mock_run.call_args
+        args, _ = mock_run.call_args_list[0]
         cmd = args[0]
         assert "competitions" in cmd
         assert "submissions" in cmd
         assert "dummy-comp" in cmd
+        assert "--csv" in cmd
+        leaderboard_cmd = mock_run.call_args_list[1][0][0]
+        assert "leaderboard" in leaderboard_cmd
+        assert "--download" in leaderboard_cmd
+
+
+def test_format_submissions_preserves_multiline_csv_description():
+    csv_text = (
+        "Warning: upgrade available\n"
+        "fileName,date,description,status,publicScore,privateScore\n"
+        'submission.tar.gz,2026-07-18 18:59:31.567000,"first line\nWarning: second line",'
+        "SubmissionStatus.COMPLETE,600.0,\n"
+    )
+
+    output = format_submissions(csv_text)
+
+    assert "first line Warning: second line" in output
+    with pytest.raises(ValueError, match="at least 3"):
+        format_submissions(csv_text, description_width=2)
+
+
+def test_format_submissions_ranks_latest_models_by_timestamp_including_unscored():
+    csv_text = (
+        "fileName,date,description,status,publicScore,privateScore\n"
+        "submission.tar.gz,2026-07-01 12:00:00.000000,Registry v2,"
+        "SubmissionStatus.COMPLETE,700.0,\n"
+        "submission.tar.gz,2026-07-18 12:00:00.000000,Registry v40,"
+        "SubmissionStatus.ERROR,,\n"
+        "submission.tar.gz,2026-07-17 12:00:00.000000,Registry v30,"
+        "SubmissionStatus.COMPLETE,600.0,\n"
+    )
+    leaderboard_csv = (
+        "Rank,TeamId,TeamName,LastSubmissionDate,Score,SubmissionCount,TeamMemberUserNames\n"
+        "1,1,A,2026-07-18,900.0,1,a\n"
+        "2,2,B,2026-07-18,650.0,1,b\n"
+    )
+
+    lines = format_submissions(csv_text, leaderboard_csv=leaderboard_csv).splitlines()
+    ranking = lines.index("Current registry models (latest 2; best public score)")
+
+    assert lines[ranking + 3].split() == ["v30", "600.0", "3", "1"]
+    assert lines[ranking + 4].split() == ["v40", "-", "-", "0"]
+    assert all("v2" not in line for line in lines[ranking:])
+
+
+def test_model_submission_stats_reports_attempts_and_best_public_rank():
+    from kego.pipeline.runner import model_submission_stats
+
+    submissions = (
+        "fileName,date,description,status,publicScore,privateScore\n"
+        "submission.tar.gz,2026-07-18,Registry v30,SubmissionStatus.COMPLETE,600.0,\n"
+        "submission.tar.gz,2026-07-17,Registry v30,SubmissionStatus.ERROR,,\n"
+        "submission.tar.gz,2026-07-16,Registry v2,SubmissionStatus.COMPLETE,650.0,\n"
+    )
+    public_board = "Rank,TeamName,Score\n1,A,900.0\n2,B,700.0\n3,Us,650.0\n"
+
+    assert model_submission_stats(submissions, public_board) == {
+        "30": {"submitted": "yes (2)", "public_rank": "4"},
+        "2": {"submitted": "yes", "public_rank": "3"},
+    }
 
 
 def test_cache_status_execution(tmp_path, monkeypatch, capsys):
@@ -671,11 +806,23 @@ def test_models_parser():
     assert args.sort_by == "elo"  # default now ranks by league Elo
     assert args.breakdown is False
     assert args.color is None
+    assert args.mlflow is False
 
-    args = parser.parse_args(["models", "--task", "x", "--sort-by", "gauntlet_avg", "-b", "--color"])
+    args = parser.parse_args(["models", "--task", "x", "--sort-by", "gauntlet_avg", "-b", "--color", "--mlflow"])
     assert args.sort_by == "gauntlet_avg"
     assert args.breakdown is True
     assert args.color is True
+    assert args.mlflow is True
+
+
+def test_mlflow_run_link_targets_run_page():
+    from kego.pipeline.cli import _mlflow_run_link
+
+    assert (
+        _mlflow_run_link("http://omarchyd:5000/", "pokemon experiment", "run/123")
+        == "http://omarchyd:5000/#/experiments/pokemon%20experiment/runs/run%2F123"
+    )
+    assert _mlflow_run_link("sqlite:///tracking.db", "1", "abc") == "-"
 
 
 def test_rule_agent_rows_are_available_for_pokemon_models():
@@ -710,6 +857,14 @@ def test_registry_agent_name_derives_legacy_name():
     assert _registry_agent_name(row) == "v2 mcts-abomasnow 256/4/512/2/2 @100"
 
 
+def test_registry_agent_name_does_not_mislabel_trained_through_as_checkpoint_epoch():
+    from kego.pipeline.cli import _registry_agent_name
+
+    row = {"version": "30", "variant": "large256_abomasnow", "completed_iterations": "300"}
+
+    assert _registry_agent_name(row) == "v30 large256_abomasnow"
+
+
 def test_models_forced_color_shows_elo_trust_legend(monkeypatch, capsys):
     from kego.pipeline import cli
 
@@ -728,6 +883,65 @@ def test_models_forced_color_shows_elo_trust_legend(monkeypatch, capsys):
     assert "Registry v1" in out
     assert "\x1b[32m1700\x1b[0m" in out
     assert "created" in out
+
+
+def test_models_shows_submission_status_and_best_public_rank(monkeypatch, capsys):
+    from kego.pipeline import cli
+
+    monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr(
+        "kego.tracking.leaderboard",
+        lambda uri, task, sort_by: [{"version": "30", "elo": "1700"}, {"version": "31", "elo": "1600"}],
+    )
+    monkeypatch.setattr(
+        Pipeline,
+        "model_submission_stats",
+        lambda _pipeline: {"30": {"submitted": "yes (2)", "public_rank": "4"}},
+    )
+
+    assert cli.main(["models", "--task", "pokemon-tcg-ai-battle", "--no-color"]) == 0
+    out = capsys.readouterr().out
+
+    assert "submitted" in out
+    assert "public_rank" in out
+    row30 = next(line for line in out.splitlines() if "Registry v30" in line)
+    row31 = next(line for line in out.splitlines() if "Registry v31" in line)
+    assert "yes (2)" in row30 and "4" in row30
+    assert "-" in row31
+
+
+def test_models_mlflow_adds_originating_run_links(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    from kego.pipeline import cli
+
+    monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://omarchyd:5000")
+    monkeypatch.setattr(
+        "kego.tracking.leaderboard",
+        lambda uri, task, sort_by: [
+            {"version": "30", "elo": "1700", "run_id": "registration30", "training_run_id": "run30"},
+            {"version": "31", "elo": "1600", "run_id": None},
+        ],
+    )
+    monkeypatch.setattr(Pipeline, "model_submission_stats", lambda _pipeline: {})
+
+    class FakeClient:
+        def __init__(self, tracking_uri):
+            assert tracking_uri == "http://omarchyd:5000"
+
+        def get_run(self, run_id):
+            assert run_id == "run30"
+            return SimpleNamespace(info=SimpleNamespace(experiment_id="42"))
+
+    monkeypatch.setattr("mlflow.tracking.MlflowClient", FakeClient)
+
+    assert cli.main(["models", "--task", "pokemon-tcg-ai-battle", "--mlflow", "--no-color"]) == 0
+    out = capsys.readouterr().out
+
+    assert "mlflow" in out
+    assert "http://omarchyd:5000/#/experiments/42/runs/run30" in out
 
 
 def test_models_no_color_suppresses_elo_trust_colors(monkeypatch, capsys):
@@ -858,6 +1072,8 @@ def test_league_parser():
             "outputs/cache",
             "--partial-save-every",
             "123",
+            "--stall-timeout",
+            "45",
         ]
     )
 
@@ -870,6 +1086,13 @@ def test_league_parser():
     assert args.write_ratings is False
     assert args.cache_dir == "outputs/cache"
     assert args.partial_save_every == 123
+    assert args.stall_timeout == 45
+
+
+@pytest.mark.parametrize("value", ["-1", "nan", "inf"])
+def test_league_parser_rejects_invalid_stall_timeout(value):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["league", "--stall-timeout", value])
 
 
 def test_league_matrix_parser():

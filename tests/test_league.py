@@ -1,10 +1,23 @@
 import importlib.util
+import io
 import json
 import math
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from kego.tracking.league import Rating, expected_score, rate_round, results_from_winmatrix, update_player
+
+
+def _checkpoint_bytes(payload: str = "w") -> bytes:
+    """Minimal zip-valid bytes: torch>=1.6 checkpoints are zip archives and run_league
+    rejects non-zip .pth files as truncated downloads."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("data", payload)
+    return buf.getvalue()
 
 
 def test_update_player_matches_glickman_example():
@@ -64,9 +77,9 @@ def test_download_checkpoint_uses_version_checkpoint_filename(tmp_path):
 
     artifact_dir = tmp_path / "artifact" / "checkpoint"
     artifact_dir.mkdir(parents=True)
-    (artifact_dir / "mcts.pth").write_bytes(b"old")
+    (artifact_dir / "mcts.pth").write_bytes(_checkpoint_bytes("old"))
     expected = artifact_dir / "mcts_model_iter50.pth"
-    expected.write_bytes(b"new")
+    expected.write_bytes(_checkpoint_bytes("new"))
 
     class Client:
         def download_artifacts(self, run_id, artifact_path, dst_path):
@@ -92,10 +105,38 @@ def test_download_checkpoint_uses_cached_single_pth_without_filename_tag(tmp_pat
     cache = tmp_path / "cache"
     cache.mkdir()
     expected = cache / "mcts_small192_selfplay48_train100.pth"
-    expected.write_bytes(b"w")
+    expected.write_bytes(_checkpoint_bytes())
     version = SimpleNamespace(run_id="run1", source="/remote/checkpoint", tags={})
 
     assert Path(module.download_checkpoint(object(), version, str(cache), debug=False)) == expected
+
+
+def test_download_checkpoint_discards_corrupt_cache_and_refetches(tmp_path):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # A truncated download from a previous broken run must not satisfy the cache.
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    corrupt = cache / "mcts.pth"
+    corrupt.write_bytes(b"partial-download")
+
+    artifact_dir = tmp_path / "artifact" / "checkpoint"
+    artifact_dir.mkdir(parents=True)
+    good = artifact_dir / "mcts.pth"
+    good.write_bytes(_checkpoint_bytes("good"))
+
+    class Client:
+        def download_artifacts(self, run_id, artifact_path, dst_path):
+            return str(artifact_dir)
+
+    version = SimpleNamespace(run_id="run1", source=f"file://{artifact_dir}", tags={})
+
+    out = Path(module.download_checkpoint(Client(), version, str(cache), debug=True))
+    assert out == good
+    assert not corrupt.exists()  # corrupt file was deleted, not reused
 
 
 def test_registry_cache_helpers_use_stable_run_ids(tmp_path):
@@ -137,7 +178,7 @@ def test_download_checkpoint_discovers_remote_pth_before_scp(tmp_path, monkeypat
             )
         assert cmd[0] == "scp"
         dest = Path(cmd[-1])
-        dest.write_bytes(b"weights")
+        dest.write_bytes(_checkpoint_bytes("weights"))
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -145,7 +186,7 @@ def test_download_checkpoint_discovers_remote_pth_before_scp(tmp_path, monkeypat
     out = Path(module.download_checkpoint(Client(), version, str(tmp_path / "cache"), debug=False))
 
     assert out.name == "mcts_selfplay96_train100.pth"
-    assert out.read_bytes() == b"weights"
+    assert out.read_bytes() == _checkpoint_bytes("weights")
     assert calls[0][:4] == ["ssh", "-o", "BatchMode=yes", "-o"]
     assert calls[1][0] == "scp"
 
@@ -213,6 +254,39 @@ def test_registry_league_refuses_to_guess_missing_deck_tag():
     assert "Refusing to guess a deck for registry-backed league evaluation" in content
 
 
+def test_instantiate_mcts_agent_binds_configured_instance(monkeypatch):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Agent:
+        def __init__(self, **config):
+            self.config = config
+
+        def act(self, _observation):
+            return self.config["model_path"], self.config["deck"]
+
+    package = SimpleNamespace(
+        MCTSTransformerAgent=Agent,
+        agent=lambda _observation: (_ for _ in ()).throw(RuntimeError("default agent was used")),
+    )
+    monkeypatch.setattr(module, "load_agent", lambda _path: package)
+    monkeypatch.setattr(module, "load_deck", lambda _path: [1] * 60)
+
+    loaded = module.instantiate_agent(
+        {
+            "type": "mcts",
+            "file": "mcts",
+            "deck": "abomasnow.csv",
+            "model_path": "checkpoint.pth",
+            "model_args": (256, 4, 512, 2, 2),
+        }
+    )
+
+    assert loaded["mod"].agent({}) == ("checkpoint.pth", "abomasnow.csv")
+
+
 def test_aggregate_completed_results_skips_pending_and_failed_games():
     league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
     spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
@@ -225,9 +299,34 @@ def test_aggregate_completed_results_skips_pending_and_failed_games():
         3,
     )
 
-    assert completed == 3
+    assert completed == 2
     assert wins.tolist() == [[0, 1, 0], [1, 0, 0], [0, 0, 0]]
     assert games.tolist() == [[0, 2, 0], [2, 0, 0], [0, 0, 0]]
+
+
+def test_indexed_game_failure_aborts_league(monkeypatch):
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "_run_single_game", lambda _payload: -1)
+
+    with pytest.raises(RuntimeError, match="game 7 failed"):
+        module._run_single_game_indexed((object(), 7))
+
+
+def test_pool_results_fail_when_no_game_completes_before_timeout():
+    league_path = Path(__file__).resolve().parents[1] / "competitions" / "pokemon-tcg-ai-battle" / "run_league.py"
+    spec = importlib.util.spec_from_file_location("pokemon_run_league", league_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class StalledResults:
+        def next(self, timeout):
+            raise module.mp.TimeoutError
+
+    with pytest.raises(module.LeagueGameError, match="No league game completed for 5s"):
+        list(module.iter_pool_results(StalledResults(), total=1, stall_timeout=5))
 
 
 def test_filter_worse_versions():

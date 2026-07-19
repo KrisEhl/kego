@@ -55,6 +55,7 @@ def test_tracker_logs_metric_and_tags(tmp_path):
     exp = mlflow.get_experiment_by_name("exp1")
     runs = mlflow.search_runs([exp.experiment_id])
     assert len(runs) == 1
+    assert t.run_id == runs.iloc[0]["run_id"]
     row = runs.iloc[0]
     assert row["metrics.gauntlet_avg"] == 68.5
     assert row["tags.machine"] == "m5"

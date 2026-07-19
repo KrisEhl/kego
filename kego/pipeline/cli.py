@@ -17,6 +17,15 @@ from __future__ import annotations
 import argparse
 
 
+def finite_nonnegative_float(raw: str) -> float:
+    import math
+
+    value = float(raw)
+    if not math.isfinite(value) or value < 0:
+        raise argparse.ArgumentTypeError("must be a finite non-negative number")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kego")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -50,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     tune.add_argument("--trials", type=int, default=50)
 
     submit = sub.add_parser("submit", parents=[common], help="submit to Kaggle")
+    submit.add_argument("version", nargs="?", help="registry model version for simulation-agent submissions")
     submit.add_argument("--from-ensemble")
     submit.add_argument("--message", default="")
 
@@ -92,6 +102,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5000,
         help="save partial league artifacts to MLflow every N games; 0 disables (default: %(default)s)",
+    )
+    league.add_argument(
+        "--stall-timeout",
+        type=finite_nonnegative_float,
+        default=300,
+        help="fail if no game completes for N seconds; 0 disables (default: %(default)s)",
     )
     league.add_argument("--target", help="fleet machine name to dispatch to (rsync + SSH-launch); omit locally")
     league_sub = league.add_subparsers(dest="league_cmd")
@@ -162,12 +178,23 @@ def build_parser() -> argparse.ArgumentParser:
     models.add_argument(
         "--color", action=argparse.BooleanOptionalAction, default=None, help="color Elo by rating uncertainty"
     )
+    models.add_argument(
+        "--mlflow",
+        action="store_true",
+        help="show a direct link to each registry version's originating MLflow run",
+    )
     models_sub = models.add_subparsers(dest="models_cmd")
 
     models_prune = models_sub.add_parser(
         "prune", parents=[common], help="retire model versions from standings and league runs"
     )
-    models_prune.add_argument("versions", nargs="*", help="model version numbers to retire")
+    models_prune.add_argument(
+        "versions",
+        nargs="*",
+        metavar="VERSION",
+        help="version numbers to retire — the 'version' column of `kego models` "
+        "(e.g. `kego models prune 31 34`); omit when using --drop-worse",
+    )
     models_prune.add_argument(
         "--drop-worse",
         action="store_true",
@@ -183,11 +210,42 @@ def build_parser() -> argparse.ArgumentParser:
         "--drop-worse-k",
         type=float,
         default=1.96,
-        help="confidence multiplier for drop-worse (default 1.96 for 95% confidence interval)",
+        help="confidence multiplier for drop-worse (default %(default)s for a 95%% confidence interval)",
     )
 
     models_unprune = models_sub.add_parser("unprune", parents=[common], help="restore retired model versions")
-    models_unprune.add_argument("versions", nargs="+", help="model version numbers to restore")
+    models_unprune.add_argument(
+        "versions",
+        nargs="+",
+        metavar="VERSION",
+        help="version numbers to restore — the 'version' column of `kego models` (pruned versions "
+        "are hidden from standings; find them in the MLflow model registry under archived versions)",
+    )
+
+    logs = sub.add_parser("logs", parents=[common], help="view or tail the logs of an active/past fleet run")
+    logs.add_argument(
+        "target_or_run_id",
+        nargs="?",
+        help="fleet machine name or MLflow run ID prefix; if omitted, defaults to local latest log",
+    )
+    logs.add_argument(
+        "run_id",
+        nargs="?",
+        help="optional run ID prefix (only needed if target_or_run_id is specified as a machine name)",
+    )
+    logs.add_argument(
+        "--tail",
+        "-f",
+        action="store_true",
+        help="tail the log file continuously (like tail -f)",
+    )
+    logs.add_argument(
+        "--lines",
+        "-n",
+        type=int,
+        default=100,
+        help="number of lines to print from the end of the log (default: %(default)s)",
+    )
 
     return parser
 
@@ -232,13 +290,13 @@ def _train_agent_overrides(args) -> dict:
 
 def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, output: str | None, overrides: dict) -> int:
     """Ship the local tree to fleet machine ``target`` and SSH-launch training there (§5.4)."""
-    from pathlib import Path
 
     from kego.dispatch import DEFAULT_EXCLUDES, dispatch, other_competition_excludes
     from kego.fleet import git_sha, load_fleet, machine_name
+    from kego.fleet import repo_root as find_repo_root
     from kego.tracking import create_run, default_tracking_uri
 
-    repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+    repo_root = find_repo_root()
     fleet_path = repo_root / "fleet.toml"
     if not fleet_path.exists():
         print(f"No fleet.toml at {fleet_path}; cannot dispatch --target {target}.")
@@ -265,7 +323,7 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
         return 1
 
     cmd_args = ["train-agent", "--task", task_name]
-    if epochs:
+    if epochs is not None:
         cmd_args += ["--epochs", str(epochs)]
     if output:
         cmd_args += ["--output", output]
@@ -292,15 +350,15 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
 
 def _dispatch_league(task_name: str, target: str, args) -> int:
     import contextlib
-    from pathlib import Path
 
     from mlflow.tracking import MlflowClient
 
     from kego.dispatch import DEFAULT_EXCLUDES, dispatch, other_competition_excludes
     from kego.fleet import git_sha, load_fleet, machine_name
+    from kego.fleet import repo_root as find_repo_root
     from kego.tracking import create_run, default_tracking_uri
 
-    repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+    repo_root = find_repo_root()
     fleet_path = repo_root / "fleet.toml"
     if not fleet_path.exists():
         print(f"No fleet.toml at {fleet_path}; cannot dispatch --target {target}.")
@@ -344,6 +402,7 @@ def _dispatch_league(task_name: str, target: str, args) -> int:
     if args.include_local_mcts:
         cmd_args.append("--include-local-mcts")
     cmd_args += ["--partial-save-every", str(args.partial_save_every)]
+    cmd_args += ["--stall-timeout", str(args.stall_timeout)]
     cmd_args.append("--write-ratings" if args.write_ratings else "--no-write-ratings")
 
     excludes = DEFAULT_EXCLUDES + other_competition_excludes(repo_root, keep=task_name)
@@ -360,16 +419,204 @@ def _dispatch_league(task_name: str, target: str, args) -> int:
     return 0
 
 
+def _resolve_run_machine(task_name: str, run_id_prefix: str) -> tuple[str, str] | None:
+    import contextlib
+
+    from mlflow.tracking import MlflowClient
+
+    from kego.tracking import default_tracking_uri
+
+    with contextlib.suppress(Exception):
+        uri = default_tracking_uri()
+        client = MlflowClient(tracking_uri=uri)
+
+        # Try exact match first
+        if len(run_id_prefix) == 32:
+            with contextlib.suppress(Exception):
+                run = client.get_run(run_id_prefix)
+                machine = run.data.tags.get("machine")
+                if machine:
+                    return run_id_prefix, machine
+
+        # Search runs in the experiment
+        exp = client.get_experiment_by_name(task_name)
+        if exp:
+            runs = client.search_runs(
+                experiment_ids=[exp.experiment_id],
+                max_results=200,
+            )
+            for run in runs:
+                if run.info.run_id.startswith(run_id_prefix):
+                    machine = run.data.tags.get("machine")
+                    if machine:
+                        return run.info.run_id, machine
+
+        # Fallback: search all experiments
+        runs = client.search_runs(
+            experiment_ids=[e.experiment_id for e in client.search_experiments()],
+            max_results=200,
+        )
+        for run in runs:
+            if run.info.run_id.startswith(run_id_prefix):
+                machine = run.data.tags.get("machine")
+                if machine:
+                    return run.info.run_id, machine
+    return None
+
+
+def _run_logs(target_or_run_id: str | None, run_id_prefix: str | None, tail: bool, lines: int, task_name: str) -> int:
+    import contextlib
+    import shlex
+    import subprocess
+    from pathlib import Path
+
+    from kego.fleet import load_fleet
+    from kego.fleet import repo_root as find_repo_root
+
+    # 1. Resolve target machine
+    repo_root = find_repo_root()
+    fleet_path = repo_root / "fleet.toml"
+
+    target = target_or_run_id
+    run_id = run_id_prefix
+
+    if not target:
+        target = "local"
+        run_id = None
+    else:
+        # Check if the target is a valid machine name
+        fleet_machines = []
+        if fleet_path.exists():
+            with contextlib.suppress(Exception):
+                fleet_machines = [m.name for m in load_fleet(fleet_path).machines]
+
+        is_machine = target.lower() in ("local", "self", "localhost") or target in fleet_machines
+
+        if not is_machine:
+            run_id = target
+            target = None
+
+    if not target:
+        if not run_id:
+            print("Error: no run id or machine target given.")
+            return 1
+        # Resolve machine from run_id via MLflow lookup
+        print(f"Searching MLflow for run '{run_id}'...")
+        resolved = _resolve_run_machine(task_name, run_id)
+        if not resolved:
+            print(f"Error: Could not resolve machine for run ID prefix: {run_id}")
+            return 1
+        full_run_id, resolved_machine = resolved
+        print(f"Found run {full_run_id} on machine {resolved_machine}")
+        target = resolved_machine
+        run_id = full_run_id
+
+    is_local = target.lower() in ("local", "self", "localhost")
+    if not is_local:
+        with contextlib.suppress(Exception):
+            from kego.fleet import machine_name as get_machine_name
+
+            if target == get_machine_name():
+                is_local = True
+
+    if is_local:
+        log_dir = Path("~/.kego/logs").expanduser()
+        if not log_dir.exists():
+            print(f"Log directory {log_dir} does not exist locally.")
+            return 1
+
+        # Resolve target log file
+        if run_id:
+            matches = list(log_dir.glob(f"{run_id}*.log"))
+            if not matches:
+                print(f"No local log file matches prefix: {run_id}")
+                return 1
+            # Sort by modification time to get the newest match
+            matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            log_path = matches[0]
+        else:
+            logs = list(log_dir.glob("*.log"))
+            if not logs:
+                print(f"No local log files found in {log_dir}")
+                return 1
+            logs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            log_path = logs[0]
+
+        print(f"Viewing local log: {log_path}")
+        tail_cmd = ["tail", "-n", str(lines)]
+        if tail:
+            tail_cmd.append("-f")
+        tail_cmd.append(str(log_path))
+        try:
+            res = subprocess.run(tail_cmd)
+        except KeyboardInterrupt:
+            return 0
+        return res.returncode
+
+    # Remote target
+    if not fleet_path.exists():
+        print(f"No fleet.toml at {fleet_path}; cannot view remote logs for {target}.")
+        return 1
+    try:
+        machine = load_fleet(fleet_path).machine(target)
+    except KeyError as e:
+        print(f"Error: {e}")
+        return 1
+
+    # Find the correct log file on the remote machine
+    # We run a remote shell script to find the log path and execute tail
+    tail_flag = "-f" if tail else ""
+
+    if run_id:
+        # Match by prefix
+        remote_script = f"""
+        log_dir=~/.kego/logs
+        log_path=$(ls -dt $log_dir/{shlex.quote(run_id)}*.log 2>/dev/null | head -n 1)
+        if [ -z "$log_path" ]; then
+            echo "Error: No remote log file matches prefix: {run_id}" >&2
+            exit 1
+        fi
+        echo "Viewing log on {machine.name}: $log_path"
+        tail -n {lines} {tail_flag} "$log_path"
+        """
+    else:
+        # Latest log file
+        remote_script = f"""
+        log_dir=~/.kego/logs
+        log_path=$(ls -dt $log_dir/*.log 2>/dev/null | head -n 1)
+        if [ -z "$log_path" ]; then
+            echo "Error: No remote log files found in $log_dir on {machine.name}" >&2
+            exit 1
+        fi
+        echo "Viewing latest log on {machine.name}: $log_path"
+        tail -n {lines} {tail_flag} "$log_path"
+        """
+
+    # Run the tail command over ssh. We want ssh to be interactive so we don't pass -f or -n.
+    # We can pass -t if we want a pseudo-tty (helpful for tail -f, propagating signals/Ctrl+C).
+    ssh_cmd = ["ssh"]
+    if tail:
+        ssh_cmd.append("-t")
+    ssh_cmd += [machine.ssh, f"bash -lc {shlex.quote(remote_script)}"]
+
+    try:
+        res = subprocess.run(ssh_cmd)
+    except KeyboardInterrupt:
+        return 0
+    return res.returncode
+
+
 def _run_league_locally(task_name: str, args) -> int:
     import runpy
     import sys
-    from pathlib import Path
+
+    from kego.fleet import repo_root as find_repo_root
 
     if task_name != "pokemon-tcg-ai-battle":
         print(f"Task '{task_name}' does not implement a league runner.")
         return 1
 
-    repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+    repo_root = find_repo_root()
     script = repo_root / "competitions" / task_name / "run_league.py"
     argv = [
         str(script),
@@ -390,6 +637,7 @@ def _run_league_locally(task_name: str, args) -> int:
     if args.include_local_mcts:
         argv.append("--include-local-mcts")
     argv += ["--partial-save-every", str(args.partial_save_every)]
+    argv += ["--stall-timeout", str(args.stall_timeout)]
 
     old_argv = sys.argv
     try:
@@ -446,13 +694,28 @@ def _show_league_matrix(task_name: str, run_id: str | None = None) -> int:
 
 def _load_league_module(task_name: str):
     import importlib.util
-    from pathlib import Path
 
-    repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
+    from kego.fleet import repo_root as find_repo_root
+
+    repo_root = find_repo_root()
     script = repo_root / "competitions" / task_name / "run_league.py"
     spec = importlib.util.spec_from_file_location(f"{task_name}_run_league", script)
     if not spec or not spec.loader:
         raise RuntimeError(f"Could not load league runner at {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_submission_module(task_name: str):
+    import importlib.util
+
+    from kego.fleet import repo_root as find_repo_root
+
+    script = find_repo_root() / "competitions" / task_name / "submit_leader.py"
+    spec = importlib.util.spec_from_file_location(f"{task_name}_submit", script)
+    if not spec or not spec.loader:
+        raise RuntimeError(f"Could not load submission helper at {script}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -717,6 +980,18 @@ def _numeric_row_value(row: dict, key: str) -> float:
         return float("-inf")
 
 
+def _mlflow_run_link(tracking_uri: str, experiment_id: str, run_id: str) -> str:
+    """Build an MLflow UI link when the tracking URI is browser-accessible."""
+    from urllib.parse import quote, urlparse
+
+    if urlparse(tracking_uri).scheme not in {"http", "https"}:
+        return "-"
+    return (
+        f"{tracking_uri.rstrip('/')}/#/experiments/{quote(str(experiment_id), safe='')}"
+        f"/runs/{quote(str(run_id), safe='')}"
+    )
+
+
 def _use_color(force: bool | None = None) -> bool:
     import os
     import sys
@@ -743,6 +1018,9 @@ def main(argv: list[str] | None = None) -> int:
     from kego.pipeline.runner import Pipeline
 
     task_name = getattr(args, "task", None) or detect_task()
+
+    if args.command == "logs":
+        return _run_logs(args.target_or_run_id, args.run_id, args.tail, args.lines, task_name)
 
     if args.command == "sync":
         import json
@@ -833,9 +1111,25 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         rows = leaderboard(uri, task_name, sort_by=args.sort_by)
+        submission_stats = Pipeline(PipelineConfig(task=task_name)).model_submission_stats()
+        mlflow_client = MlflowClient(tracking_uri=uri) if args.mlflow else None
         for row in rows:
+            row.setdefault("trained", row.get("completed_iterations") or row.get("epoch") or "-")
             row.setdefault("agent", _registry_agent_name(row))
             row.setdefault("type", "registry")
+            row.update(submission_stats.get(str(row.get("version")), {"submitted": "-", "public_rank": "-"}))
+            training_run_id = row.get("training_run_id") or row.get("run_id")
+            if mlflow_client and training_run_id:
+                try:
+                    run = mlflow_client.get_run(training_run_id)
+                    # Older registry versions only reference their artifact-registration
+                    # run. Do not present that empty run as the metrics-bearing trainer.
+                    if not row.get("training_run_id") and not run.data.metrics:
+                        row["mlflow"] = "-"
+                    else:
+                        row["mlflow"] = _mlflow_run_link(uri, run.info.experiment_id, training_run_id)
+                except Exception:
+                    row["mlflow"] = "-"
         rows = [*rows, *_rule_agent_rows(task_name)]
         rows = sorted(rows, key=lambda row: _numeric_row_value(row, args.sort_by), reverse=True)
         seen: set[str] = set()
@@ -850,14 +1144,19 @@ def main(argv: list[str] | None = None) -> int:
                 "elo_rd",
                 "games",
                 "gauntlet_avg",
+                "submitted",
+                "public_rank",
                 "deck",
                 "epoch",
+                "trained",
                 "machine",
                 "git_sha",
                 "created",
                 "version",
             ]
         cols = [c for c in base if not (c in seen or seen.add(c))]
+        if args.mlflow:
+            cols.append("mlflow")
         print(f"{task_name} — {len(rows)} agents · tracking {uri}")
         use_color = _use_color(args.color)
         if "elo" in cols and use_color:
@@ -976,9 +1275,16 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "submit":
         from kego.pipeline.runner import RunOutcome
 
+        message = args.message
+        if task_name == "pokemon-tcg-ai-battle":
+            prepared = _load_submission_module(task_name).prepare_submission(args.version)
+            message = message or prepared["message"]
+        elif args.version:
+            print(f"Error: registry version arguments are not supported for task {task_name!r}.")
+            return 1
         outcome = RunOutcome(predictions=[])
         try:
-            pipeline.submit(outcome, message=args.message)
+            pipeline.submit(outcome, message=message)
         except NotImplementedError as e:
             print(f"Error: {e}")
             return 1

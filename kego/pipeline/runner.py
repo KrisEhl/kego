@@ -27,6 +27,175 @@ from kego.pipeline.task import Task, get_task
 from kego.pipeline.train import TrainContext, Trainer
 
 
+def model_submission_stats(csv_text: str, leaderboard_csv: str | None = None) -> dict[str, dict[str, str]]:
+    """Summarize Kaggle submission attempts and best public rank by registry version."""
+    import csv
+    import io
+    import re
+
+    base_header = "fileName,date,description,status,publicScore,privateScore"
+    starts = [start for header in (f"ref,{base_header}", base_header) if (start := csv_text.find(header)) >= 0]
+    if not starts:
+        return {}
+
+    stats: dict[str, dict[str, float | int | None]] = {}
+    for row in csv.DictReader(io.StringIO(csv_text[min(starts) :])):
+        match = re.search(r"\bRegistry v(\d+)\b", " ".join((row.get("description") or "").split()))
+        if not match:
+            continue
+        values = stats.setdefault(match.group(1), {"attempts": 0, "best_score": None})
+        values["attempts"] = int(values["attempts"] or 0) + 1
+        status = (row.get("status") or "").removeprefix("SubmissionStatus.")
+        if status != "COMPLETE" or not row.get("publicScore"):
+            continue
+        try:
+            score = float(row["publicScore"])
+        except (TypeError, ValueError):
+            continue
+        best = values["best_score"]
+        values["best_score"] = score if best is None else max(float(best), score)
+
+    public_scores = []
+    if leaderboard_csv:
+        for row in csv.DictReader(io.StringIO(leaderboard_csv.lstrip("\ufeff"))):
+            try:
+                public_scores.append(float(row["Score"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+
+    return {
+        version: {
+            "submitted": "yes" if values["attempts"] == 1 else f"yes ({values['attempts']})",
+            "public_rank": (
+                str(1 + sum(score > float(values["best_score"]) for score in public_scores))
+                if public_scores and values["best_score"] is not None
+                else "-"
+            ),
+        }
+        for version, values in stats.items()
+    }
+
+
+def format_submissions(csv_text: str, description_width: int = 64, leaderboard_csv: str | None = None) -> str:
+    import csv
+    import io
+
+    if description_width < 3:
+        raise ValueError("description_width must be at least 3")
+    base_header = "fileName,date,description,status,publicScore,privateScore"
+    header_starts = [start for header in (f"ref,{base_header}", base_header) if (start := csv_text.find(header)) >= 0]
+    if not header_starts:
+        return "No submissions found."
+    header_start = min(header_starts)
+    rows = []
+    for raw in csv.DictReader(io.StringIO(csv_text[header_start:])):
+        full_description = " ".join((raw.get("description") or "").split())
+        description = full_description
+        if len(description) > description_width:
+            description = f"{description[: description_width - 3]}..."
+        status = (raw.get("status") or "-").removeprefix("SubmissionStatus.")
+        rows.append(
+            {
+                "date": (raw.get("date") or "-")[:16],
+                "status": status,
+                "score": raw.get("publicScore") or raw.get("privateScore") or "-",
+                "file": raw.get("fileName") or "-",
+                "description": description or "-",
+                "_date": raw.get("date") or "",
+                "_description": full_description,
+                "_public_score": raw.get("publicScore") or "",
+            }
+        )
+    if not rows:
+        return "No submissions found."
+    rows.sort(key=lambda row: row["_date"], reverse=True)
+    columns = ["date", "status", "score", "file", "description"]
+    widths = {column: max(len(column), *(len(row[column]) for row in rows)) for column in columns}
+    widths["description"] = min(widths["description"], description_width)
+
+    def render(values: dict[str, str]) -> str:
+        return "  ".join(
+            values[column].rjust(widths[column]) if column == "score" else values[column].ljust(widths[column])
+            for column in columns
+        ).rstrip()
+
+    header = render({column: column for column in columns})
+    separator = render({column: "-" * widths[column] for column in columns})
+    output = [header, separator, *(render(row) for row in rows)]
+
+    import re
+
+    current_versions = []
+    for row in rows:
+        if (match := re.search(r"\bRegistry v(\d+)\b", row["_description"])) and match.group(1) not in current_versions:
+            current_versions.append(match.group(1))
+            if len(current_versions) == 2:
+                break
+
+    models: dict[str, dict[str, float | int | None]] = {
+        version: {"best_score": None, "scored": 0} for version in current_versions
+    }
+    for row in rows:
+        match = re.search(r"\bRegistry v(\d+)\b", row["_description"])
+        if not match or row["status"] != "COMPLETE" or not row["_public_score"]:
+            continue
+        try:
+            score = float(row["_public_score"])
+        except ValueError:
+            continue
+        version = match.group(1)
+        if version not in current_versions:
+            continue
+        best_score = models[version]["best_score"]
+        models[version]["best_score"] = score if best_score is None else max(float(best_score), score)
+        models[version]["scored"] = int(models[version]["scored"] or 0) + 1
+
+    if models:
+        leaderboard_scores = []
+        if leaderboard_csv:
+            for leaderboard_row in csv.DictReader(io.StringIO(leaderboard_csv.lstrip("\ufeff"))):
+                try:
+                    leaderboard_scores.append(float(leaderboard_row["Score"]))
+                except (KeyError, TypeError, ValueError):
+                    continue
+        ranked = sorted(
+            models.items(),
+            key=lambda item: (
+                item[1]["best_score"] is None,
+                -float(item[1]["best_score"] or 0),
+                -int(item[0]),
+            ),
+        )
+        rank_rows = [
+            {
+                "model": f"v{version}",
+                "best_score": str(values["best_score"]) if values["best_score"] is not None else "-",
+                "public_rank": (
+                    str(1 + sum(score > float(values["best_score"]) for score in leaderboard_scores))
+                    if leaderboard_scores and values["best_score"] is not None
+                    else "-"
+                ),
+                "scored": str(values["scored"]),
+            }
+            for version, values in ranked
+        ]
+        rank_columns = ["model", "best_score", "public_rank", "scored"]
+        rank_widths = {column: max(len(column), *(len(row[column]) for row in rank_rows)) for column in rank_columns}
+
+        def render_rank(values: dict[str, str]) -> str:
+            return "  ".join(values[column].rjust(rank_widths[column]) for column in rank_columns)
+
+        output.extend(
+            [
+                "Current registry models (latest 2; best public score)",
+                render_rank({column: column for column in rank_columns}),
+                render_rank({column: "-" * rank_widths[column] for column in rank_columns}),
+                *(render_rank(row) for row in rank_rows),
+            ]
+        )
+    return "\n".join(output)
+
+
 def _is_port_open(address: str, timeout: float = 0.2) -> bool:
     import socket
     from urllib.parse import urlparse
@@ -117,7 +286,7 @@ else
     echo "GPU: N/A"
 fi
 echo "PROCS:"
-$PS_CMD 2>/dev/null | grep -E 'train-agent|train_agent|kego league|run_league' | grep -v grep || true
+$PS_CMD 2>/dev/null | grep -E 'train-agent|train_agent|kego league|run_league' | grep -v -E 'grep|ssh' || true
 echo "LOGS:"
 ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 20 | while read -r logpath; do
     TAIL_LINES=$(tail -c 20000 "$logpath" 2>/dev/null | tr '\r' '\n')
@@ -403,14 +572,11 @@ class Pipeline:
             # is never used: the job's cwd is the uploaded working_dir, and both
             # `import kego` and `import cg` resolve there (cwd wins over the editable
             # .pth on sys.path). A stale cluster checkout therefore cannot matter.
-            from pathlib import Path
+            from kego.fleet import repo_root as find_repo_root
 
-            # Repo root = nearest ancestor of this file containing .git (the repo
-            # whose kego/ + cg/ we want to upload), independent of the caller's cwd.
-            repo_root = next(
-                (p for p in Path(__file__).resolve().parents if (p / ".git").exists()),
-                Path.cwd(),
-            )
+            # Repo root = the repo whose kego/ + cg/ we want to upload,
+            # independent of the caller's cwd.
+            repo_root = find_repo_root()
 
             # Output is written to an absolute cluster path so it survives the
             # discarded working_dir and can be scp'd back.
@@ -420,7 +586,7 @@ class Pipeline:
                 cmd += f" --agent {kwargs['agent']}"
             if kwargs.get("variant"):
                 cmd += f" --variant {kwargs['variant']}"
-            if epochs:
+            if epochs is not None:
                 cmd += f" --epochs {epochs}"
             if remote_output:
                 cmd += f" --output {remote_output}"
@@ -671,8 +837,11 @@ class Pipeline:
             print("No active training runs found.")
 
         # 3. Check Fleet Status (from fleet.toml)
-        repo_root = next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), Path.cwd())
-        fleet_path = repo_root / "fleet.toml"
+        from kego.fleet import repo_root as find_repo_root
+
+        live_run_ids: set[str] = set()
+        polled_online: set[str] = set()
+        fleet_path = find_repo_root() / "fleet.toml"
         if fleet_path.exists():
             from kego.fleet import load_fleet
 
@@ -683,6 +852,13 @@ class Pipeline:
 
                     with concurrent.futures.ThreadPoolExecutor(max_workers=len(fleet.machines)) as executor:
                         results = list(executor.map(_poll_machine, fleet.machines))
+
+                    for res in results:
+                        if res["status"] == "Online":
+                            polled_online.add(res["name"])
+                            for _pid, run_desc, _last_log, _eta in res.get("runs", []):
+                                if len(run_desc) == 32:
+                                    live_run_ids.add(run_desc)
 
                     def gpu_label(res: dict) -> str:
                         value = res.get("gpu", "-").replace(" GB", "G")
@@ -754,33 +930,113 @@ class Pipeline:
             except Exception as e:
                 print(f"\nWarning: could not query fleet status from {fleet_path}: {e}")
 
-    def submissions(self) -> None:
+        # 4. Recent hub runs. A run that crashed, was OOM-killed, or lost its machine
+        # stays RUNNING in MLflow forever; cross-reference against the live PIDs polled
+        # above so dead "RUNNING" rows are called out instead of silently looking healthy.
+        from kego.tracking import default_tracking_uri
+
+        uri = default_tracking_uri(fleet_path if fleet_path.exists() else None)
+        if uri.startswith("http") and not _is_port_open(uri, timeout=0.5):
+            print(f"\nRecent Hub Runs: unavailable (hub MLflow unreachable at {uri})")
+            return
+        try:
+            from datetime import datetime
+
+            from mlflow.tracking import MlflowClient
+
+            client = MlflowClient(tracking_uri=uri)
+            experiment = client.get_experiment_by_name(self.task.name)
+            recent = (
+                client.search_runs([experiment.experiment_id], order_by=["attributes.start_time DESC"], max_results=10)
+                if experiment
+                else []
+            )
+        except Exception as e:
+            print(f"\nWarning: could not query recent runs from {uri}: {e}")
+            return
+        if not recent:
+            return
+
+        def _fmt_duration(ms: float) -> str:
+            secs = int(ms / 1000)
+            if secs < 60:
+                return f"{secs}s"
+            if secs < 3600:
+                return f"{secs // 60}m"
+            return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
+
+        now_ms = datetime.now().timestamp() * 1000
+        print(f"\nRecent Hub Runs ({self.task.name}):")
+        print("=" * 100)
+        print(f"{'RUN':<9} {'STATUS':<9} {'JOB':<18} {'MACHINE':<18} {'STARTED':<12} {'DURATION':<9} NOTE")
+        print("-" * 100)
+        stale_seen = False
+        for r in recent:
+            machine = r.data.tags.get("machine", "-")
+            job = r.data.tags.get("job", "train")
+            status = r.info.status
+            note = ""
+            if status == "RUNNING" and machine in polled_online and r.info.run_id not in live_run_ids:
+                status = "RUNNING?"
+                note = f"no live process on {machine}"
+                stale_seen = True
+            started = datetime.fromtimestamp(r.info.start_time / 1000).strftime("%m-%d %H:%M")
+            duration = _fmt_duration((r.info.end_time or now_ms) - r.info.start_time)
+            print(f"{r.info.run_id[:8]:<9} {status:<9} {job:<18} {machine:<18} {started:<12} {duration:<9} {note}")
+        print("=" * 100)
+        if stale_seen:
+            print("RUNNING? = still RUNNING in MLflow but no matching process on its (online) machine — likely")
+            print("crashed; check:  ssh <machine> 'tail -30 ~/.kego/logs/<run>.log'  and dmesg for OOM kills.")
+
+    def _submission_history(self) -> tuple[str, str | None]:
         import shutil
         import subprocess
         import sys
+        import tempfile
+        import zipfile
         from pathlib import Path
 
-        def get_kaggle_cmd() -> list[str]:
-            if shutil.which("kaggle"):
-                return ["kaggle"]
-            py_bin = Path(sys.executable).parent
-            kaggle_bin = py_bin / "kaggle"
-            if kaggle_bin.exists():
-                return [str(kaggle_bin)]
-            return ["kaggle"]
-
-        cmd = get_kaggle_cmd()
+        kaggle_bin = Path(sys.executable).parent / "kaggle"
+        cmd = ["kaggle"] if shutil.which("kaggle") else [str(kaggle_bin) if kaggle_bin.exists() else "kaggle"]
         competition = self.task.kaggle_slug
-
         result = subprocess.run(
-            [*cmd, "competitions", "submissions", "-c", competition],
+            [*cmd, "competitions", "submissions", "-c", competition, "--csv"],
             capture_output=True,
             text=True,
         )
-        if result.returncode == 0:
-            print(result.stdout)
-        else:
-            print(f"Error querying Kaggle submissions: {result.stderr}")
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "Kaggle submissions query failed")
+
+        leaderboard_csv = None
+        with tempfile.TemporaryDirectory() as tmp:
+            leaderboard_result = subprocess.run(
+                [*cmd, "competitions", "leaderboard", "-c", competition, "--download", "-p", tmp],
+                capture_output=True,
+                text=True,
+            )
+            archives = list(Path(tmp).glob("*.zip"))
+            if leaderboard_result.returncode == 0 and archives:
+                with zipfile.ZipFile(archives[0]) as archive:
+                    csv_names = [name for name in archive.namelist() if name.endswith(".csv")]
+                    if csv_names:
+                        leaderboard_csv = archive.read(csv_names[0]).decode("utf-8-sig")
+        return result.stdout, leaderboard_csv
+
+    def model_submission_stats(self) -> dict[str, dict[str, str]]:
+        """Return submission status and best public rank keyed by registry version."""
+        try:
+            submissions_csv, leaderboard_csv = self._submission_history()
+        except (OSError, RuntimeError):
+            return {}
+        return model_submission_stats(submissions_csv, leaderboard_csv)
+
+    def submissions(self) -> None:
+        try:
+            submissions_csv, leaderboard_csv = self._submission_history()
+        except (OSError, RuntimeError) as exc:
+            print(f"Error querying Kaggle submissions: {exc}")
+            return
+        print(format_submissions(submissions_csv, leaderboard_csv=leaderboard_csv))
 
     def cache(self, action: str) -> None:
         from pathlib import Path

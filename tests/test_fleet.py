@@ -223,3 +223,18 @@ def test_registration_summary_shows_gpus():
 
     msg = registration_summary(Machine(name="g", ssh="k@g", role="gpu", repo="/r", gpus=("rtx3090",)), added=True)
     assert "gpu" in msg and "rtx3090" in msg
+
+
+def test_repo_root_found_without_git_marker(tmp_path, monkeypatch):
+    """Fleet-dispatched trees are rsynced without .git; fleet.toml must anchor repo_root,
+    else remote league/train launches resolve doubled paths like
+    competitions/<task>/competitions/<task>/run_league.py."""
+    from kego.fleet import repo_root
+
+    repo = tmp_path / "repo"
+    comp = repo / "competitions" / "some-task"
+    comp.mkdir(parents=True)
+    (repo / "fleet.toml").write_text('[hub]\nname = "h"\nmlflow = "http://h:5000"\n')
+    monkeypatch.chdir(comp)
+    assert repo_root(anchor=comp / "x.py") == repo
+    assert repo_root() != comp  # cwd fallback must not return the competition dir

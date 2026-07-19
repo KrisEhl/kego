@@ -5,6 +5,21 @@ from kego.pipeline.config import PipelineConfig, expand_grid, load_config
 from kego.pipeline.tune import HPSpace
 
 
+def test_every_subcommand_help_renders():
+    """argparse %-expands ALL help strings (that's how %(default)s works), so an unescaped
+    literal % (e.g. "95% confidence") crashes -h with `TypeError: %c requires int or char`."""
+    parser = build_parser()
+
+    def walk(p):
+        p.format_help()
+        for action in p._actions:
+            if hasattr(action, "choices") and isinstance(action.choices, dict):
+                for sub in action.choices.values():
+                    walk(sub)
+
+    walk(parser)
+
+
 def test_hp_space_parse():
     # Test numeric parsing
     hp = HPSpace.parse("max_trees::0:9:log")
@@ -119,3 +134,130 @@ def test_expand_grid():
     assert specs[0].model.name == "xgb"
     assert specs[0].feature_set == "f1"
     assert specs[0].seed == 42
+
+
+def test_logs_subcommand_parser():
+    parser = build_parser()
+
+    # Parse target and default options
+    args = parser.parse_args(["logs", "omarchyl"])
+    assert args.command == "logs"
+    assert args.target_or_run_id == "omarchyl"
+    assert args.run_id is None
+    assert args.tail is False
+    assert args.lines == 100
+
+    # Parse with run ID, tail, and line count overrides
+    args = parser.parse_args(["logs", "omarchyd", "5034b3b0", "--tail", "--lines", "25"])
+    assert args.command == "logs"
+    assert args.target_or_run_id == "omarchyd"
+    assert args.run_id == "5034b3b0"
+    assert args.tail is True
+    assert args.lines == 25
+
+
+def test_run_logs_local_resolution(tmp_path, monkeypatch, capsys):
+    from kego.pipeline.cli import _run_logs
+
+    # Mock find_repo_root to return our tmp_path
+    monkeypatch.setattr("kego.fleet.repo_root", lambda *a: tmp_path)
+    monkeypatch.setattr("kego.fleet.machine_name", lambda *a: "localhost")
+
+    # Setup a mock local logs directory
+    local_logs_dir = tmp_path / ".kego" / "logs"
+    local_logs_dir.mkdir(parents=True)
+
+    # Create two dummy logs with different mtimes
+    log1 = local_logs_dir / "abc12345678901234567890123456789.log"
+    log1.write_text("log content 1")
+
+    log2 = local_logs_dir / "def12345678901234567890123456789.log"
+    log2.write_text("log content 2")
+
+    # Mock subprocess.run to just verify the tail call without actually executing
+    called_cmd = []
+
+    class FakeCompletedProcess:
+        returncode = 0
+
+    def mock_run(cmd, *args, **kwargs):
+        called_cmd.append(cmd)
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    # Mock Path.expanduser to resolve to tmp_path
+    from pathlib import Path
+
+    orig_expanduser = Path.expanduser
+    monkeypatch.setattr(
+        Path,
+        "expanduser",
+        lambda self: tmp_path / ".kego" / "logs" if str(self) == "~/.kego/logs" else orig_expanduser(self),
+    )
+
+    # Test latest log file resolution
+    ret = _run_logs("local", None, False, 100, "dummy-task")
+    assert ret == 0
+    assert called_cmd
+    # Should resolve to log2 because it is the latest
+    assert called_cmd[0] == ["tail", "-n", "100", str(log2)]
+
+    # Test matching log file by prefix
+    called_cmd.clear()
+    ret = _run_logs("local", "abc", True, 20, "dummy-task")
+    assert ret == 0
+    assert called_cmd
+    assert called_cmd[0] == ["tail", "-n", "20", "-f", str(log1)]
+
+
+def test_run_logs_mlflow_resolution(tmp_path, monkeypatch):
+    from kego.pipeline.cli import _run_logs
+
+    # Mock find_repo_root
+    monkeypatch.setattr("kego.fleet.repo_root", lambda *a: tmp_path)
+    monkeypatch.setattr("kego.fleet.machine_name", lambda *a: "localhost")
+
+    # Setup mock fleet.toml
+    fleet_toml = tmp_path / "fleet.toml"
+    fleet_toml.write_text("""
+[hub]
+name = "omarchyl"
+mlflow = "http://omarchyd:5000"
+
+[[machine]]
+name = "omarchyd"
+ssh = "user@omarchyd-host"
+role = "gpu"
+repo = "/some/repo"
+""")
+
+    # Mock _resolve_run_machine
+    resolved_calls = []
+
+    def mock_resolve(task_name, run_id):
+        resolved_calls.append((task_name, run_id))
+        return "5034b3b0ac8d474d810c4b9fa40cc659", "omarchyd"
+
+    monkeypatch.setattr("kego.pipeline.cli._resolve_run_machine", mock_resolve)
+
+    # Mock subprocess.run for ssh command
+    called_cmd = []
+
+    class FakeCompletedProcess:
+        returncode = 0
+
+    def mock_run(cmd, *args, **kwargs):
+        called_cmd.append(cmd)
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    # Call _run_logs with only run_id prefix (target_or_run_id = "5034b3b0")
+    ret = _run_logs("5034b3b0", None, False, 10, "pokemon-tcg-ai-battle")
+    assert ret == 0
+    assert resolved_calls == [("pokemon-tcg-ai-battle", "5034b3b0")]
+    assert called_cmd
+    # SSH should be invoked on user@omarchyd-host targeting omarchyd machine
+    assert "user@omarchyd-host" in called_cmd[0]
+    assert "5034b3b0ac8d474d810c4b9fa40cc659" in called_cmd[0][2]

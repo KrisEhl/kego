@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import re
 import shutil
@@ -17,6 +19,57 @@ from run_league import download_checkpoint
 from kego.tracking import default_tracking_uri, leaderboard
 
 
+def select_elo_leader(rows: list[dict]) -> dict:
+    if not rows:
+        raise ValueError("No models are registered in the MLflow model registry.")
+    return rows[0]
+
+
+def set_competition_value(content: str, key: str, value: str) -> str:
+    assignment = f'{key} = "{value}"'
+    section = re.search(r"(?ms)^\[competition\][^\n]*\n(?P<body>.*?)(?=^\[|\Z)", content)
+    if not section:
+        raise ValueError("kego.toml has no [competition] section")
+    body = section.group("body")
+    pattern = rf"(?m)^{re.escape(key)}\s*=\s*.*$"
+    updated = re.sub(pattern, assignment, body, count=1) if re.search(pattern, body) else f"{assignment}\n{body}"
+    return f"{content[: section.start('body')]}{updated}{content[section.end('body') :]}"
+
+
+def validate_variant_metadata(
+    version: str, deck_name: str, model_args_raw: str | None, variant_name: str, variant_path: Path
+) -> tuple[int, ...]:
+    import ast
+
+    import tomllib
+
+    parsed = ast.literal_eval(model_args_raw) if model_args_raw else None
+    model_args = tuple(parsed) if isinstance(parsed, (list, tuple)) else None
+    with open(variant_path, "rb") as f:
+        variant_config = tomllib.load(f)
+    variant_model_args = tuple(variant_config.get("model_args", ()))
+    expected_deck = f"decks/{deck_name}.csv"
+    if (variant_deck := variant_config.get("deck_file")) != expected_deck:
+        raise ValueError(
+            f"Registry version {version} deck {expected_deck!r} does not match "
+            f"variant {variant_name!r} deck {variant_deck!r}."
+        )
+    if model_args is None or model_args != variant_model_args:
+        raise ValueError(
+            f"Registry version {version} model_args {model_args!r} do not match "
+            f"variant {variant_name!r} model_args {variant_model_args!r}."
+        )
+    return model_args
+
+
+def resolve_registry_model(client, uri: str, requested_version: str | None):
+    if requested_version is None:
+        selected = select_elo_leader(leaderboard(uri, "pokemon-tcg-ai-battle", sort_by="elo"))
+        return selected, client.get_model_version("pokemon-tcg-ai-battle", selected["version"])
+    version = client.get_model_version("pokemon-tcg-ai-battle", str(requested_version))
+    return {"version": str(version.version), **dict(version.tags or {})}, version
+
+
 def _get_kaggle_cmd() -> list[str]:
     if shutil.which("kaggle"):
         return ["kaggle"]
@@ -27,7 +80,7 @@ def _get_kaggle_cmd() -> list[str]:
     return ["kaggle"]
 
 
-def main():
+def prepare_submission(requested_version: str | None = None) -> dict[str, object]:
     # 1. Parse kego.toml for configuration
     kego_toml_path = comp_dir / "kego.toml"
     if not kego_toml_path.exists():
@@ -61,29 +114,27 @@ def main():
         print("Please ensure your ~/.kaggle/kaggle.json credentials file is correctly set up.")
         sys.exit(1)
 
-    # 3. Connect to MLflow and find the leader
+    # 3. Connect to MLflow and resolve the requested registry version.
     uri = default_tracking_uri()
     print(f"Connecting to MLflow registry at {uri}...")
+    client = MlflowClient(tracking_uri=uri)
     try:
-        rows = leaderboard(uri, "pokemon-tcg-ai-battle", sort_by="elo")
+        selected_model, v_obj = resolve_registry_model(client, uri, requested_version)
     except Exception as e:
-        print(f"Error querying registry leaderboard: {e}")
+        target = f"version {requested_version}" if requested_version is not None else "Elo leader"
+        print(f"Error: Could not resolve registry {target} ({e}).")
         sys.exit(1)
 
-    if not rows:
-        print("Error: No models registered in the MLflow model registry.")
-        sys.exit(1)
-
-    leader = rows[0]
-    version = leader["version"]
-    elo = leader.get("elo", "N/A")
-    git_sha = leader.get("git_sha", "unknown")
-    machine = leader.get("machine", "unknown")
-    model_args_raw = leader.get("model_args")
-    deck_name = leader.get("deck")
+    version = selected_model["version"]
+    elo = selected_model.get("elo", "N/A")
+    git_sha = selected_model.get("git_sha", "unknown")
+    machine = selected_model.get("machine", "unknown")
+    model_args_raw = selected_model.get("model_args")
+    deck_name = selected_model.get("deck")
+    variant_name = selected_model.get("variant")
     if not deck_name:
         print(
-            f"Error: Leader registry version {version} is missing required 'deck' tag. "
+            f"Error: Selected registry version {version} is missing required 'deck' tag. "
             "Refusing to guess a deck for submission."
         )
         print("Set the tag explicitly, e.g.:")
@@ -94,23 +145,35 @@ def main():
             f"'pokemon-tcg-ai-battle', '{version}', 'deck', '<deck-name>')\""
         )
         sys.exit(1)
-    model_args = None
-    if model_args_raw:
-        try:
-            import ast
+    if not variant_name:
+        print(
+            f"Error: Registry version {version} is missing required 'variant' metadata. "
+            "Refusing to submit with stale local architecture settings."
+        )
+        sys.exit(1)
+    deck_path = comp_dir / "decks" / f"{deck_name}.csv"
+    variant_path = comp_dir / "configs" / "variants" / f"{variant_name}.toml"
+    if not deck_path.exists():
+        print(f"Error: Registry version {version} requires missing deck file {deck_path}.")
+        sys.exit(1)
+    if not variant_path.exists():
+        print(f"Error: Registry version {version} requires missing variant file {variant_path}.")
+        sys.exit(1)
+    try:
+        model_args = validate_variant_metadata(
+            str(version), str(deck_name), model_args_raw, str(variant_name), variant_path
+        )
+    except Exception as e:
+        print(f"Error: Could not validate registry version {version} metadata ({e}).")
+        sys.exit(1)
 
-            parsed = ast.literal_eval(model_args_raw)
-            if isinstance(parsed, (list, tuple)):
-                model_args = tuple(parsed)
-        except Exception:
-            pass
-
-    print("\nLeader model found:")
+    print("\nSelected model:")
     print(f"  Version: {version}")
     print(f"  Elo:     {elo}")
     print(f"  Machine: {machine}")
     print(f"  Git SHA: {git_sha}")
     print(f"  Deck:    {deck_name}")
+    print(f"  Variant: {variant_name}")
     if model_args:
         print(f"  Model Args: {model_args}")
 
@@ -118,24 +181,14 @@ def main():
     try:
         curr_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
         if not git_sha.startswith(curr_sha) and not curr_sha.startswith(git_sha):
-            print(f"\n[WARNING] Current git commit ({curr_sha}) does not match the leader's commit ({git_sha}).")
+            print(
+                f"\n[WARNING] Current git commit ({curr_sha}) does not match the selected model's commit ({git_sha})."
+            )
             print("Consider checking out the matching commit if there are breaking code changes.")
     except Exception:
         pass
 
-    # 4. Download leader checkpoint
-    client = MlflowClient(tracking_uri=uri)
-    try:
-        versions = client.search_model_versions("name='pokemon-tcg-ai-battle'")
-    except Exception as e:
-        print(f"Error searching model versions: {e}")
-        sys.exit(1)
-
-    v_obj = next((v for v in versions if str(v.version) == str(version)), None)
-    if v_obj is None:
-        print(f"Error: Could not find registry model version {version} object.")
-        sys.exit(1)
-
+    # 4. Download the selected checkpoint.
     local_dir = comp_dir / "outputs" / "cached_registry" / f"run_{v_obj.run_id}"
     print(f"\nDownloading checkpoint for Version {version} to {local_dir}...")
     try:
@@ -196,16 +249,26 @@ def main():
     # 7. Update kego.toml to use MCTS agent
     with open(kego_toml_path) as f:
         content = f.read()
-    content = re.sub(r'agent_file\s*=\s*".*"', 'agent_file = "agents/mcts"', content)
-    content = re.sub(r'deck_file\s*=\s*".*"', f'deck_file = "decks/{deck_name}.csv"', content)
+    content = set_competition_value(content, "agent_file", "agents/mcts")
+    content = set_competition_value(content, "deck_file", f"decks/{deck_name}.csv")
+    content = set_competition_value(content, "variant", variant_name)
     with open(kego_toml_path, "w") as f:
         f.write(content)
-    print(f"Updated kego.toml to use agents/mcts with decks/{deck_name}.csv")
+    print(f"Updated kego.toml to use agents/mcts, decks/{deck_name}.csv, and variant {variant_name}")
 
-    # 8. Submit to Kaggle
-    print("\nRunning submission command...")
-    cmd_submit = ["uv", "run", "kego", "submit", "--message", f"Registry v{version} (Elo {elo})"]
-    subprocess.run(cmd_submit, check=True)
+    return {"version": str(version), "elo": elo, "message": f"Registry v{version} (Elo {elo})"}
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Submit a Pokémon registry model to Kaggle.")
+    parser.add_argument("version", nargs="?", help="registry version; defaults to the current Elo leader")
+    args = parser.parse_args()
+    cmd = ["uv", "run", "kego", "submit"]
+    if args.version:
+        cmd.append(args.version)
+    subprocess.run(cmd, check=True)
 
 
 if __name__ == "__main__":

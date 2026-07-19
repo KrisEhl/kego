@@ -36,8 +36,9 @@ def create_run(uri: str, experiment: str, run_name: str | None = None, tags: dic
 
 
 class Tracker:
-    def __init__(self, active: bool) -> None:
+    def __init__(self, active: bool, run_id: str | None = None) -> None:
         self._active = active
+        self.run_id = run_id
 
     @classmethod
     def noop(cls) -> Tracker:
@@ -59,8 +60,8 @@ class Tracker:
             fail_fast_http()
             mlflow.set_tracking_uri(uri)
             mlflow.set_experiment(experiment)
-            mlflow.start_run(run_id=run_id, run_name=run_name, tags=tags or {})
-            return cls(active=True)
+            run = mlflow.start_run(run_id=run_id, run_name=run_name, tags=tags or {})
+            return cls(active=True, run_id=run.info.run_id)
         except Exception:  # missing/unreachable MLflow -> degrade to no-op
             return cls(active=False)
 
