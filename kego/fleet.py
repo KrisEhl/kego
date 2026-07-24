@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import json
 import os
@@ -57,6 +58,8 @@ def repo_root(anchor: str | Path | None = None) -> Path:
 
 def git_sha(path: str | Path) -> str:
     """Short git SHA of the repo at ``path``, or ``"unknown"`` if it is not a git repo."""
+    if env_sha := os.environ.get("KEGO_GIT_SHA"):
+        return env_sha
     try:
         out = subprocess.run(
             ["git", "-C", str(path), "rev-parse", "--short", "HEAD"],  # noqa: S607
@@ -66,6 +69,10 @@ def git_sha(path: str | Path) -> str:
         )
         return out.stdout.strip()
     except Exception:
+        with contextlib.suppress(Exception):
+            sha_file = Path(path) / ".kego_git_sha"
+            if sha_file.exists():
+                return sha_file.read_text().strip()
         return "unknown"
 
 

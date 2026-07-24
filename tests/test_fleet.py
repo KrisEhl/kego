@@ -238,3 +238,11 @@ def test_repo_root_found_without_git_marker(tmp_path, monkeypatch):
     monkeypatch.chdir(comp)
     assert repo_root(anchor=comp / "x.py") == repo
     assert repo_root() != comp  # cwd fallback must not return the competition dir
+
+
+def test_git_sha_env_var_override(monkeypatch, tmp_path):
+    from kego.fleet import git_sha
+
+    # KEGO_GIT_SHA overrides git command
+    monkeypatch.setenv("KEGO_GIT_SHA", "abcdef1")
+    assert git_sha(tmp_path) == "abcdef1"

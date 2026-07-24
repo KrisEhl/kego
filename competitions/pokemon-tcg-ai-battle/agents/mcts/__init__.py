@@ -13,6 +13,7 @@ from .model import (
     DecoderLayer,
     MyModel,
     PolicyValueNet,
+    ensure_tensors,
     model_args_from_state_dict,
 )
 from .opponent import ARCHETYPE_DECKS, SIGNATURE_MAP, OpponentHiddenCards, infer_opponent_hidden_cards
@@ -60,6 +61,7 @@ __all__ = [
     "encoder_size",
     "encode_actions",
     "encode_state",
+    "ensure_tensors",
     "enumerate_action_combinations",
     "eval_nn",
     "evaluate_position",

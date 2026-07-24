@@ -37,6 +37,19 @@ DECODER_SIZE = DECODER_CARD_OFFSET + (1 + DECODER_MAIN_FEATURE + 48) * CARD_COUN
 MODEL_ARGS = (256, 4, 512, 2, 2)
 
 
+def ensure_tensors(state_dict: dict) -> dict:
+    """Ensure all numpy array values in state_dict are converted to PyTorch Tensors."""
+    import numpy as np
+
+    res = {}
+    for k, v in state_dict.items():
+        if isinstance(v, np.ndarray):
+            res[k] = torch.from_numpy(v)
+        else:
+            res[k] = v
+    return res
+
+
 def _layer_count(state_dict: dict, prefix: str, suffix: str) -> int:
     found = []
     for key in state_dict:

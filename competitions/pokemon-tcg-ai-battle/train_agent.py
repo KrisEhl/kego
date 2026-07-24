@@ -31,6 +31,7 @@ from agents.mcts import (
     create_node,
     encode_actions,
     encode_state,
+    ensure_tensors,
     enumerate_action_combinations,
     infer_opponent_hidden_cards,
     model_args_from_state_dict,
@@ -710,13 +711,13 @@ def run_training_loop(
     model = PolicyValueNet(*actual_model_args).to(device)
     if resume_payload:
         assert resume is not None
-        model.load_state_dict(resume_payload["model_state"])
+        model.load_state_dict(ensure_tensors(resume_payload["model_state"]))
         print(
             f"Resuming compatible registry:{resume.version} from iteration {resume.completed_iterations}/{iterations}",
             flush=True,
         )
     elif init_state_dict is not None:
-        model.load_state_dict(init_state_dict)
+        model.load_state_dict(ensure_tensors(init_state_dict))
         print(f"Warm-started model from {init_checkpoint_path}", flush=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
     # Target-independent decay: iteration 250 has the same LR history whether the
@@ -811,7 +812,7 @@ def run_training_loop(
         torch.set_rng_state(resume_payload["torch_rng_state"].cpu())
         if torch.cuda.is_available() and resume_payload.get("cuda_rng_state"):
             torch.cuda.set_rng_state_all(resume_payload["cuda_rng_state"])
-        torch.save(best_state or resume_payload["model_state"], str(output_file))
+        torch.save(ensure_tensors(best_state or resume_payload["model_state"]), str(output_file))
     if start_iteration >= iterations:
         message = (
             f"Compatible checkpoint already reached target iteration {iterations}; no training needed."

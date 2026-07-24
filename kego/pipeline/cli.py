@@ -183,6 +183,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="show a direct link to each registry version's originating MLflow run",
     )
+    models.add_argument(
+        "--extended",
+        "-e",
+        action="store_true",
+        help="show extended metadata columns (machine, git_sha)",
+    )
     models_sub = models.add_subparsers(dest="models_cmd")
 
     models_prune = models_sub.add_parser(
@@ -344,7 +350,7 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
         print(f"Dispatch failed: {e}")
         return 1
     print(f"Launched on {machine.name}. Track metrics in MLflow at: {uri}")
-    print(f"To view remote logs, run:  kego logs {machine.name} {run_id}")
+    print(f"To view remote logs, run:\n  kego logs {machine.name} {run_id}")
     return 0
 
 
@@ -415,7 +421,7 @@ def _dispatch_league(task_name: str, target: str, args) -> int:
             MlflowClient(tracking_uri=uri).set_terminated(run_id, status="FAILED")
         return 1
     print(f"Launched league on {machine.name}. Track run/log metadata in MLflow at: {uri}")
-    print(f"To view remote logs, run:  kego logs {machine.name} {run_id}")
+    print(f"To view remote logs, run:\n  kego logs {machine.name} {run_id}")
     return 0
 
 
@@ -1154,7 +1160,10 @@ def main(argv: list[str] | None = None) -> int:
         seen: set[str] = set()
         if args.breakdown:
             wr_cols = sorted({k for r in rows for k in r if k.startswith("wr_")})
-            base = ["agent", "type", args.sort_by, "gauntlet_avg", *wr_cols, "created", "version"]
+            base = ["agent", "type", args.sort_by, "gauntlet_avg", *wr_cols]
+            if args.extended:
+                base.extend(["machine", "git_sha"])
+            base.extend(["created", "version"])
         else:
             base = [
                 "agent",
@@ -1166,11 +1175,10 @@ def main(argv: list[str] | None = None) -> int:
                 "kaggle",
                 "deck",
                 "iters",
-                "machine",
-                "git_sha",
-                "created",
-                "version",
             ]
+            if args.extended:
+                base.extend(["machine", "git_sha"])
+            base.extend(["created", "version"])
         cols = [c for c in base if not (c in seen or seen.add(c))]
         if args.mlflow:
             cols.append("mlflow")

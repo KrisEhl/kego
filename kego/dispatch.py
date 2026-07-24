@@ -13,7 +13,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from kego.fleet import Machine
+from kego.fleet import Machine, git_sha
 
 # Keep the upload light — same intent as the Ray working_dir excludes (runner.py): drop
 # VCS/venv/data/caches. Other competitions are excluded dynamically (other_competition_excludes).
@@ -72,7 +72,13 @@ def rsync_command(local_dir: str | Path, machine: Machine, excludes: Sequence[st
     return cmd
 
 
-def remote_launch_command(machine: Machine, cmd_args: Sequence[str], run_id: str, log_dir: str = "~/.kego/logs") -> str:
+def remote_launch_command(
+    machine: Machine,
+    cmd_args: Sequence[str],
+    run_id: str,
+    log_dir: str = "~/.kego/logs",
+    git_sha_val: str | None = None,
+) -> str:
     """A detached remote command: cd into the repo, pin the MLflow run, nohup the kego
     command into a per-run log. Progress is monitored via the MLflow dashboard or by
     tailing the remote log file."""
@@ -86,7 +92,10 @@ def remote_launch_command(machine: Machine, cmd_args: Sequence[str], run_id: str
             pass
 
     kego_cmd = "uv run kego " + " ".join(shlex.quote(a) for a in cmd_args)
-    launch_cmd = f"exec env KEGO_MLFLOW_RUN_ID={shlex.quote(run_id)} {kego_cmd}"
+    env_vars = f"KEGO_MLFLOW_RUN_ID={shlex.quote(run_id)}"
+    if git_sha_val and git_sha_val != "unknown":
+        env_vars += f" KEGO_GIT_SHA={shlex.quote(git_sha_val)}"
+    launch_cmd = f"exec env {env_vars} {kego_cmd}"
     log = f"{log_dir}/{run_id}.log"
     return (
         f"mkdir -p {log_dir} && cd {shlex.quote(machine.repo)}{task_dir} && "
@@ -114,7 +123,8 @@ def dispatch(
     ship = runner(rsync_command(local_dir, machine, excludes))
     if getattr(ship, "returncode", 0) != 0:
         raise RuntimeError(f"rsync to {machine.name} ({machine.ssh}) failed")
-    remote = remote_launch_command(machine, cmd_args, run_id)
+    sha = git_sha(local_dir)
+    remote = remote_launch_command(machine, cmd_args, run_id, git_sha_val=sha)
     launched = runner(ssh_command(machine, remote))
     if getattr(launched, "returncode", 0) != 0:
         raise RuntimeError(f"ssh launch on {machine.name} ({machine.ssh}) failed")

@@ -427,3 +427,19 @@ def test_batched_mcts_throughput_and_speedup(tm, model, deck):
     assert forward_calls["1"] < forward_calls["0"]
     # Verify that batched MCTS reduces NN forward overhead per move by at least 2x
     assert forward_calls["1"] <= forward_calls["0"] / 2.0
+
+
+def test_ensure_tensors_converts_numpy_dict(tm, model):
+    import numpy as np
+    from agents.mcts.model import ensure_tensors
+
+    # Transport state converts state_dict to numpy arrays
+    numpy_state = tm._transport_state(model)
+    assert all(isinstance(v, np.ndarray) for v in numpy_state.values())
+
+    # ensure_tensors converts numpy arrays back to PyTorch Tensors
+    tensor_state = ensure_tensors(numpy_state)
+    assert all(isinstance(v, torch.Tensor) for v in tensor_state.values())
+
+    # Verify model.load_state_dict succeeds cleanly with converted dict
+    model.load_state_dict(tensor_state)

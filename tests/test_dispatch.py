@@ -26,10 +26,14 @@ def test_remote_launch_command_sets_run_id_and_detaches():
 
     m = Machine(name="m5", ssh="k@m5", role="cpu", repo="/home/k/kego")
     rc = remote_launch_command(
-        m, ["train-agent", "--task", "pkmn", "--epochs", "200", "--init-checkpoint", "registry:12"], run_id="abc123"
+        m,
+        ["train-agent", "--task", "pkmn", "--epochs", "200", "--init-checkpoint", "registry:12"],
+        run_id="abc123",
+        git_sha_val="66c8a32",
     )
     assert "cd /home/k/kego" in rc
     assert "KEGO_MLFLOW_RUN_ID=abc123" in rc
+    assert "KEGO_GIT_SHA=66c8a32" in rc
     assert "uv run kego train-agent --task pkmn --epochs 200 --init-checkpoint registry:12" in rc
     assert "nohup" in rc and "abc123.log" in rc and "< /dev/null" in rc
     assert "disown; exit 0" in rc

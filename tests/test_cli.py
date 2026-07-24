@@ -290,7 +290,7 @@ repo = "/repo"
     assert ret == 0
 
     captured = capsys.readouterr().out
-    assert "To view remote logs, run:  kego logs gpu1 test_run_123" in captured
+    assert "To view remote logs, run:\n  kego logs gpu1 test_run_123" in captured
 
 
 def test_dispatch_league_logs_help_text(tmp_path, monkeypatch, capsys):
@@ -334,4 +334,20 @@ repo = "/repo"
     assert ret == 0
 
     captured = capsys.readouterr().out
-    assert "To view remote logs, run:  kego logs gpu1 league_run_456" in captured
+    assert "To view remote logs, run:\n  kego logs gpu1 league_run_456" in captured
+
+
+def test_models_extended_flag_parser():
+    parser = build_parser()
+
+    # Default --extended is False
+    args = parser.parse_args(["models", "--task", "pokemon-tcg-ai-battle"])
+    assert args.extended is False
+
+    # Short flag -e
+    args = parser.parse_args(["models", "-e", "--task", "pokemon-tcg-ai-battle"])
+    assert args.extended is True
+
+    # Long flag --extended
+    args = parser.parse_args(["models", "--extended", "--task", "pokemon-tcg-ai-battle"])
+    assert args.extended is True
