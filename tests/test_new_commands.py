@@ -569,12 +569,14 @@ def test_resolve_dashboard_address():
 
 
 def test_ray_job_client_ignores_ray_address_env(monkeypatch):
-    """A ray:// RAY_ADDRESS must not override the explicit http dashboard URL.
+    """Setting RAY_ADDRESS should not corrupt Ray job submission client initialization.
 
-    Ray's get_address_for_submission_client always lets RAY_ADDRESS override the
-    passed address; if it is a ray:// client address the submission client routes
+    Ray's JobSubmissionClient respects the RAY_ADDRESS environment variable unless
+    an explicit address is passed to constructor. If RAY_ADDRESS is set to a ray://
+    address (e.g. from an ray.init call), JobSubmissionClient tries to connect
     through the Ray Client port (often unreachable) and times out.
     """
+    pytest.importorskip("ray")
     from kego.pipeline import runner
 
     seen = {}
@@ -891,6 +893,10 @@ def test_models_shows_submission_status_and_best_public_rank(monkeypatch, capsys
     monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
     monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
     monkeypatch.setattr(
+        "kego.tracking.registry.leaderboard",
+        lambda uri, task, sort_by: [{"version": "30", "elo": "1700"}, {"version": "31", "elo": "1600"}],
+    )
+    monkeypatch.setattr(
         "kego.tracking.leaderboard",
         lambda uri, task, sort_by: [{"version": "30", "elo": "1700"}, {"version": "31", "elo": "1600"}],
     )
@@ -903,11 +909,10 @@ def test_models_shows_submission_status_and_best_public_rank(monkeypatch, capsys
     assert cli.main(["models", "--task", "pokemon-tcg-ai-battle", "--no-color"]) == 0
     out = capsys.readouterr().out
 
-    assert "submitted" in out
-    assert "public_rank" in out
+    assert "kaggle" in out
     row30 = next(line for line in out.splitlines() if "Registry v30" in line)
     row31 = next(line for line in out.splitlines() if "Registry v31" in line)
-    assert "yes (2)" in row30 and "4" in row30
+    assert "yes (2)" in row30 and "#4" in row30
     assert "-" in row31
 
 

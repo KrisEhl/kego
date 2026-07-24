@@ -125,6 +125,7 @@ class PokemonTCGAIBattleTask:
             selfplay_opponents = var_cfg.get("selfplay_opponents", selfplay_opponents)
             replay_buffer_size = var_cfg.get("replay_buffer_size", replay_buffer_size)
             batched = var_cfg.get("batched", batched)
+            features = var_cfg.get("features", {})
         except Exception as e:
             raise ValueError(f"Failed to parse variant configuration: {e}")
 
@@ -154,6 +155,7 @@ class PokemonTCGAIBattleTask:
             "replay_buffer_size": replay_buffer_size,
             "batched": batched,
             "num_workers": num_workers,
+            "features": features,
         }
         source_paths = [train_file, Path(__file__), variant_path, comp_dir / deck_file]
         source_paths += sorted((comp_dir / "agents" / "mcts").rglob("*.py"))
@@ -181,10 +183,10 @@ class PokemonTCGAIBattleTask:
             model_args=model_args,
             variant=variant,
             config_fingerprint=config_fingerprint,
+            features=features,
         )
 
     def make_submission(self, ids: np.ndarray, preds: np.ndarray) -> Path:
-        # Locate sample submission files
         repo_root = Path(__file__).resolve().parents[2]
         src_dir = repo_root / "data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission"
         if not src_dir.exists():
@@ -193,6 +195,16 @@ class PokemonTCGAIBattleTask:
         comp_dir = Path("competitions/pokemon-tcg-ai-battle")
         if not comp_dir.exists():
             comp_dir = repo_root / "competitions/pokemon-tcg-ai-battle"
+
+        cg_candidates = [
+            src_dir / "cg",
+            comp_dir / "cg",
+            repo_root / "cg",
+            Path("cg"),
+            repo_root / "data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission/cg",
+            repo_root / "data/pokemon/pokemon-tcg-ai-battle/sample_submission/cg",
+        ]
+        cg_dir = next((p for p in cg_candidates if p.exists()), None)
 
         # Load settings from kego.toml
         try:
@@ -301,8 +313,7 @@ class PokemonTCGAIBattleTask:
             tar.add(deck_path, arcname="deck.csv")
             if base_path.exists():
                 tar.add(base_path, arcname="base_agent.py")
-            cg_dir = src_dir / "cg"
-            if cg_dir.exists():
+            if cg_dir and cg_dir.exists():
                 tar.add(cg_dir, arcname="cg", filter=submission_tar_filter)
 
             # Package model weights if the agent is MCTS

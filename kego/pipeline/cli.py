@@ -344,7 +344,7 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
         print(f"Dispatch failed: {e}")
         return 1
     print(f"Launched on {machine.name}. Track metrics in MLflow at: {uri}")
-    print(f"To view remote logs, run:  ssh {machine.ssh} 'cat ~/.kego/logs/{run_id}.log'")
+    print(f"To view remote logs, run:  kego logs {machine.name} {run_id}")
     return 0
 
 
@@ -415,7 +415,7 @@ def _dispatch_league(task_name: str, target: str, args) -> int:
             MlflowClient(tracking_uri=uri).set_terminated(run_id, status="FAILED")
         return 1
     print(f"Launched league on {machine.name}. Track run/log metadata in MLflow at: {uri}")
-    print(f"To view remote logs, run:  ssh {machine.ssh} 'cat ~/.kego/logs/{run_id}.log'")
+    print(f"To view remote logs, run:  kego logs {machine.name} {run_id}")
     return 0
 
 
@@ -1118,6 +1118,25 @@ def main(argv: list[str] | None = None) -> int:
             row.setdefault("agent", _registry_agent_name(row))
             row.setdefault("type", "registry")
             row.update(submission_stats.get(str(row.get("version")), {"submitted": "-", "public_rank": "-"}))
+
+            # Combine submitted + public_rank into "kaggle"
+            submitted = row.get("submitted", "-")
+            public_rank = row.get("public_rank", "-")
+            if submitted == "-" or submitted == "no":
+                row["kaggle"] = "-"
+            elif public_rank == "-":
+                row["kaggle"] = submitted
+            else:
+                row["kaggle"] = f"{submitted} #{public_rank}"
+
+            # Combine epoch + trained into "iters"
+            epoch = row.get("epoch")
+            trained = row.get("trained")
+            if str(epoch) == str(trained) or epoch == "-" or trained == "-":
+                row["iters"] = str(trained) if trained else "-"
+            else:
+                row["iters"] = f"{trained}/{epoch}"
+
             training_run_id = row.get("training_run_id") or row.get("run_id")
             if mlflow_client and training_run_id:
                 try:
@@ -1144,11 +1163,9 @@ def main(argv: list[str] | None = None) -> int:
                 "elo_rd",
                 "games",
                 "gauntlet_avg",
-                "submitted",
-                "public_rank",
+                "kaggle",
                 "deck",
-                "epoch",
-                "trained",
+                "iters",
                 "machine",
                 "git_sha",
                 "created",

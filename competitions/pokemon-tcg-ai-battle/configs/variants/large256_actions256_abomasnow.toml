@@ -1,4 +1,4 @@
-# Variant config for large256_abomasnow
+# Controlled large256 ablation: only multi-select action coverage changes.
 deck_file = "decks/abomasnow.csv"
 model_args = [256, 4, 512, 2, 2]
 search_count = 25
@@ -9,3 +9,4 @@ num_determinizations = 1
 enable_batched_mcts = true
 c_puct = 0.4
 policy_temperature = 10.0
+max_action_combinations = 256

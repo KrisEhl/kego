@@ -6,10 +6,13 @@ import json
 import multiprocessing as mp
 import os
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -38,27 +41,27 @@ class ProgressBar:
         self.start_time = time.time()
         self.completed = 0
 
-    def update(self, count=1):
+    def update(self, count=1, status=""):
         self.completed += count
         elapsed = time.time() - self.start_time
 
         if self.completed > 0:
             rate = self.completed / elapsed
-            eta_seconds = (self.total - self.completed) / rate
+            eta_seconds = (self.total - self.completed) / rate if rate > 0 else 0
             eta_str = self._format_time(eta_seconds)
         else:
             eta_str = "--:--"
 
         elapsed_str = self._format_time(elapsed)
 
-        progress = self.completed / self.total
+        progress = self.completed / self.total if self.total > 0 else 1.0
         filled_length = int(self.width * progress)
         bar = "█" * filled_length + "-" * (self.width - filled_length)
         percent = int(progress * 100)
 
-        sys.stdout.write(
-            f"\r|{bar}| {percent}% ({self.completed}/{self.total}) [Elapsed: {elapsed_str} | ETA: {eta_str}]"
-        )
+        status_part = f" {status}" if status else ""
+        text = f"\r|{bar}| {percent}% ({self.completed}/{self.total}) [Elapsed: {elapsed_str} | ETA: {eta_str}]{status_part}"
+        sys.stdout.write(text.ljust(120))
         sys.stdout.flush()
 
         if self.completed >= self.total:
@@ -157,8 +160,8 @@ def _ensure_league_run(client: MlflowClient, uri: str, task: str, args) -> tuple
 
 def _format_league_matrix(participant_names, wins_matrix, games_matrix, results) -> str:
     sorted_names = [r["name"] for r in results]
-    headers = ["Participant"] + sorted_names + ["Average WR"]
-    table_rows = [headers]
+    headers = ["Participant"] + [name.replace(" ", "<br>") for name in sorted_names] + ["Average<br>WR"]
+    table_rows = []
 
     for idx, r in enumerate(results):
         prefix = ""
@@ -186,19 +189,26 @@ def _format_league_matrix(participant_names, wins_matrix, games_matrix, results)
         row.append(avg_str)
         table_rows.append(row)
 
-    col_widths = [max(len(row[col_idx]) for row in table_rows) for col_idx in range(len(headers))]
+    col_widths = []
+    for c, header in enumerate(headers):
+        max_h_len = max(len(line) for line in header.split("<br>"))
+        max_d_len = max(len(row[c]) for row in table_rows) if table_rows else 0
+        col_widths.append(max(max_h_len, max_d_len))
+
     sep_row = []
     for col_idx, w in enumerate(col_widths):
         sep_row.append(":" + "-" * (w - 1) if col_idx == 0 else ":" + "-" * (w - 2) + ":")
 
     lines = ["League Results Matrix (Row vs Column Win Rate %):"]
     header_cells = [
-        table_rows[0][c].ljust(col_widths[c]) if c == 0 else table_rows[0][c].center(col_widths[c])
+        headers[c].ljust(col_widths[c])
+        if c == 0
+        else (headers[c] if len(headers[c]) >= col_widths[c] else headers[c].center(col_widths[c]))
         for c in range(len(headers))
     ]
     lines.append("| " + " | ".join(header_cells) + " |")
     lines.append("| " + " | ".join(sep_row) + " |")
-    for row in table_rows[1:]:
+    for row in table_rows:
         row_cells = [
             row[c].ljust(col_widths[c]) if c == 0 else row[c].center(col_widths[c]) for c in range(len(headers))
         ]
@@ -340,8 +350,6 @@ def _run_single_game_indexed(payload_and_idx):
 def _valid_checkpoint(path: Path) -> bool:
     """Reject truncated/partial downloads: torch>=1.6 checkpoints are zip archives, and a
     failed scp/MLflow fetch can leave a partial file that would poison the cache forever."""
-    import zipfile
-
     try:
         if not zipfile.is_zipfile(path):
             print(f"  Discarding corrupt cached checkpoint {path}", flush=True)
@@ -428,21 +436,64 @@ def download_checkpoint(client, v, local_dir, debug):
 
     os.makedirs(local_dir, exist_ok=True)
 
+    # Use a temp directory for downloads to avoid partial file corruption
+    temp_dir = tempfile.mkdtemp(prefix="dl_", dir=local_dir)
+
     errors: list[str] = []
     try:
+        # Get artifact size for progress tracking
+        artifact_size = None
+        try:
+            artifacts = client.list_artifacts(v.run_id, "checkpoint")
+            if artifacts:
+                if wanted:
+                    matching = [a for a in artifacts if a.path.endswith(wanted)]
+                    if matching:
+                        artifact_size = matching[0].file_size
+                elif len(artifacts) == 1:
+                    artifact_size = artifacts[0].file_size
+        except Exception:
+            pass
+
+        if debug and artifact_size:
+            size_mb = artifact_size / (1024 * 1024)
+            print(f"  Downloading {size_mb:.1f} MB...")
+
+        download_start = time.perf_counter()
         if debug:
-            downloaded = client.download_artifacts(v.run_id, "checkpoint", dst_path=local_dir)
+            # Show MLflow's progress bar
+            downloaded = client.download_artifacts(v.run_id, "checkpoint", dst_path=temp_dir)
         else:
+            # Suppress MLflow's verbose output but show our own progress
             with open(os.devnull, "w") as f, contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-                downloaded = client.download_artifacts(v.run_id, "checkpoint", dst_path=local_dir)
+                downloaded = client.download_artifacts(v.run_id, "checkpoint", dst_path=temp_dir)
+
+        download_elapsed = time.perf_counter() - download_start
+        if debug and artifact_size and download_elapsed > 0:
+            speed_mbps = (artifact_size / (1024 * 1024)) / download_elapsed
+            print(f"  Downloaded in {download_elapsed:.1f}s ({speed_mbps:.1f} MB/s)")
 
         selected = _select_checkpoint(downloaded, wanted)
         if selected:
-            return selected
+            # Move from temp to final location atomically
+            final_path = os.path.join(local_dir, os.path.basename(selected))
+            shutil.move(selected, final_path)
+            # Clean up temp directory
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+            return final_path
     except Exception as e:
         errors.append(f"mlflow: {e}")
         if debug:
             print(f"  MLflow client download failed: {e}. Trying SCP fallback...")
+    finally:
+        # Always clean up temp directory on failure
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
     machine_tag = (v.tags or {}).get("machine", "")
     for ssh_target in _fleet_ssh_targets(machine_tag):
@@ -506,6 +557,12 @@ def main():
         default=300,
         help="Fail if no game completes for this many seconds; use 0 to disable",
     )
+    parser.add_argument(
+        "--limit-versions",
+        type=int,
+        default=None,
+        help="Limit to the N most recent registry versions (for faster testing); use 0 for all",
+    )
     args = parser.parse_args()
 
     # Set MCTS search count for all workers
@@ -548,6 +605,10 @@ def main():
         from kego.tracking.prune import active_model_versions
 
         versions = active_model_versions(client, args.task)
+        if args.limit_versions and args.limit_versions > 0:
+            # Take the most recent N versions
+            versions = sorted(versions, key=lambda v: int(v.version), reverse=True)[: args.limit_versions]
+            print(f"Limited to {len(versions)} most recent versions (--limit-versions={args.limit_versions})")
     except Exception as e:
         if args.debug:
             print(f"Warning: Could not fetch models from registry ({e}).")
@@ -558,35 +619,94 @@ def main():
     model_checkpoints = {}
     cache_base_dir = _registry_cache_root(args.cache_dir)
 
-    if not args.debug and len(versions) > 0:
-        print(f"Caching registered checkpoints from hub ({len(versions)} versions)...")
+    if len(versions) > 0:
+        if not args.debug:
+            print(f"Downloading/caching {len(versions)} registry checkpoints...")
+            pbar = ProgressBar(total=len(versions))
+        download_start = time.perf_counter()
+        downloaded_count = 0
+        total_downloaded_bytes = 0
 
     for i, v in enumerate(versions, 1):
         v_name = f"Registry v{v.version}"
-        if not args.debug:
-            print(f"  [{i}/{len(versions)}] Caching {v_name}... ", end="", flush=True)
-        else:
+        if args.debug:
             print(f"Loading checkpoint for {v_name} (run {v.run_id})...")
         try:
             local_dir = _registry_cache_dir(cache_base_dir, v.run_id)
             wanted = v.tags.get("checkpoint_filename") if v.tags else None
             cached = _select_checkpoint(str(local_dir), wanted)
 
+            # Get artifact size for non-debug mode status
+            artifact_size = None
+            if not cached:
+                try:
+                    artifacts = client.list_artifacts(v.run_id, "checkpoint")
+                    if artifacts:
+                        if wanted:
+                            matching = [a for a in artifacts if a.path.endswith(wanted)]
+                            if matching:
+                                artifact_size = matching[0].file_size
+                        elif len(artifacts) == 1:
+                            artifact_size = artifacts[0].file_size
+                except Exception:
+                    pass
+
+            # Show active status on progress bar
+            if not args.debug:
+                if cached:
+                    status = "(cached)"
+                else:
+                    size_str = f"{artifact_size / (1024 * 1024):.1f} MB" if artifact_size else "? MB"
+                    status = f"(downloading {size_str}...)"
+                pbar.update(0, status=f"-> {v_name} {status}")
+
+            dl_start = time.perf_counter()
             checkpoint_path = download_checkpoint(client, v, str(local_dir), args.debug)
+            dl_elapsed = time.perf_counter() - dl_start
             model_checkpoints[v_name] = checkpoint_path
 
             if args.debug:
                 print(f"  Checkpoint ready: {checkpoint_path}")
+                if not cached:
+                    downloaded_count += 1
+                    if artifact_size:
+                        total_downloaded_bytes += artifact_size
             else:
-                if cached:
-                    print("already cached.")
-                else:
-                    print("done.")
+                if not cached:
+                    downloaded_count += 1
+                    if artifact_size:
+                        total_downloaded_bytes += artifact_size
+                pbar.update(1)
         except Exception as e:
             if args.debug:
                 print(f"  Error obtaining checkpoint: {e}")
             else:
-                print(f"failed: {e}")
+                pbar.update(1)
+                print(f"\n  Warning: Failed to cache {v_name}: {e}")
+
+    if len(versions) > 0:
+        elapsed = time.perf_counter() - download_start
+        cached_count = len(versions) - downloaded_count
+        if not args.debug:
+            if downloaded_count > 0 and total_downloaded_bytes > 0:
+                total_mb = total_downloaded_bytes / (1024 * 1024)
+                avg_speed = total_mb / elapsed if elapsed > 0 else 0
+                print(
+                    f"Cache ready: {downloaded_count} downloaded ({total_mb:.1f} MB @ {avg_speed:.1f} MB/s), {cached_count} cached in {elapsed:.1f}s"
+                )
+            else:
+                print(f"Cache ready: {downloaded_count} downloaded, {cached_count} cached in {elapsed:.1f}s")
+        elif downloaded_count > 0:
+            if total_downloaded_bytes > 0:
+                total_mb = total_downloaded_bytes / (1024 * 1024)
+                avg_speed = total_mb / elapsed if elapsed > 0 else 0
+                print(
+                    f"\n=== Download summary: {downloaded_count} downloaded ({total_mb:.1f} MB @ {avg_speed:.1f} MB/s), {cached_count} cached in {elapsed:.1f}s ==="
+                )
+            else:
+                print(
+                    f"\n=== Download summary: {downloaded_count} downloaded, {cached_count} cached in {elapsed:.1f}s ==="
+                )
 
     # Check for local checkpoints as well. Disabled by default so fleet runs do not
     # depend on machine-local output files.

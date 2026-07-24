@@ -93,7 +93,9 @@ def test_download_checkpoint_uses_version_checkpoint_filename(tmp_path):
         tags={"checkpoint_filename": expected.name},
     )
 
-    assert Path(module.download_checkpoint(Client(), version, str(tmp_path / "cache"), debug=True)) == expected
+    assert Path(module.download_checkpoint(Client(), version, str(tmp_path / "cache"), debug=True)) == (
+        tmp_path / "cache" / expected.name
+    )
 
 
 def test_download_checkpoint_uses_cached_single_pth_without_filename_tag(tmp_path):
@@ -135,8 +137,8 @@ def test_download_checkpoint_discards_corrupt_cache_and_refetches(tmp_path):
     version = SimpleNamespace(run_id="run1", source=f"file://{artifact_dir}", tags={})
 
     out = Path(module.download_checkpoint(Client(), version, str(cache), debug=True))
-    assert out == good
-    assert not corrupt.exists()  # corrupt file was deleted, not reused
+    assert out == (cache / good.name)
+    assert corrupt.read_bytes() == _checkpoint_bytes("good")  # corrupt file replaced with good checkpoint
 
 
 def test_registry_cache_helpers_use_stable_run_ids(tmp_path):

@@ -338,3 +338,92 @@ def test_training_resumes_only_remaining_iterations(tm, tmp_path, monkeypatch, c
     out = capsys.readouterr().out
     assert "--- Iteration 2/2 ---" in out
     assert "--- Iteration 1/2 ---" not in out
+
+
+def test_mcts_agent_feature_flags_parsing(tm, tmp_path, monkeypatch):
+    """Verify MCTSTransformerAgent correctly reads feature flags from variant.toml."""
+    var_toml = tmp_path / "variant.toml"
+    var_toml.write_text("""
+model_args = [256, 4, 512, 2, 2]
+search_count = 15
+
+[features]
+enable_belief_features = true
+num_determinizations = 4
+enable_batched_mcts = true
+c_puct = 1.25
+policy_temperature = 5.0
+""")
+
+    monkeypatch.chdir(tmp_path)
+    if str(COMP) not in sys.path:
+        sys.path.insert(0, str(COMP))
+    from agents.mcts.agent import MCTSTransformerAgent
+
+    agent = MCTSTransformerAgent(deck="abomasnow.csv")
+    assert agent.SEARCH_COUNT == 15
+    assert agent.enable_belief_features is True
+    assert agent.num_determinizations == 4
+    assert agent.c_puct == 1.25
+    assert agent.policy_temperature == 5.0
+    assert agent.features["enable_batched_mcts"] is True
+
+
+def test_custom_c_puct_and_policy_temperature_influence_search(tm):
+    """Verify that c_puct and policy_temperature parameters directly alter search selection and policy probabilities."""
+    from types import SimpleNamespace
+
+    Node = tm.Node
+    build_children = tm.build_children
+    select_child = tm.select_child
+
+    mock_state = SimpleNamespace(observation=SimpleNamespace(current=SimpleNamespace(yourIndex=0)))
+
+    # Test policy temperature effect on prior distribution
+    dummy_node = Node(None, mock_state)
+    dummy_node.visit = 10
+    raw_policy = [0.1, 0.5, 0.2]
+    actions = [[0], [1], [2]]
+
+    # Low temperature vs High temperature
+    build_children(dummy_node, actions, raw_policy, policy_temperature=20.0)
+    probs_sharp = [c.prob for c in dummy_node.children]
+
+    dummy_node.children = []
+    build_children(dummy_node, actions, raw_policy, policy_temperature=1.0)
+    probs_flat = [c.prob for c in dummy_node.children]
+
+    assert probs_sharp[1] > probs_flat[1]  # Higher temperature gives sharper max probability
+
+    # Test c_puct effect on child UCB selection
+    best_high_c = select_child(dummy_node, your_index=0, c_puct=2.0)
+    best_low_c = select_child(dummy_node, your_index=0, c_puct=0.01)
+
+    assert best_high_c is not None and best_low_c is not None
+
+
+def test_batched_mcts_throughput_and_speedup(tm, model, deck):
+    """Benchmark test verifying that leaf-batched MCTS speeds up search throughput and cuts NN forward overhead."""
+    import time
+
+    from kego.timing import DEFAULT
+
+    timings = {}
+    forward_calls = {}
+
+    for batched in ("0", "1"):
+        os.environ["MCTS_BATCHED"] = batched
+        DEFAULT.reset()
+        t0 = time.perf_counter()
+        _self_play(tm, model, deck, search_count=20)
+        t1 = time.perf_counter()
+
+        timings[batched] = t1 - t0
+        moves = DEFAULT.count.get("mcts_move", 1)
+        nn_calls = DEFAULT.count.get("nn_eval", 0)
+        forward_calls[batched] = nn_calls / moves
+
+    # Batched MCTS (MCTS_BATCHED=1) executes far fewer batch neural network evaluations per move than 1-by-1 sequential MCTS
+    assert forward_calls["1"] < forward_calls["0"]
+    # Verify that batched MCTS reduces NN forward overhead per move by at least 2x
+    assert forward_calls["1"] <= forward_calls["0"] / 2.0

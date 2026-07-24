@@ -74,6 +74,10 @@ def enumerate_action_combinations(
     indices in `range(num_options)`), and generation stops once `cap` combinations have
     been produced.
     """
+    if max_count > num_options:
+        max_count = num_options
+    if max_count < 0 or cap <= 0 or (num_options == 0 and max_count > 0):
+        return []
     actions = []
     indices = list(range(max_count))
     for _ in range(cap):
@@ -90,21 +94,23 @@ def enumerate_action_combinations(
     return actions
 
 
-def build_children(node: Node, actions: list[list[int]], policy: list[float]) -> None:
+def build_children(
+    node: Node, actions: list[list[int]], policy: list[float], policy_temperature: float = POLICY_TEMPERATURE
+) -> None:
     """Attach softmax-weighted children to a node from a policy vector."""
     total_prob = 0.0
     for i in range(len(policy)):
-        p = math.exp(policy[i] * POLICY_TEMPERATURE)
+        p = math.exp(policy[i] * policy_temperature)
         node.children.append(Child(actions[i], p))
         total_prob += p
     for c in node.children:
         c.prob /= total_prob
 
 
-def select_child(current: Node, your_index: int) -> Child | None:
+def select_child(current: Node, your_index: int, c_puct: float = EXPLORATION_C) -> Child | None:
     """UCB-select the best child of ``current`` (None if it has none)."""
     best, chosen = -1e18, None
-    c = EXPLORATION_C * math.sqrt(current.visit)
+    c = c_puct * math.sqrt(current.visit)
     flip = current.state.observation.current.yourIndex != your_index
     for child in current.children:
         if child.node is None:
@@ -124,7 +130,17 @@ def select_child(current: Node, your_index: int) -> Child | None:
 Evaluator = Callable[[Observation, list[list[int]]], tuple[float, list[float]]]
 
 
-def create_node(parent: Node | None, search_state: SearchState, your_index: int, evaluate: Evaluator) -> Node:
+def create_node(
+    parent: Node | None,
+    search_state: SearchState,
+    your_index: int,
+    evaluate: Evaluator,
+    c_puct: float = EXPLORATION_C,
+    policy_temperature: float = POLICY_TEMPERATURE,
+    max_action_combinations: int = MAX_ACTION_COMBINATIONS,
+) -> Node:
+    if max_action_combinations <= 0:
+        raise ValueError("max_action_combinations must be greater than zero")
     node = Node(parent, search_state)
     obs = search_state.observation
     state = obs.current
@@ -138,12 +154,16 @@ def create_node(parent: Node | None, search_state: SearchState, your_index: int,
             node.value = -1.0
         node.backprop(node.value)
     else:
-        actions = enumerate_action_combinations(obs.select.maxCount, len(obs.select.option))
+        actions = enumerate_action_combinations(
+            obs.select.maxCount,
+            len(obs.select.option),
+            cap=max_action_combinations,
+        )
         value, policy = evaluate(obs, actions)
         v = value
         if state.yourIndex != your_index:
             v = -v
         node.value = v
         node.backprop(v)
-        build_children(node, actions, policy)
+        build_children(node, actions, policy, policy_temperature=policy_temperature)
     return node

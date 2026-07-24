@@ -8,46 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-```bash
-# Setup / install
-make install              # uv sync + pre-commit install
-make re-install           # Clean .venv and reinstall
-
-# Download competition data
-KAGGLE_COMPETITION=<name> make download-competition-data
-
-# Scaffold a new competition
-KAGGLE_COMPETITION=<name> make setup-new-competition
-
-# Publish to PyPI
-make publish
-
-# Run pre-commit hooks manually
-uv run pre-commit run --all-files
-
-# Setup a Ray cluster worker (run on the worker machine)
-./competitions/playground/scripts-cluster/setup-ray-worker.sh [head-ip]
-
-# Ray cluster commands (run from competitions/playground/ directory)
-# See competitions/playground/README.md for full command reference with all variables
-cd competitions/playground
-make start-head           # Start Ray head node
-make start-worker         # Connect as worker to head
-make restart-worker       # Stop and reconnect worker
-make submit-fast          # Fast iteration (~3-5 min): TAG= RESUME= DESCRIPTION=
-make submit-fast-full     # Core GBDTs, full CV (~15-20 min): TAG= FEATURES= RESUME=
-make submit-full          # All models, 10 folds, 3 seeds: TAG= FEATURES= RESUME=
-make submit-neural        # Neural models only: TAG= RESUME=
-make submit-debug         # Debug job (2K rows, fast mode): TAG=
-make submit-tune          # Optuna HP tuning: TUNE_MODELS= TUNE_TRIALS= FEATURES=
-make submit-diverse       # Diverse models/features/seeds: DIVERSE_MODELS= TAG=
-make submit-ensemble      # Re-ensemble from MLflow: ENSEMBLE= or EXPERIMENTS=
-make submit-kaggle        # Submit to Kaggle: ENSEMBLE= or EXPERIMENTS=
-make logs                 # Show parsed progress of running job
-make logs-raw             # Show last N raw log lines (N=20)
-make status               # List all jobs and their status
-make stop                 # Stop Ray on this node
-```
+See the root `Makefile` for setup/install/download/publish targets. Ray cluster commands (run from `competitions/playground/`) are documented in full, with all variables, in `competitions/playground/README.md`.
 
 ## Architecture
 
@@ -69,16 +30,12 @@ Each competition lives in `competitions/<competition>/` with its own `pyproject.
 
 Ray cluster tooling lives in `competitions/playground/` alongside the training script. On each worker node, `cd competitions/playground && uv sync` sets up the venv (includes Ray, all ML deps). Worker setup is handled by `competitions/playground/scripts-cluster/setup-ray-worker.sh`.
 
-### Current Active Focus: Playground Series S6E2 (Heart Disease)
-
-- Binary classification (AUC), 630K train / 270K test rows
-- 19-model ensemble with Ridge stacking, trained on Ray GPU cluster
-- Main script: `competitions/playground/train_s6e2_baseline.py`
-- **See `competitions/playground/README.md`** for full CLI reference, cluster Makefile commands, model details, and experiment log
-
 ## Code Conventions
 
 - Follow Google Python coding conventions
+- **All imports at the top of files** — Standard library, third-party, then local imports. No inline imports except for:
+  - Conditional imports (e.g., `tomllib`/`tomli` version compatibility)
+  - Lazy imports to avoid circular dependencies (document why with a comment)
 - Python 3.10+ type hints throughout
 - Pre-commit enforces: black (formatting), isort (imports), flake8 (linting), mypy (type checking), autoflake (unused imports), nbstripout (clean notebook outputs)
 - Use `%load_ext autoreload` / `%autoreload 2` in notebooks to pick up library changes

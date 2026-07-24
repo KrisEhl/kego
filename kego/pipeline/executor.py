@@ -36,7 +36,7 @@ class RayExecutor:
         import os
 
         try:
-            import ray
+            import ray  # ty: ignore[unresolved-import]
         except ImportError:
             raise ImportError(
                 "Ray is not installed. Please install ray via 'pip install ray' to use the Ray executor."

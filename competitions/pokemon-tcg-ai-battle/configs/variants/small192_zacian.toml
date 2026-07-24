@@ -2,3 +2,10 @@
 deck_file = "decks/zacian.csv"
 model_args = [192, 4, 384, 2, 2]
 search_count = 10
+
+[features]
+enable_belief_features = false
+num_determinizations = 1
+enable_batched_mcts = true
+c_puct = 0.4
+policy_temperature = 10.0

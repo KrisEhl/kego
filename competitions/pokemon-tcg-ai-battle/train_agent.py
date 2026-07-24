@@ -2,6 +2,7 @@ import math
 import os
 import random
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -20,6 +21,7 @@ cg_parent = locate_cg_dir()
 sys.path.insert(0, str(cg_parent))
 
 from agents.mcts import (
+    MAX_ACTION_COMBINATIONS,
     MODEL_ARGS,
     RESULT_DRAW,
     Node,
@@ -67,6 +69,10 @@ class LearnInput:
             self.offset.append(o + count)
 
 
+def _max_action_combinations() -> int:
+    return int(os.environ.get("MCTS_MAX_ACTION_COMBINATIONS", str(MAX_ACTION_COMBINATIONS)))
+
+
 def eval_nn_train(sv_enc: SparseVector, sv_dec: SparseVector, model: PolicyValueNet) -> tuple[float, list[float]]:
     device = next(model.parameters()).device
     with timer("nn_eval"):
@@ -86,17 +92,18 @@ def eval_nn_batch(
 ) -> list[tuple[float, list[float]]]:
     """Evaluate B (encoder, decoder) inputs in a single forward; return per-item (value, policy).
 
-    Mirrors the training-loop batching: each decoder is padded to 64 words so the
-    model returns out_enc (B, 1) and out_dec (B, 64); the policy is sliced back to
-    each item's real action count.
+    Each decoder is padded to the largest action count in this batch so the model
+    can reshape it into a dense ``(batch, actions)`` tensor. Returned policies are
+    sliced back to each item's real action count.
     """
     device = next(model.parameters()).device
     n_actions = [len(sv_dec.offset) for _, sv_dec in svs]
+    padded_actions = max(n_actions)
     enc, dec = LearnInput(), LearnInput()
     for sv_enc, sv_dec in svs:
         enc.add(sv_enc)
         dec.add(sv_dec)
-        for _ in range(64 - len(sv_dec.offset)):
+        for _ in range(padded_actions - len(sv_dec.offset)):
             dec.offset.append(len(dec.index))
     b = len(svs)
     with timer("nn_eval"):
@@ -129,7 +136,13 @@ def create_node_train(
         sample_cell[0] = LearnSample(value, policy, sv_enc, sv_dec)
         return value, policy
 
-    node = create_node(parent, search_state, your_index, evaluate)
+    node = create_node(
+        parent,
+        search_state,
+        your_index,
+        evaluate,
+        max_action_combinations=_max_action_combinations(),
+    )
     return node, sample_cell[0]
 
 
@@ -162,7 +175,9 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
                         completed += 1
                     else:
                         actions = enumerate_action_combinations(
-                            search_state.observation.select.maxCount, len(search_state.observation.select.option)
+                            search_state.observation.select.maxCount,
+                            len(search_state.observation.select.option),
+                            cap=_max_action_combinations(),
                         )
                         sv_enc = encode_state(search_state.observation, your_deck)
                         sv_dec = encode_actions(search_state.observation, actions)
@@ -566,6 +581,7 @@ def run_training_loop(
     model_args=None,
     variant: str | None = None,
     config_fingerprint: str | None = None,
+    features: dict | None = None,
 ):
     import multiprocessing as mp
 
@@ -596,6 +612,11 @@ def run_training_loop(
     # Toggle batched MCTS leaf evaluation; set before the worker pool so spawned
     # children (and the inline path) inherit it via the environment.
     os.environ["MCTS_BATCHED"] = "1" if batched else "0"
+    features = features or {}
+    max_action_combinations = int(features.get("max_action_combinations", MAX_ACTION_COMBINATIONS))
+    if max_action_combinations <= 0:
+        raise ValueError("features.max_action_combinations must be greater than zero")
+    os.environ["MCTS_MAX_ACTION_COMBINATIONS"] = str(max_action_combinations)
 
     if deck_file is None:
         deck_file = "decks/abomasnow.csv"
@@ -619,15 +640,19 @@ def run_training_loop(
     resume_payload = None
     if config_fingerprint and not init_checkpoint:
         try:
-            resume = resolve_training_resume(
-                _uri,
-                _task,
-                config_fingerprint,
-                target_iterations=iterations,
-                cache_dir=comp_dir / "outputs" / "training_resume",
-            )
-            if resume:
-                resume_payload = torch.load(resume.path, map_location=device, weights_only=False)
+            # MLflow preserves artifact filenames, so every lookup needs an isolated
+            # destination to avoid concurrent partial-download collisions.
+            with tempfile.TemporaryDirectory(prefix="kego-training-resume-") as resume_cache:
+                resume = resolve_training_resume(
+                    _uri,
+                    _task,
+                    config_fingerprint,
+                    target_iterations=iterations,
+                    cache_dir=resume_cache,
+                )
+                if resume:
+                    resume_payload = torch.load(resume.path, map_location=device, weights_only=False)
+            if resume_payload:
                 required = {
                     "model_state",
                     "optimizer_state",
@@ -658,6 +683,30 @@ def run_training_loop(
         init_checkpoint_path = _resolve_init_checkpoint(init_checkpoint, "pokemon-tcg-ai-battle", comp_dir)
         init_state_dict = torch.load(init_checkpoint_path, map_location=device)
         actual_model_args = model_args_from_state_dict(init_state_dict)
+
+    init_iterations = 0
+    if init_checkpoint:
+        import re
+
+        if init_checkpoint.startswith("registry:"):
+            ver_str = init_checkpoint.split(":", 1)[1]
+            try:
+                from mlflow.tracking import MlflowClient
+
+                from kego.tracking import default_tracking_uri
+
+                client = MlflowClient(tracking_uri=default_tracking_uri())
+                mv = client.get_model_version("pokemon-tcg-ai-battle", ver_str)
+                init_iterations = int(mv.tags.get("completed_iterations") or mv.tags.get("epoch") or 0)
+            except Exception as e:
+                print(f"  Note: Could not query completed_iterations for {init_checkpoint}: {e}", flush=True)
+        if init_iterations == 0 and init_checkpoint_path:
+            match = re.search(r"iter(\d+)", init_checkpoint_path.name)
+            if match:
+                init_iterations = int(match.group(1))
+            elif isinstance(init_state_dict, dict) and "completed_iterations" in init_state_dict:
+                init_iterations = int(init_state_dict["completed_iterations"])
+
     model = PolicyValueNet(*actual_model_args).to(device)
     if resume_payload:
         assert resume is not None
@@ -797,23 +846,32 @@ def run_training_loop(
             path,
         )
 
+    print("[5/7] Spawning worker pool...", flush=True)
     # Self-play/eval run on CPU-only worker processes: batch-1 inference is far cheaper
     # on CPU than via per-call GPU launches/syncs, and the games are independent. The
     # cg engine keeps global state, so each game needs its own process (not thread).
     # Training (batched) still runs on the GPU in this process.
     pool = None
     if num_workers > 1:
+        print(f"  Configuring environment for {num_workers} workers...", flush=True)
         # Spawned children must be able to import this module + agents/ + cg, and must
         # run single-threaded torch (see _worker_init) to avoid core oversubscription.
         os.environ["PYTHONPATH"] = os.pathsep.join(
             p for p in [str(comp_dir), str(repo_root), os.environ.get("PYTHONPATH", "")] if p
         )
         os.environ.setdefault("OMP_NUM_THREADS", "1")
+        print(f"  Spawning {num_workers} worker processes (this may take 30-60 seconds)...", flush=True)
+        _spawn_start = time.perf_counter()
         pool = mp.get_context("spawn").Pool(num_workers, initializer=_worker_init)
+        _spawn_elapsed = time.perf_counter() - _spawn_start
+        print(f"  ✓ Worker pool ready ({num_workers} processes, took {_spawn_elapsed:.1f}s)", flush=True)
+    else:
+        print("  Running single-threaded (no worker pool)", flush=True)
 
     def _run(worker, payloads):
         return pool.map(worker, payloads) if pool is not None else [worker(p) for p in payloads]
 
+    print("[6/7] Configuring evaluation opponents...", flush=True)
     opponent_specs = []  # (kind, name, agent_file, deck_file)
     for spec in eval_opponents:
         if spec in ("random", "self"):
@@ -823,6 +881,7 @@ def run_training_loop(
             opponent_specs.append(
                 ("rule", nm, str(comp_dir / "agents" / f"{nm}.py"), str(comp_dir / "decks" / f"{nm}.csv"))
             )
+    print(f"  Configured {len(opponent_specs)} evaluation opponents: {[s[1] for s in opponent_specs]}", flush=True)
 
     def _gauntlet(cur_state, best_state, seed_base):
         """Eval the current model vs each opponent; return {name: win_rate%} and the
@@ -854,21 +913,29 @@ def run_training_loop(
     training_completed_normally = False
     try:
         for iter_idx in range(start_iteration, iterations):
-            print(f"\n--- Iteration {iter_idx + 1}/{iterations} ---")
+            current_epoch = init_iterations + iter_idx + 1
+            total_epochs = init_iterations + iterations
+            if init_iterations > 0:
+                print(
+                    f"\n--- Iteration {current_epoch}/{total_epochs} [iter {iter_idx + 1}/{iterations} warm-started from {init_checkpoint}] ---",
+                    flush=True,
+                )
+            else:
+                print(f"\n--- Iteration {iter_idx + 1}/{iterations} ---", flush=True)
             cpu_state = _transport_state(model)
 
             # 1. Evaluation gauntlet (throttled by eval_every, forced at checkpoint intervals); keep the best by rule avg.
             if eval_games > 0 and (iter_idx % eval_every == 0 or (iter_idx + 1) % 50 == 0):
                 print("Evaluating gauntlet (random / rule agents / self)...")
                 results, avg = _gauntlet(cpu_state, best_state, 7000 + iter_idx * 131)
-                _track.log_metric("gauntlet_avg", avg, step=iter_idx)
-                _track.log_metric("progress_pct", 100.0 * (iter_idx + 1) / iterations, step=iter_idx)
+                _track.log_metric("gauntlet_avg", avg, step=current_epoch)
+                _track.log_metric("progress_pct", 100.0 * (iter_idx + 1) / iterations, step=current_epoch)
                 for _name, _wr in results.items():
-                    _track.log_metric(f"wr_{_name}", _wr, step=iter_idx)
+                    _track.log_metric(f"wr_{_name}", _wr, step=current_epoch)
                 if avg > best_score:
                     best_score = avg
                     best_state = cpu_state
-                    best_iteration = iter_idx
+                    best_iteration = current_epoch
                     best_results = results
                     torch.save(model.state_dict(), str(output_file))
                     print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
@@ -910,6 +977,7 @@ def run_training_loop(
                 sum_enc = sum_dec = 0.0
                 for _ in range(train_steps):
                     batch = random.sample(replay, BATCH_SIZE)
+                    padded_actions = max(len(sample.policy) for sample in batch)
                     input_enc = LearnInput()
                     input_dec = LearnInput()
                     mask = []
@@ -922,7 +990,7 @@ def run_training_loop(
                         label_dec.extend(sample.policy)
                         for _ in range(len(sample.policy)):
                             mask.append(1.0)
-                        for _ in range(64 - len(sample.policy)):
+                        for _ in range(padded_actions - len(sample.policy)):
                             mask.append(0.0)
                             label_dec.append(0.0)
                             input_dec.offset.append(len(input_dec.index))
@@ -950,9 +1018,9 @@ def run_training_loop(
                     sum_dec += float(loss_dec.detach())
                     loss.backward()
                     optimizer.step()
-                _track.log_metric("loss_value", sum_enc / train_steps, step=iter_idx)
-                _track.log_metric("loss_policy", sum_dec / train_steps, step=iter_idx)
-                _track.log_metric("lr", scheduler.get_last_lr()[0], step=iter_idx)
+                _track.log_metric("loss_value", sum_enc / train_steps, step=current_epoch)
+                _track.log_metric("loss_policy", sum_dec / train_steps, step=current_epoch)
+                _track.log_metric("lr", scheduler.get_last_lr()[0], step=current_epoch)
                 print(
                     f"Training complete. avg loss: value={sum_enc / train_steps:.4f} "
                     f"policy={sum_dec / train_steps:.4f} | lr={scheduler.get_last_lr()[0]:.2e}"
@@ -960,15 +1028,15 @@ def run_training_loop(
                 scheduler.step()
             run_timings.add("train", time.perf_counter() - _train_start)
             run_timings.report(f"timings @ iter {iter_idx + 1}")
-            last_completed_iteration = iter_idx + 1
+            last_completed_iteration = current_epoch
 
             # Save and register intermediate checkpoint every 50 iterations
             checkpoint_interval = 50
             if (iter_idx + 1) % checkpoint_interval == 0:
-                iter_output_file = output_file.parent / f"{output_file.stem}_iter{iter_idx + 1}.pth"
-                iter_state_file = output_file.parent / f"{output_file.stem}_iter{iter_idx + 1}.train.pt"
+                iter_output_file = output_file.parent / f"{output_file.stem}_iter{current_epoch}.pth"
+                iter_state_file = output_file.parent / f"{output_file.stem}_iter{current_epoch}.train.pt"
                 torch.save(model.state_dict(), str(iter_output_file))
-                _save_training_state(iter_idx + 1, iter_state_file)
+                _save_training_state(current_epoch, iter_state_file)
                 print(f"  -> Intermediate checkpoint saved to {iter_output_file}")
                 iter_score = (
                     avg
@@ -981,8 +1049,8 @@ def run_training_loop(
                     str(iter_output_file),
                     tags={
                         **_run_tags,
-                        "epoch": str(iter_idx + 1),
-                        "completed_iterations": str(iter_idx + 1),
+                        "epoch": str(current_epoch),
+                        "completed_iterations": str(current_epoch),
                         "deck": deck_path.stem,
                         "gauntlet_avg": round(iter_score, 2) if iter_score >= 0 else 0.0,
                     },

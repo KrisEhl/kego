@@ -120,4 +120,12 @@ league-merge:
 submit-leader:
 	uv run kego submit $(VERSION)
 
-.PHONY: train-agent train-agent-cluster train-agent-fleet ray-head ray-status ray-stop models league league-fleet league-matrix league-merge submit-leader
+.PHONY: train-agent train-agent-cluster train-agent-fleet ray-head ray-status ray-stop models league league-fleet league-matrix league-merge submit-leader clean-cache
+
+# Clean up corrupted or partial cached registry checkpoints
+clean-cache:
+	@echo "Cleaning corrupted cache in outputs/cached_registry..."
+	@find outputs/cached_registry -type f -name "*.pth" -exec sh -c 'python3 -c "import zipfile, sys; sys.exit(0 if zipfile.is_zipfile(sys.argv[1]) else 1)" "{}" || (echo "  Removing corrupted: {}"; rm "{}")' \;
+	@echo "Removing empty directories..."
+	@find outputs/cached_registry -type d -empty -delete 2>/dev/null || true
+	@echo "Cache cleanup complete."

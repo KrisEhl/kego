@@ -261,3 +261,77 @@ repo = "/some/repo"
     # SSH should be invoked on user@omarchyd-host targeting omarchyd machine
     assert "user@omarchyd-host" in called_cmd[0]
     assert "5034b3b0ac8d474d810c4b9fa40cc659" in called_cmd[0][2]
+
+
+def test_dispatch_train_agent_logs_help_text(tmp_path, monkeypatch, capsys):
+    from kego.pipeline.cli import _dispatch_train_agent
+
+    monkeypatch.setattr("kego.fleet.repo_root", lambda *a: tmp_path)
+    monkeypatch.setattr("kego.tracking.create_run", lambda *a, **kw: "test_run_123")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda *a, **kw: "http://mlflow:5000")
+    monkeypatch.setattr("kego.fleet.git_sha", lambda *a, **kw: "sha123")
+    monkeypatch.setattr("kego.fleet.machine_name", lambda *a, **kw: "local")
+    monkeypatch.setattr("kego.dispatch.dispatch", lambda *a, **kw: None)
+
+    fleet_toml = tmp_path / "fleet.toml"
+    fleet_toml.write_text("""
+[hub]
+name = "omarchyl"
+mlflow = "http://mlflow:5000"
+
+[[machine]]
+name = "gpu1"
+ssh = "user@gpu1-host"
+role = "gpu"
+repo = "/repo"
+""")
+
+    ret = _dispatch_train_agent("pokemon-tcg-ai-battle", "gpu1", 10, None, {})
+    assert ret == 0
+
+    captured = capsys.readouterr().out
+    assert "To view remote logs, run:  kego logs gpu1 test_run_123" in captured
+
+
+def test_dispatch_league_logs_help_text(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    from kego.pipeline.cli import _dispatch_league
+
+    monkeypatch.setattr("kego.fleet.repo_root", lambda *a: tmp_path)
+    monkeypatch.setattr("kego.tracking.create_run", lambda *a, **kw: "league_run_456")
+    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda *a, **kw: "http://mlflow:5000")
+    monkeypatch.setattr("kego.fleet.git_sha", lambda *a, **kw: "sha123")
+    monkeypatch.setattr("kego.fleet.machine_name", lambda *a, **kw: "local")
+    monkeypatch.setattr("kego.dispatch.dispatch", lambda *a, **kw: None)
+
+    fleet_toml = tmp_path / "fleet.toml"
+    fleet_toml.write_text("""
+[hub]
+name = "omarchyl"
+mlflow = "http://mlflow:5000"
+
+[[machine]]
+name = "gpu1"
+ssh = "user@gpu1-host"
+role = "gpu"
+repo = "/repo"
+""")
+
+    args = SimpleNamespace(
+        games=10,
+        search_count=100,
+        workers=2,
+        debug=False,
+        cache_dir=None,
+        include_local_mcts=False,
+        partial_save_every=10,
+        stall_timeout=600,
+        write_ratings=True,
+    )
+
+    ret = _dispatch_league("pokemon-tcg-ai-battle", "gpu1", args)
+    assert ret == 0
+
+    captured = capsys.readouterr().out
+    assert "To view remote logs, run:  kego logs gpu1 league_run_456" in captured

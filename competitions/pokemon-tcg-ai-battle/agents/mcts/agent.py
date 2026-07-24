@@ -12,7 +12,7 @@ from cg.api import Observation, search_begin, search_end, search_step, to_observ
 from .encoding import encode_actions, encode_state
 from .model import MODEL_ARGS, PolicyValueNet, model_args_from_state_dict
 from .opponent import infer_opponent_hidden_cards
-from .search import Evaluator, create_node, evaluate_position, select_child
+from .search import MAX_ACTION_COMBINATIONS, Evaluator, create_node, evaluate_position, select_child
 
 
 def _nn_evaluator(model: PolicyValueNet, your_deck: list[int]) -> Evaluator:
@@ -100,15 +100,24 @@ class MCTSTransformerAgent(BaseAgent):
             print(f"[MCTSTransformerAgent] loaded weights from {model_path}", flush=True)
 
         self.SEARCH_COUNT = int(os.environ.get("MCTS_SEARCH_COUNT", str(variant_data.get("search_count", 10))))
+        self.features = variant_data.get("features", {})
+        self.enable_belief_features = self.features.get("enable_belief_features", False)
+        self.num_determinizations = int(self.features.get("num_determinizations", 1))
+        self.c_puct = float(self.features.get("c_puct", 0.4))
+        self.policy_temperature = float(self.features.get("policy_temperature", 10.0))
+        self.max_action_combinations = int(self.features.get("max_action_combinations", MAX_ACTION_COMBINATIONS))
+        if self.max_action_combinations <= 0:
+            raise ValueError("features.max_action_combinations must be greater than zero")
         print(f"[MCTSTransformerAgent] SEARCH_COUNT={self.SEARCH_COUNT}", flush=True)
+        print(f"[MCTSTransformerAgent] Active Features: {self.features}", flush=True)
 
     def get_deck(self) -> list[int]:
         return self.deck
 
     def act(self, obs_dict: dict) -> list[int]:
-        obs = to_observation_class(obs_dict)
-        if obs.select is None:
+        if not isinstance(obs_dict, dict) or obs_dict.get("select") is None:
             return self.get_deck()
+        obs = to_observation_class(obs_dict)
 
         your_index = obs.current.yourIndex
         state = obs.current
@@ -125,16 +134,32 @@ class MCTSTransformerAgent(BaseAgent):
         )
 
         evaluate = _nn_evaluator(self.model, self.deck)
-        root = create_node(None, search_state, your_index, evaluate)
+        root = create_node(
+            None,
+            search_state,
+            your_index,
+            evaluate,
+            c_puct=self.c_puct,
+            policy_temperature=self.policy_temperature,
+            max_action_combinations=self.max_action_combinations,
+        )
         for _ in range(self.SEARCH_COUNT):
             current = root
             while True:
-                next_child = select_child(current, your_index)
+                next_child = select_child(current, your_index, c_puct=self.c_puct)
                 if next_child is None:
                     break
                 if next_child.node is None:
                     s_state = search_step(current.state.searchId, next_child.select)
-                    next_child.node = create_node(current, s_state, your_index, evaluate)
+                    next_child.node = create_node(
+                        current,
+                        s_state,
+                        your_index,
+                        evaluate,
+                        c_puct=self.c_puct,
+                        policy_temperature=self.policy_temperature,
+                        max_action_combinations=self.max_action_combinations,
+                    )
                     break
                 current = next_child.node
                 if current.state.observation.current.result >= 0:

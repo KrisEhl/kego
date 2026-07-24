@@ -1,5 +1,5 @@
 [competition]
-variant = "large256_abomasnow"
+variant = "large256_actions256_abomasnow"
 slug = "pokemon-tcg-ai-battle"
 kaggle_user = "aldisued"
 enable_gpu = false

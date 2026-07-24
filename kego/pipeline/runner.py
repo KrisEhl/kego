@@ -234,7 +234,7 @@ def _make_ray_job_client(dashboard_address: str):
     """
     import os
 
-    from ray.dashboard.modules.job.sdk import JobSubmissionClient
+    from ray.dashboard.modules.job.sdk import JobSubmissionClient  # ty: ignore[unresolved-import]
 
     saved = os.environ.pop("RAY_ADDRESS", None)
     try:
@@ -557,7 +557,7 @@ class Pipeline:
             import time
 
             try:
-                import ray  # noqa: F401
+                import ray  # noqa: F401  # ty: ignore[unresolved-import]
             except ImportError:
                 raise ImportError(
                     "Ray is not installed. Please install ray via 'pip install ray' to use the Ray executor."
@@ -986,7 +986,7 @@ class Pipeline:
         print("=" * 100)
         if stale_seen:
             print("RUNNING? = still RUNNING in MLflow but no matching process on its (online) machine — likely")
-            print("crashed; check:  ssh <machine> 'tail -30 ~/.kego/logs/<run>.log'  and dmesg for OOM kills.")
+            print("crashed; check logs with:  kego logs <run-id>  or check dmesg for OOM kills.")
 
     def _submission_history(self) -> tuple[str, str | None]:
         import shutil

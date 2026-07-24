@@ -4,3 +4,10 @@ model_args = [512, 8, 1024, 4, 4]
 search_count = 25
 # batched inherited from kego.toml [train] (true): ~25% faster self-play even on
 # CPU workers (78s vs 99s per fresh-model iteration, measured 2026-07-19).
+
+[features]
+enable_belief_features = false
+num_determinizations = 1
+enable_batched_mcts = true
+c_puct = 0.4
+policy_temperature = 10.0
