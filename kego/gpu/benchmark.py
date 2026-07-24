@@ -1,8 +1,11 @@
 """GPU benchmarking utilities: epoch timing and MLflow logging.
 
 Requires skorch (optional dependency). Import lazily to avoid hard dependency.
+mlflow and torch are likewise optional (see pyproject.toml
+`[project.optional-dependencies].ml`) and stay local imports below.
 """
 
+import os
 import time
 
 
@@ -57,8 +60,6 @@ def log_benchmark_to_mlflow(
         experiment: MLflow experiment name.
         tracking_uri: MLflow tracking URI. Uses MLFLOW_TRACKING_URI env var if empty.
     """
-    import os
-
     try:
         import mlflow
     except ImportError:

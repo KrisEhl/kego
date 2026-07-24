@@ -1,4 +1,6 @@
+import importlib.util
 import io
+import sys
 import tarfile
 from pathlib import Path
 
@@ -6,6 +8,12 @@ import numpy as np
 import pandas as pd
 
 from kego.pipeline.task import RawData, register_task
+from kego.training_resume import training_fingerprint
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore
 
 
 @register_task("pokemon-tcg-ai-battle")
@@ -32,10 +40,6 @@ class PokemonTCGAIBattleTask:
         return 0.0
 
     def train(self, config, epochs: int | None = None, output_path: str | None = None, **kwargs) -> None:
-        import importlib.util
-        import sys
-        from pathlib import Path
-
         trainable_agents = ("mcts",)
         agent = kwargs.get("agent")
         if agent not in trainable_agents:
@@ -54,12 +58,6 @@ class PokemonTCGAIBattleTask:
         # worker functions by reference (pickle resolves them via sys.modules).
         sys.modules["train_agent"] = train_module
         spec.loader.exec_module(train_module)
-
-        # Load custom config if present in kego.toml
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore
 
         # 1. Base defaults
         eval_games = 5
@@ -138,8 +136,6 @@ class PokemonTCGAIBattleTask:
         if isinstance(model_args, list):
             model_args = tuple(model_args)
 
-        from kego.training_resume import training_fingerprint
-
         fingerprint_config = {
             "agent": agent,
             "variant": variant,
@@ -207,11 +203,6 @@ class PokemonTCGAIBattleTask:
         cg_dir = next((p for p in cg_candidates if p.exists()), None)
 
         # Load settings from kego.toml
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore
-
         config_path = comp_dir / "kego.toml"
         if not config_path.exists():
             raise FileNotFoundError(f"kego.toml not found at {config_path}")

@@ -26,8 +26,16 @@ sys.path.insert(0, str(comp_dir))
 
 from mlflow.tracking import MlflowClient
 
+from kego.fleet import load_fleet
 from kego.pipeline.battle import load_agent, load_deck, locate_cg_dir, run_game
-from kego.tracking import default_tracking_uri
+from kego.tracking import create_run, default_tracking_uri, read_ratings, write_ratings
+from kego.tracking.league import Rating, rate_round, results_from_winmatrix
+from kego.tracking.prune import active_model_versions
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore
 
 # 1. Setup CG path
 cg_parent = locate_cg_dir()
@@ -145,8 +153,6 @@ def _ensure_league_run(client: MlflowClient, uri: str, task: str, args) -> tuple
     if run_id:
         return run_id, False
     try:
-        from kego.tracking import create_run
-
         run_id = create_run(
             uri,
             experiment=task,
@@ -390,8 +396,6 @@ def _fleet_ssh_targets(machine_tag: str) -> list[str]:
         "mn-exjk9p93n75h": "kristian.ehlert@mn-exjk9p93n75h",
     }
     try:
-        from kego.fleet import load_fleet
-
         machines = {m.name: m.ssh for m in load_fleet(repo_root / "fleet.toml").machines}
     except Exception:
         machines = fallback
@@ -602,8 +606,6 @@ def main():
             pass
 
     try:
-        from kego.tracking.prune import active_model_versions
-
         versions = active_model_versions(client, args.task)
         if args.limit_versions and args.limit_versions > 0:
             # Take the most recent N versions
@@ -738,10 +740,6 @@ def main():
     local_mcts = comp_dir / "outputs" / "mcts.pth"
     if args.include_local_mcts and local_mcts.exists():
         local_deck = "decks/abomasnow.csv"
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore
         try:
             with open(comp_dir / "kego.toml", "rb") as f:
                 toml_data = tomllib.load(f)
@@ -959,9 +957,6 @@ def main():
         print("\nRead-only league: not writing Elo ratings to the registry.")
     else:
         try:
-            from kego.tracking import read_ratings, write_ratings
-            from kego.tracking.league import Rating, rate_round, results_from_winmatrix
-
             round_results = results_from_winmatrix(participant_names, wins_matrix.tolist(), games_matrix.tolist())
 
             # Prior ratings keyed by display name (from registry tags); unrated players default later.

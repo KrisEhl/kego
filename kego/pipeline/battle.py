@@ -116,6 +116,9 @@ def run_game(agent1_mod: Any, agent2_mod: Any, deck1: list[int], deck2: list[int
     Returns:
         int: 0 if agent1 wins, 1 if agent2 wins.
     """
+    # `cg` is not an installed package — it's a directory `locate_cg_dir()` resolves and
+    # inserts into sys.path at runtime (see run_battle_benchmark). It doesn't exist on
+    # sys.path until that has run, so this import must stay lazy, not module top-level.
     from cg.api import to_observation_class
     from cg.game import battle_finish, battle_select, battle_start
 

@@ -21,14 +21,14 @@ sys.path.insert(0, str(cg_parent))
 from cg.api import to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
 
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore
+
 
 def run_match():
     # Load settings from kego.toml
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib  # type: ignore
-
     config_path = comp_dir / "kego.toml"
     with open(config_path, "rb") as f:
         cfg = tomllib.load(f)

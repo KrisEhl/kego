@@ -5,8 +5,14 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from kego.tracking.tracker import fail_fast_http
+
+# mlflow is an optional dependency (see pyproject.toml `[project.optional-dependencies].ml`);
+# every use below stays a local import so plain kego usage doesn't require it.
 
 
 @dataclass(frozen=True)
@@ -29,8 +35,6 @@ def register_checkpoint(
     one is open, else creates an ephemeral one. Returns the new version string."""
     import mlflow
     from mlflow.tracking import MlflowClient
-
-    from kego.tracking.tracker import fail_fast_http
 
     fail_fast_http()
     mlflow.set_tracking_uri(uri)
@@ -107,8 +111,6 @@ def resolve_training_resume(
 def leaderboard(uri: str, name: str, sort_by: str = "elo", desc: bool = True) -> list[dict]:
     """Return every registered version of ``name`` as ``{"version", **tags}`` dicts, sorted
     by the numeric ``sort_by`` tag (versions missing/unparsable rank last)."""
-    from datetime import datetime, timezone
-
     from mlflow.tracking import MlflowClient
 
     client = MlflowClient(tracking_uri=uri)

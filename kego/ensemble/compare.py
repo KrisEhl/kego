@@ -40,6 +40,8 @@ def compare_stacking_methods(
         List of (method_name, holdout_auc, oof_auc) tuples, sorted by holdout_auc desc.
         Also prints a formatted comparison table with verdict.
     """
+    # lightgbm isn't a declared kego dependency (not even under the `ml` extra) — kept
+    # as a local import so this module only requires it when this function is called.
     import lightgbm as lgb
 
     oof_matrix = np.column_stack([all_oof[n] for n in model_names])

@@ -17,6 +17,9 @@ import time
 import uuid
 from pathlib import Path
 
+from kego.tracking.registry import register_checkpoint
+from kego.tracking.resolve import default_tracking_uri
+
 
 def default_outbox() -> Path:
     return Path(os.environ.get("KEGO_OUTBOX") or Path.home() / ".kego" / "outbox")
@@ -34,8 +37,6 @@ def register_checkpoint_or_queue(
     """``register_checkpoint``, but a failure queues the registration for ``kego sync``
     instead of raising. Returns the new version string, or ``None`` when queued (or,
     if even queueing fails, dropped — training must never break on telemetry)."""
-    from kego.tracking.registry import register_checkpoint
-
     try:
         return register_checkpoint(uri, name, checkpoint_path, tags, training_state_path=training_state_path)
     except Exception:
@@ -103,9 +104,6 @@ def sync_outbox(
     Entries are deleted on success, kept on failure. Returns
     ``([(entry, model_name, version), ...], [error, ...])``.
     """
-    from kego.tracking.registry import register_checkpoint
-    from kego.tracking.resolve import default_tracking_uri
-
     target = uri or default_tracking_uri()
     synced: list[tuple[str, str, str]] = []
     errors: list[str] = []

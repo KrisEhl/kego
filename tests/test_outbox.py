@@ -39,9 +39,12 @@ def test_queue_snapshots_checkpoint_bytes(tmp_path, checkpoint):
 
 
 def test_register_or_queue_returns_version_when_registry_up(tmp_path, checkpoint, monkeypatch):
-    import kego.tracking.registry as registry
+    # Patched on kego.tracking.outbox, where it binds register_checkpoint at import
+    # time (not on kego.tracking.registry, its definition site) — see the runner.py
+    # hoist and its mock-target fix in test_cli.py/test_new_commands.py.
+    import kego.tracking.outbox as outbox_module
 
-    monkeypatch.setattr(registry, "register_checkpoint", lambda *a, **k: "42")
+    monkeypatch.setattr(outbox_module, "register_checkpoint", lambda *a, **k: "42")
     version = register_checkpoint_or_queue(
         "http://hub:5000", "some-task", str(checkpoint), {}, outbox_dir=tmp_path / "outbox"
     )
@@ -50,12 +53,12 @@ def test_register_or_queue_returns_version_when_registry_up(tmp_path, checkpoint
 
 
 def test_register_or_queue_queues_on_failure_then_syncs(tmp_path, checkpoint, monkeypatch):
-    import kego.tracking.registry as registry
+    import kego.tracking.outbox as outbox_module
 
     def down(*a, **k):
         raise ConnectionError("hub unreachable")
 
-    monkeypatch.setattr(registry, "register_checkpoint", down)
+    monkeypatch.setattr(outbox_module, "register_checkpoint", down)
     outbox = tmp_path / "outbox"
     version = register_checkpoint_or_queue(
         "http://hub:5000",
@@ -74,7 +77,7 @@ def test_register_or_queue_queues_on_failure_then_syncs(tmp_path, checkpoint, mo
         seen.update(uri=uri, name=name, bytes=Path(ckpt_path).read_bytes(), tags=tags)
         return "7"
 
-    monkeypatch.setattr(registry, "register_checkpoint", up)
+    monkeypatch.setattr(outbox_module, "register_checkpoint", up)
     synced, errors = sync_outbox(uri="http://hub:5000", outbox_dir=outbox)
     assert errors == []
     assert [(s[1], s[2]) for s in synced] == [("some-task", "7")]
@@ -84,7 +87,7 @@ def test_register_or_queue_queues_on_failure_then_syncs(tmp_path, checkpoint, mo
 
 
 def test_sync_keeps_entry_on_failure(tmp_path, checkpoint, monkeypatch):
-    import kego.tracking.registry as registry
+    import kego.tracking.outbox as outbox_module
 
     outbox = tmp_path / "outbox"
     queue_registration("http://hub:5000", "some-task", str(checkpoint), {}, outbox_dir=outbox)
@@ -92,7 +95,7 @@ def test_sync_keeps_entry_on_failure(tmp_path, checkpoint, monkeypatch):
     def still_down(*a, **k):
         raise ConnectionError("nope")
 
-    monkeypatch.setattr(registry, "register_checkpoint", still_down)
+    monkeypatch.setattr(outbox_module, "register_checkpoint", still_down)
     synced, errors = sync_outbox(uri="http://hub:5000", outbox_dir=outbox)
     assert synced == []
     assert len(errors) == 1
@@ -102,7 +105,7 @@ def test_sync_keeps_entry_on_failure(tmp_path, checkpoint, monkeypatch):
 def test_train_agent_blocks_on_unsynced_outbox(tmp_path, checkpoint, monkeypatch):
     """A new run must not start over un-synced checkpoints of the same task: resume reads
     the registry, so stale registry state silently forks training from the wrong parent."""
-    import kego.tracking.registry as registry
+    import kego.tracking.outbox as outbox_module
     from kego.pipeline.config import PipelineConfig
     from kego.pipeline.runner import Pipeline
     from kego.pipeline.task import register_task
@@ -135,7 +138,7 @@ def test_train_agent_blocks_on_unsynced_outbox(tmp_path, checkpoint, monkeypatch
     def down(*a, **k):
         raise ConnectionError("hub unreachable")
 
-    monkeypatch.setattr(registry, "register_checkpoint", down)
+    monkeypatch.setattr(outbox_module, "register_checkpoint", down)
     with pytest.raises(RuntimeError, match="kego sync"):
         pipeline.train_agent(epochs=1)
     assert not task.trained
@@ -147,7 +150,7 @@ def test_train_agent_blocks_on_unsynced_outbox(tmp_path, checkpoint, monkeypatch
 
     # Registry back: the guard auto-syncs and training proceeds.
     monkeypatch.delenv("KEGO_IGNORE_OUTBOX")
-    monkeypatch.setattr(registry, "register_checkpoint", lambda *a, **k: "9")
+    monkeypatch.setattr(outbox_module, "register_checkpoint", lambda *a, **k: "9")
     task.trained = False
     pipeline.train_agent(epochs=1)
     assert task.trained

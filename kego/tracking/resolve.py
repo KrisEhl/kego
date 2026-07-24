@@ -7,6 +7,8 @@ import os
 from collections.abc import Callable
 from pathlib import Path
 
+from kego.fleet import load_fleet
+
 
 def default_tracking_uri(fleet_path: str | Path | None = None) -> str:
     """The MLflow URI a CLI command should use: ``KEGO_MLFLOW``/``MLFLOW_TRACKING_URI`` env,
@@ -24,8 +26,6 @@ def default_tracking_uri(fleet_path: str | Path | None = None) -> str:
         candidates = [d / "fleet.toml" for base in (module_dir, cwd) for d in (base, *base.parents)]
     for fp in candidates:
         if fp.exists():
-            from kego.fleet import load_fleet
-
             return load_fleet(fp).hub.mlflow
     return f"sqlite:///{Path.home() / '.kego' / 'offline.db'}"
 

@@ -159,9 +159,10 @@ def test_logs_subcommand_parser():
 def test_run_logs_local_resolution(tmp_path, monkeypatch, capsys):
     from kego.pipeline.cli import _run_logs
 
-    # Mock find_repo_root to return our tmp_path
-    monkeypatch.setattr("kego.fleet.repo_root", lambda *a: tmp_path)
-    monkeypatch.setattr("kego.fleet.machine_name", lambda *a: "localhost")
+    # Mock find_repo_root to return our tmp_path (patched on kego.pipeline.cli, where
+    # cli.py binds these names at import time — see test_dispatch_train_agent_logs_help_text).
+    monkeypatch.setattr("kego.pipeline.cli.find_repo_root", lambda *a: tmp_path)
+    monkeypatch.setattr("kego.pipeline.cli.machine_name", lambda *a: "localhost")
 
     # Setup a mock local logs directory
     local_logs_dir = tmp_path / ".kego" / "logs"
@@ -214,9 +215,11 @@ def test_run_logs_local_resolution(tmp_path, monkeypatch, capsys):
 def test_run_logs_mlflow_resolution(tmp_path, monkeypatch):
     from kego.pipeline.cli import _run_logs
 
-    # Mock find_repo_root
-    monkeypatch.setattr("kego.fleet.repo_root", lambda *a: tmp_path)
-    monkeypatch.setattr("kego.fleet.machine_name", lambda *a: "localhost")
+    # Mock find_repo_root (patched where cli.py binds it, not at the definition site —
+    # cli.py imports these names at module load, so patching kego.fleet.X after that
+    # wouldn't reach cli.py's own bound names)
+    monkeypatch.setattr("kego.pipeline.cli.find_repo_root", lambda *a: tmp_path)
+    monkeypatch.setattr("kego.pipeline.cli.machine_name", lambda *a: "localhost")
 
     # Setup mock fleet.toml
     fleet_toml = tmp_path / "fleet.toml"
@@ -266,12 +269,14 @@ repo = "/some/repo"
 def test_dispatch_train_agent_logs_help_text(tmp_path, monkeypatch, capsys):
     from kego.pipeline.cli import _dispatch_train_agent
 
-    monkeypatch.setattr("kego.fleet.repo_root", lambda *a: tmp_path)
-    monkeypatch.setattr("kego.tracking.create_run", lambda *a, **kw: "test_run_123")
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda *a, **kw: "http://mlflow:5000")
-    monkeypatch.setattr("kego.fleet.git_sha", lambda *a, **kw: "sha123")
-    monkeypatch.setattr("kego.fleet.machine_name", lambda *a, **kw: "local")
-    monkeypatch.setattr("kego.dispatch.dispatch", lambda *a, **kw: None)
+    # Patched on kego.pipeline.cli, where these names are now bound at import time
+    # (patching the origin module wouldn't reach cli.py's already-resolved names).
+    monkeypatch.setattr("kego.pipeline.cli.find_repo_root", lambda *a: tmp_path)
+    monkeypatch.setattr("kego.pipeline.cli.create_run", lambda *a, **kw: "test_run_123")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda *a, **kw: "http://mlflow:5000")
+    monkeypatch.setattr("kego.pipeline.cli.git_sha", lambda *a, **kw: "sha123")
+    monkeypatch.setattr("kego.pipeline.cli.machine_name", lambda *a, **kw: "local")
+    monkeypatch.setattr("kego.pipeline.cli.dispatch", lambda *a, **kw: None)
 
     fleet_toml = tmp_path / "fleet.toml"
     fleet_toml.write_text("""
@@ -298,12 +303,13 @@ def test_dispatch_league_logs_help_text(tmp_path, monkeypatch, capsys):
 
     from kego.pipeline.cli import _dispatch_league
 
-    monkeypatch.setattr("kego.fleet.repo_root", lambda *a: tmp_path)
-    monkeypatch.setattr("kego.tracking.create_run", lambda *a, **kw: "league_run_456")
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda *a, **kw: "http://mlflow:5000")
-    monkeypatch.setattr("kego.fleet.git_sha", lambda *a, **kw: "sha123")
-    monkeypatch.setattr("kego.fleet.machine_name", lambda *a, **kw: "local")
-    monkeypatch.setattr("kego.dispatch.dispatch", lambda *a, **kw: None)
+    # Patched on kego.pipeline.cli — see test_dispatch_train_agent_logs_help_text for why.
+    monkeypatch.setattr("kego.pipeline.cli.find_repo_root", lambda *a: tmp_path)
+    monkeypatch.setattr("kego.pipeline.cli.create_run", lambda *a, **kw: "league_run_456")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda *a, **kw: "http://mlflow:5000")
+    monkeypatch.setattr("kego.pipeline.cli.git_sha", lambda *a, **kw: "sha123")
+    monkeypatch.setattr("kego.pipeline.cli.machine_name", lambda *a, **kw: "local")
+    monkeypatch.setattr("kego.pipeline.cli.dispatch", lambda *a, **kw: None)
 
     fleet_toml = tmp_path / "fleet.toml"
     fleet_toml.write_text("""

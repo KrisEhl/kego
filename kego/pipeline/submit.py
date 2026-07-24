@@ -7,10 +7,18 @@ flow in the s6e2 script.
 
 from __future__ import annotations
 
+import csv
+import json
+import re
+import shutil
+import subprocess
+import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from kego.pipeline.config import SubmitConfig
 from kego.pipeline.task import Task
@@ -32,12 +40,8 @@ class Submitter:
         """Build the submission frame via the task and write it to ``path``."""
         out = self.task.make_submission(ids, preds)
         if isinstance(out, (str, Path)):
-            import shutil
-
             shutil.copy(out, path)
             return path
-
-        import pandas as pd
 
         if isinstance(out, pd.DataFrame):
             # Ensure parent directory exists
@@ -49,13 +53,6 @@ class Submitter:
 
     def submit(self, path: Path, message: str) -> SubmitResult:
         """Upload via the kaggle CLI and poll until scored or timed out."""
-        import csv
-        import json
-        import shutil
-        import subprocess
-        import sys
-        import time
-
         competition = self.task.kaggle_slug
 
         # Get the correct kaggle command executable path
@@ -108,8 +105,6 @@ class Submitter:
                 )
                 push_out = push_res.stdout.strip()
                 print(push_out)
-
-                import re
 
                 match = re.search(r"version\s+(\d+)\s+successfully", push_out, re.IGNORECASE)
                 if match:

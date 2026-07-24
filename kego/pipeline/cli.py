@@ -15,11 +15,54 @@ dotlist overrides applied on top. Wire as a console script in pyproject:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import csv
+import dataclasses
+import importlib.util
+import json
+import math
+import os
+import runpy
+import shlex
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from urllib.parse import quote, urlparse
+
+import numpy as np
+import tomllib
+
+from kego.dispatch import DEFAULT_EXCLUDES, dispatch, other_competition_excludes
+from kego.fleet import git_sha, load_fleet, machine_name
+from kego.fleet import repo_root as find_repo_root
+from kego.pipeline.battle import run_battle_benchmark
+from kego.pipeline.config import ModelConfig, PipelineConfig, load_config
+from kego.pipeline.executor import get_executor
+from kego.pipeline.runner import Pipeline, RunOutcome
+from kego.pipeline.tune import HPSpace
+from kego.tracking import (
+    archive_version,
+    create_run,
+    default_tracking_uri,
+    filter_worse_versions,
+    format_leaderboard,
+    leaderboard,
+    pending_registrations,
+    sync_outbox,
+    unarchive_version,
+)
+from kego.tracking.league import Rating, rate_round, results_from_winmatrix
+from kego.tracking.prune import active_model_versions
+from kego.tracking.registry import read_ratings
+from kego.tracking.registry import write_ratings as write_registry_ratings
+
+# mlflow is an optional dependency (see pyproject.toml `[project.optional-dependencies].ml`)
+# and is never imported at module top level anywhere in kego — every use below is a local
+# `from mlflow.tracking import MlflowClient` so plain CLI usage doesn't hard-require it.
 
 
 def finite_nonnegative_float(raw: str) -> float:
-    import math
-
     value = float(raw)
     if not math.isfinite(value) or value < 0:
         raise argparse.ArgumentTypeError("must be a finite non-negative number")
@@ -257,10 +300,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def detect_task() -> str:
-    from pathlib import Path
-
-    import tomllib
-
     curr = Path.cwd()
     for parent in [curr, *curr.parents]:
         toml_path = parent / "kego.toml"
@@ -296,11 +335,6 @@ def _train_agent_overrides(args) -> dict:
 
 def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, output: str | None, overrides: dict) -> int:
     """Ship the local tree to fleet machine ``target`` and SSH-launch training there (§5.4)."""
-
-    from kego.dispatch import DEFAULT_EXCLUDES, dispatch, other_competition_excludes
-    from kego.fleet import git_sha, load_fleet, machine_name
-    from kego.fleet import repo_root as find_repo_root
-    from kego.tracking import create_run, default_tracking_uri
 
     repo_root = find_repo_root()
     fleet_path = repo_root / "fleet.toml"
@@ -355,14 +389,7 @@ def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, outpu
 
 
 def _dispatch_league(task_name: str, target: str, args) -> int:
-    import contextlib
-
     from mlflow.tracking import MlflowClient
-
-    from kego.dispatch import DEFAULT_EXCLUDES, dispatch, other_competition_excludes
-    from kego.fleet import git_sha, load_fleet, machine_name
-    from kego.fleet import repo_root as find_repo_root
-    from kego.tracking import create_run, default_tracking_uri
 
     repo_root = find_repo_root()
     fleet_path = repo_root / "fleet.toml"
@@ -426,11 +453,7 @@ def _dispatch_league(task_name: str, target: str, args) -> int:
 
 
 def _resolve_run_machine(task_name: str, run_id_prefix: str) -> tuple[str, str] | None:
-    import contextlib
-
     from mlflow.tracking import MlflowClient
-
-    from kego.tracking import default_tracking_uri
 
     with contextlib.suppress(Exception):
         uri = default_tracking_uri()
@@ -471,14 +494,6 @@ def _resolve_run_machine(task_name: str, run_id_prefix: str) -> tuple[str, str] 
 
 
 def _run_logs(target_or_run_id: str | None, run_id_prefix: str | None, tail: bool, lines: int, task_name: str) -> int:
-    import contextlib
-    import shlex
-    import subprocess
-    from pathlib import Path
-
-    from kego.fleet import load_fleet
-    from kego.fleet import repo_root as find_repo_root
-
     # 1. Resolve target machine
     repo_root = find_repo_root()
     fleet_path = repo_root / "fleet.toml"
@@ -520,9 +535,7 @@ def _run_logs(target_or_run_id: str | None, run_id_prefix: str | None, tail: boo
     is_local = target.lower() in ("local", "self", "localhost")
     if not is_local:
         with contextlib.suppress(Exception):
-            from kego.fleet import machine_name as get_machine_name
-
-            if target == get_machine_name():
+            if target == machine_name():
                 is_local = True
 
     if is_local:
@@ -613,11 +626,6 @@ def _run_logs(target_or_run_id: str | None, run_id_prefix: str | None, tail: boo
 
 
 def _run_league_locally(task_name: str, args) -> int:
-    import runpy
-    import sys
-
-    from kego.fleet import repo_root as find_repo_root
-
     if task_name != "pokemon-tcg-ai-battle":
         print(f"Task '{task_name}' does not implement a league runner.")
         return 1
@@ -655,12 +663,7 @@ def _run_league_locally(task_name: str, args) -> int:
 
 
 def _show_league_matrix(task_name: str, run_id: str | None = None) -> int:
-    import tempfile
-    from pathlib import Path
-
     from mlflow.tracking import MlflowClient
-
-    from kego.tracking import default_tracking_uri
 
     uri = default_tracking_uri()
     client = MlflowClient(tracking_uri=uri)
@@ -699,10 +702,6 @@ def _show_league_matrix(task_name: str, run_id: str | None = None) -> int:
 
 
 def _load_league_module(task_name: str):
-    import importlib.util
-
-    from kego.fleet import repo_root as find_repo_root
-
     repo_root = find_repo_root()
     script = repo_root / "competitions" / task_name / "run_league.py"
     spec = importlib.util.spec_from_file_location(f"{task_name}_run_league", script)
@@ -714,10 +713,6 @@ def _load_league_module(task_name: str):
 
 
 def _load_submission_module(task_name: str):
-    import importlib.util
-
-    from kego.fleet import repo_root as find_repo_root
-
     script = find_repo_root() / "competitions" / task_name / "submit_leader.py"
     spec = importlib.util.spec_from_file_location(f"{task_name}_submit", script)
     if not spec or not spec.loader:
@@ -728,8 +723,6 @@ def _load_submission_module(task_name: str):
 
 
 def _read_league_csv(path):
-    import csv
-
     with open(path, newline="") as f:
         rows = list(csv.reader(f))
     names = rows[0][1:]
@@ -742,8 +735,6 @@ def _read_league_csv(path):
 
 
 def _has_league_artifacts(client, run_id: str) -> bool:
-    from pathlib import Path
-
     try:
         names = {a.path for a in client.list_artifacts(run_id, "league")}
     except Exception:
@@ -770,8 +761,6 @@ def _has_league_artifacts(client, run_id: str) -> bool:
 
 def _auto_league_run_ids(task_name: str, latest: int | None = None) -> list[str]:
     from mlflow.tracking import MlflowClient
-
-    from kego.tracking import default_tracking_uri
 
     client = MlflowClient(tracking_uri=default_tracking_uri())
     exp = client.get_experiment_by_name(task_name)
@@ -803,17 +792,7 @@ def _auto_league_run_ids(task_name: str, latest: int | None = None) -> list[str]
 
 
 def _merge_leagues(task_name: str, run_ids: list[str], write_ratings: bool, latest: int | None = None) -> int:
-    import json
-    import tempfile
-    from pathlib import Path
-
-    import numpy as np
     from mlflow.tracking import MlflowClient
-
-    from kego.tracking import create_run, default_tracking_uri
-    from kego.tracking.league import Rating, rate_round, results_from_winmatrix
-    from kego.tracking.registry import read_ratings
-    from kego.tracking.registry import write_ratings as write_registry_ratings
 
     uri = default_tracking_uri()
     client = MlflowClient(tracking_uri=uri)
@@ -988,8 +967,6 @@ def _numeric_row_value(row: dict, key: str) -> float:
 
 def _mlflow_run_link(tracking_uri: str, experiment_id: str, run_id: str) -> str:
     """Build an MLflow UI link when the tracking URI is browser-accessible."""
-    from urllib.parse import quote, urlparse
-
     if urlparse(tracking_uri).scheme not in {"http", "https"}:
         return "-"
     return (
@@ -999,9 +976,6 @@ def _mlflow_run_link(tracking_uri: str, experiment_id: str, run_id: str) -> str:
 
 
 def _use_color(force: bool | None = None) -> bool:
-    import os
-    import sys
-
     if force is not None:
         return force
     return "NO_COLOR" not in os.environ and (
@@ -1010,18 +984,10 @@ def _use_color(force: bool | None = None) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    import os
-
     os.environ.setdefault("MLFLOW_SUPPRESS_PRINTING_URL_TO_STDOUT", "true")
 
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    import dataclasses
-
-    from kego.pipeline.config import ModelConfig, PipelineConfig, load_config
-    from kego.pipeline.executor import get_executor
-    from kego.pipeline.runner import Pipeline
 
     task_name = getattr(args, "task", None) or detect_task()
 
@@ -1029,10 +995,6 @@ def main(argv: list[str] | None = None) -> int:
         return _run_logs(args.target_or_run_id, args.run_id, args.tail, args.lines, task_name)
 
     if args.command == "sync":
-        import json
-
-        from kego.tracking import pending_registrations, sync_outbox
-
         pending = pending_registrations()
         if args.list:
             if not pending:
@@ -1057,16 +1019,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "models":
         from mlflow.tracking import MlflowClient
-
-        from kego.tracking import (
-            archive_version,
-            default_tracking_uri,
-            filter_worse_versions,
-            format_leaderboard,
-            leaderboard,
-            unarchive_version,
-        )
-        from kego.tracking.prune import active_model_versions
 
         uri = default_tracking_uri()
         models_cmd = getattr(args, "models_cmd", None)
@@ -1238,8 +1190,6 @@ def main(argv: list[str] | None = None) -> int:
 
         hp_space_dict = {}
         if getattr(args, "hp_params", None):
-            from kego.pipeline.tune import HPSpace
-
             for hp_spec in args.hp_params:
                 hp = HPSpace.parse(hp_spec)
                 hp_space_dict[hp.name] = {
@@ -1298,8 +1248,6 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
     elif args.command == "submit":
-        from kego.pipeline.runner import RunOutcome
-
         message = args.message
         if task_name == "pokemon-tcg-ai-battle":
             prepared = _load_submission_module(task_name).prepare_submission(args.version)
@@ -1354,8 +1302,6 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         try:
-            from kego.pipeline.battle import run_battle_benchmark
-
             run_battle_benchmark(
                 agent1_path=agent1,
                 agent2_path=agent2,

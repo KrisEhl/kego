@@ -1,6 +1,8 @@
 import math
+import multiprocessing as mp
 import os
 import random
+import re
 import sys
 import tempfile
 import time
@@ -14,8 +16,19 @@ repo_root = comp_dir.parent.parent
 sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(comp_dir))
 
+from kego.fleet import git_sha, machine_name
 from kego.pipeline.battle import load_agent, load_deck, locate_cg_dir
 from kego.timing import DEFAULT, Timings, timed, timer
+from kego.tracking import (
+    Tracker,
+    default_tracking_uri,
+    register_checkpoint_or_queue,
+    resolve_training_resume,
+)
+
+# mlflow is an optional dependency (see pyproject.toml `[project.optional-dependencies].ml`)
+# and stays a local `from mlflow.tracking import MlflowClient` import below: this training
+# script must keep working (crash-safe telemetry) when mlflow isn't installed or unreachable.
 
 cg_parent = locate_cg_dir()
 sys.path.insert(0, str(cg_parent))
@@ -329,8 +342,6 @@ def _resolve_init_checkpoint(spec: str, task: str, comp_dir: Path) -> Path:
         version = spec.split(":", 1)[1]
         from mlflow.tracking import MlflowClient
 
-        from kego.tracking import default_tracking_uri
-
         client = MlflowClient(tracking_uri=default_tracking_uri())
         model_version = client.get_model_version(task, version)
         cache_dir = comp_dir / "outputs" / "init_checkpoints" / f"registry_v{version}"
@@ -491,8 +502,6 @@ def _tracking_tags(
     config_fingerprint: str | None,
     resume_version: int | None,
 ) -> dict[str, str]:
-    from kego.fleet import git_sha, machine_name
-
     agent_name = variant or (
         f"mcts-{deck_path.stem}-d{model_args[0]}-h{model_args[1]}-ff{model_args[2]}-"
         f"enc{model_args[3]}-dec{model_args[4]}"
@@ -584,8 +593,6 @@ def run_training_loop(
     config_fingerprint: str | None = None,
     features: dict | None = None,
 ):
-    import multiprocessing as mp
-
     # Opponents to evaluate the trained agent against. "random" = floor, "rule:<name>"
     # = a heuristic meta-deck agent (agents/<name>.py + decks/<name>.csv), "self" = the
     # best checkpoint so far. The best-checkpoint gate uses the rule-agent average.
@@ -632,8 +639,6 @@ def run_training_loop(
     # No point spawning more workers than games in a phase.
     num_workers = max(1, min(num_workers, max(self_play_games, eval_games, 1)))
     print(f"Starting MCTS self-play training on {device} | rollout workers: {num_workers}...")
-
-    from kego.tracking import default_tracking_uri, resolve_training_resume
 
     _uri = default_tracking_uri()
     _task = "pokemon-tcg-ai-battle"
@@ -687,14 +692,10 @@ def run_training_loop(
 
     init_iterations = 0
     if init_checkpoint:
-        import re
-
         if init_checkpoint.startswith("registry:"):
             ver_str = init_checkpoint.split(":", 1)[1]
             try:
                 from mlflow.tracking import MlflowClient
-
-                from kego.tracking import default_tracking_uri
 
                 client = MlflowClient(tracking_uri=default_tracking_uri())
                 mv = client.get_model_version("pokemon-tcg-ai-battle", ver_str)
@@ -752,8 +753,6 @@ def run_training_loop(
     # Fleet tracking: log live metrics to the central MLflow (or an offline sqlite fallback)
     # and register the best checkpoint in the model registry. Crash-safe — a no-op if MLflow
     # is unreachable, so training never blocks on telemetry. See the fleet-fabric spec.
-    from kego.tracking import Tracker, register_checkpoint_or_queue
-
     _run_tags = _tracking_tags(
         _task,
         deck_path,

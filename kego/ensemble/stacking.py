@@ -16,6 +16,8 @@ def l2_stacking(
     seed=42,
 ):
     """L2 stacking: train LightGBM meta-model with K-fold CV on L1 predictions."""
+    # lightgbm isn't a declared kego dependency (not even under the `ml` extra) — kept
+    # as a local import so this module only requires it when this function is called.
     import lightgbm as lgbm
     from lightgbm import LGBMClassifier
 

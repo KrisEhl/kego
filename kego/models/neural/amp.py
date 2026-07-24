@@ -1,6 +1,11 @@
 import torch
 from skorch import NeuralNetBinaryClassifier  # ty: ignore[unresolved-import]
 
+try:
+    from skorch.dataset import unpack_data  # ty: ignore[unresolved-import]
+except ImportError:  # older/newer skorch moved the helper between submodules
+    from skorch.utils import unpack_data  # ty: ignore[unresolved-import]
+
 
 class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
     """NeuralNetBinaryClassifier with automatic mixed precision (fp16)."""
@@ -15,11 +20,6 @@ class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):
             return super().infer(x, **fit_params)
 
     def train_step_single(self, batch, **fit_params):
-        try:
-            from skorch.dataset import unpack_data  # ty: ignore[unresolved-import]
-        except ImportError:
-            from skorch.utils import unpack_data  # ty: ignore[unresolved-import]
-
         self._set_training(True)
         Xi, yi = unpack_data(batch)
         y_pred = self.infer(Xi, **fit_params)

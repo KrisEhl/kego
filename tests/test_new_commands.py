@@ -633,8 +633,14 @@ def test_status_labels_two_gpus_and_keeps_eta_column_aligned(tmp_path, monkeypat
         hub=Hub("gpu-box", "http://gpu-box:5000"),
         machines=(Machine("gpu-box", "user@gpu-box", "gpu", "/repo", gpus=("rtx3090", "rtx3090")),),
     )
+    (tmp_path / "fleet.toml").write_text("")  # only existence is checked; content comes from the mock below
     monkeypatch.setattr(runner, "_is_port_open", lambda _address, timeout=0.2: False)
-    monkeypatch.setattr("kego.fleet.load_fleet", lambda _path: fleet)
+    # Patched on runner, where runner.py binds these names at import time (not on kego.fleet /
+    # kego.tracking, their definition sites) — see the cli.py/runner.py hoist and its mock-target fix.
+    monkeypatch.setattr(runner, "load_fleet", lambda _path: fleet)
+    monkeypatch.setattr(runner, "find_repo_root", lambda: tmp_path)
+    # Keeps the (unrelated) "Recent Hub Runs" section from parsing the throwaway fleet.toml above.
+    monkeypatch.setattr(runner, "default_tracking_uri", lambda *_a, **_kw: "http://gpu-box:5000")
     monkeypatch.setattr(
         runner,
         "_poll_machine",
@@ -734,7 +740,9 @@ def test_poll_machine_uses_local_shell_for_current_machine(monkeypatch):
         seen["cmd"] = cmd
         return FakeCompleted()
 
-    monkeypatch.setattr("kego.fleet.machine_name", lambda: "localbox")
+    # Patched on runner, where runner.py binds this name at import time — see the
+    # cli.py/runner.py hoist and its mock-target fix.
+    monkeypatch.setattr(runner, "machine_name", lambda: "localbox")
     monkeypatch.setattr("subprocess.run", fake_run)
 
     res = runner._poll_machine(Machine("localbox", "user@localbox", "cpu", "/repo"))
@@ -764,7 +772,9 @@ LOGS:
 LOG_PARSED: run_id={run_id} | curr=3771 | total=16250 | step=ETA 01:30:02 | done= | kind=league
 """
 
-    monkeypatch.setattr("kego.fleet.machine_name", lambda: "localbox")
+    # Patched on runner, where runner.py binds this name at import time — see the
+    # cli.py/runner.py hoist and its mock-target fix.
+    monkeypatch.setattr(runner, "machine_name", lambda: "localbox")
     monkeypatch.setattr("subprocess.run", lambda *_args, **_kwargs: FakeCompleted())
 
     res = runner._poll_machine(Machine("localbox", "user@localbox", "cpu", "/repo"))
@@ -871,9 +881,9 @@ def test_models_forced_color_shows_elo_trust_legend(monkeypatch, capsys):
     from kego.pipeline import cli
 
     monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://mlflow")
     monkeypatch.setattr(
-        "kego.tracking.leaderboard",
+        "kego.pipeline.cli.leaderboard",
         lambda uri, task, sort_by: [{"version": "1", "elo": "1700", "elo_rd": "0.9"}],
     )
     monkeypatch.setenv("NO_COLOR", "1")
@@ -891,13 +901,9 @@ def test_models_shows_submission_status_and_best_public_rank(monkeypatch, capsys
     from kego.pipeline import cli
 
     monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://mlflow")
     monkeypatch.setattr(
-        "kego.tracking.registry.leaderboard",
-        lambda uri, task, sort_by: [{"version": "30", "elo": "1700"}, {"version": "31", "elo": "1600"}],
-    )
-    monkeypatch.setattr(
-        "kego.tracking.leaderboard",
+        "kego.pipeline.cli.leaderboard",
         lambda uri, task, sort_by: [{"version": "30", "elo": "1700"}, {"version": "31", "elo": "1600"}],
     )
     monkeypatch.setattr(
@@ -922,9 +928,9 @@ def test_models_mlflow_adds_originating_run_links(monkeypatch, capsys):
     from kego.pipeline import cli
 
     monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://omarchyd:5000")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://omarchyd:5000")
     monkeypatch.setattr(
-        "kego.tracking.leaderboard",
+        "kego.pipeline.cli.leaderboard",
         lambda uri, task, sort_by: [
             {"version": "30", "elo": "1700", "run_id": "registration30", "training_run_id": "run30"},
             {"version": "31", "elo": "1600", "run_id": None},
@@ -953,9 +959,9 @@ def test_models_no_color_suppresses_elo_trust_colors(monkeypatch, capsys):
     from kego.pipeline import cli
 
     monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://mlflow")
     monkeypatch.setattr(
-        "kego.tracking.leaderboard",
+        "kego.pipeline.cli.leaderboard",
         lambda uri, task, sort_by: [{"version": "1", "elo": "1700", "elo_rd": "0.9"}],
     )
     assert cli.main(["models", "--task", "pokemon-tcg-ai-battle", "--no-color"]) == 0
@@ -969,7 +975,7 @@ def test_models_prune(monkeypatch, capsys):
     from kego.pipeline import cli
 
     monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://mlflow")
 
     transitioned = []
     tagged = []
@@ -1000,7 +1006,7 @@ def test_models_unprune(monkeypatch, capsys):
     from kego.pipeline import cli
 
     monkeypatch.setattr(cli, "detect_task", lambda: "pokemon-tcg-ai-battle")
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://mlflow")
 
     transitioned = []
     tagged = []
@@ -1177,7 +1183,7 @@ def test_auto_league_run_ids_skips_consumed_and_missing_artifacts(monkeypatch):
             return []
 
     monkeypatch.setattr("mlflow.tracking.MlflowClient", lambda tracking_uri=None: Client())
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://mlflow")
 
     assert cli._auto_league_run_ids("pokemon-tcg-ai-battle") == ["new2", "new1"]
     assert cli._auto_league_run_ids("pokemon-tcg-ai-battle", latest=1) == ["new2"]
@@ -1196,7 +1202,7 @@ def test_show_league_matrix_falls_back_to_root_artifact(monkeypatch, capsys):
             return str(out)
 
     monkeypatch.setattr("mlflow.tracking.MlflowClient", lambda tracking_uri=None: Client())
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://mlflow")
 
     assert cli._show_league_matrix("pokemon-tcg-ai-battle", run_id="run1") == 0
     out = capsys.readouterr().out
@@ -1238,7 +1244,7 @@ def test_show_league_matrix_skips_running_runs(monkeypatch, capsys):
             return str(out)
 
     monkeypatch.setattr("mlflow.tracking.MlflowClient", lambda tracking_uri=None: Client())
-    monkeypatch.setattr("kego.tracking.default_tracking_uri", lambda: "http://mlflow")
+    monkeypatch.setattr("kego.pipeline.cli.default_tracking_uri", lambda: "http://mlflow")
     monkeypatch.setattr(cli, "_has_league_artifacts", lambda client, run_id: run_id == "done")
 
     assert cli._show_league_matrix("pokemon-tcg-ai-battle") == 0

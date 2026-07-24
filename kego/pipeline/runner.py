@@ -7,13 +7,33 @@ the reusable logic lives in those stages.
 
 from __future__ import annotations
 
+import concurrent.futures
+import contextlib
+import csv
+import io
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlparse
 
-from kego.fleet import Machine
-from kego.pipeline.config import PipelineConfig
+import numpy as np
+
+from kego.fleet import Machine, load_fleet, machine_name
+from kego.fleet import repo_root as find_repo_root
+from kego.pipeline.config import PipelineConfig, expand_grid
 from kego.pipeline.ensemble import EnsembleResult
 from kego.pipeline.evaluate import EvalReport
-from kego.pipeline.executor import Executor, get_executor
+from kego.pipeline.executor import Executor, RayExecutor, get_executor
 from kego.pipeline.features import FeatureSets
 from kego.pipeline.predictions import (
     CachingPredictionStore,
@@ -22,17 +42,19 @@ from kego.pipeline.predictions import (
     Predictions,
     PredictionStore,
 )
-from kego.pipeline.submit import SubmitResult
+from kego.pipeline.submit import SubmitResult, Submitter
 from kego.pipeline.task import Task, get_task
 from kego.pipeline.train import TrainContext, Trainer
+from kego.tracking import default_tracking_uri
+from kego.tracking.outbox import pending_for, sync_outbox
+
+# mlflow and ray are optional dependencies (see pyproject.toml `[project.optional-dependencies].ml`)
+# and are never imported at module top level anywhere in kego — every use below stays a local
+# `from mlflow.tracking import MlflowClient` / `import ray` so plain CLI usage doesn't require them.
 
 
 def model_submission_stats(csv_text: str, leaderboard_csv: str | None = None) -> dict[str, dict[str, str]]:
     """Summarize Kaggle submission attempts and best public rank by registry version."""
-    import csv
-    import io
-    import re
-
     base_header = "fileName,date,description,status,publicScore,privateScore"
     starts = [start for header in (f"ref,{base_header}", base_header) if (start := csv_text.find(header)) >= 0]
     if not starts:
@@ -77,9 +99,6 @@ def model_submission_stats(csv_text: str, leaderboard_csv: str | None = None) ->
 
 
 def format_submissions(csv_text: str, description_width: int = 64, leaderboard_csv: str | None = None) -> str:
-    import csv
-    import io
-
     if description_width < 3:
         raise ValueError("description_width must be at least 3")
     base_header = "fileName,date,description,status,publicScore,privateScore"
@@ -122,8 +141,6 @@ def format_submissions(csv_text: str, description_width: int = 64, leaderboard_c
     header = render({column: column for column in columns})
     separator = render({column: "-" * widths[column] for column in columns})
     output = [header, separator, *(render(row) for row in rows)]
-
-    import re
 
     current_versions = []
     for row in rows:
@@ -197,9 +214,6 @@ def format_submissions(csv_text: str, description_width: int = 64, leaderboard_c
 
 
 def _is_port_open(address: str, timeout: float = 0.2) -> bool:
-    import socket
-    from urllib.parse import urlparse
-
     try:
         parsed = urlparse(address)
         host = parsed.hostname or "localhost"
@@ -232,9 +246,7 @@ def _make_ray_job_client(dashboard_address: str):
     routes through the (often unreachable) Ray Client port and times out. Clear
     ``RAY_ADDRESS`` during construction so the explicit http dashboard URL wins.
     """
-    import os
-
-    from ray.dashboard.modules.job.sdk import JobSubmissionClient  # ty: ignore[unresolved-import]
+    from ray.dashboard.modules.job.sdk import JobSubmissionClient
 
     saved = os.environ.pop("RAY_ADDRESS", None)
     try:
@@ -263,10 +275,6 @@ def _parse_etime(etime_str: str) -> int:
 
 
 def _poll_machine(machine: Machine) -> dict:
-    import os
-    import re
-    import subprocess
-
     remote_script = r"""
 if [ "$(uname)" = "Darwin" ]; then
     CPU_UTIL=$(top -l 1 | awk '/CPU usage/ {print $3}' | tr -d '%')
@@ -338,8 +346,6 @@ ls -dt ~/.kego/logs/*.log 2>/dev/null | head -n 20 | while read -r logpath; do
 done
 """
     try:
-        from kego.fleet import machine_name
-
         is_local = machine.name == machine_name()
     except Exception:
         is_local = False
@@ -549,15 +555,9 @@ class Pipeline:
             raise NotImplementedError(f"Task '{self.task.name}' does not implement a train method.")
         init_checkpoint = kwargs.get("init_checkpoint")
 
-        from kego.pipeline.executor import RayExecutor
-
         if isinstance(self.executor, RayExecutor):
-            import os
-            import subprocess
-            import time
-
             try:
-                import ray  # noqa: F401  # ty: ignore[unresolved-import]
+                import ray  # noqa: F401
             except ImportError:
                 raise ImportError(
                     "Ray is not installed. Please install ray via 'pip install ray' to use the Ray executor."
@@ -572,8 +572,6 @@ class Pipeline:
             # is never used: the job's cwd is the uploaded working_dir, and both
             # `import kego` and `import cg` resolve there (cwd wins over the editable
             # .pth on sys.path). A stale cluster checkout therefore cannot matter.
-            from kego.fleet import repo_root as find_repo_root
-
             # Repo root = the repo whose kego/ + cg/ we want to upload,
             # independent of the caller's cwd.
             repo_root = find_repo_root()
@@ -656,17 +654,11 @@ class Pipeline:
                     print("Error: failed to download trained weights via scp.")
             return
 
-        import json
-        import os
-        from pathlib import Path
-
         # Outbox guard: un-synced checkpoints from a previous run of this task must reach
         # the registry before training starts — resume/lineage decisions read the registry,
         # so training against stale registry state can silently fork from the wrong parent
         # (and the new run overwrites the outputs/ files the queued entries came from).
         if os.environ.get("KEGO_IGNORE_OUTBOX") != "1":
-            from kego.tracking.outbox import pending_for, sync_outbox
-
             if pending_for(self.task.name):
                 print(f"Un-synced checkpoint registration(s) for '{self.task.name}' in the outbox; syncing...")
                 for entry, model, version in sync_outbox()[0]:
@@ -695,8 +687,6 @@ class Pipeline:
             "active_workers": [],
         }
 
-        import contextlib
-
         with contextlib.suppress(Exception), open(run_file, "w") as f:
             json.dump(run_info, f)
 
@@ -721,12 +711,6 @@ class Pipeline:
         raise NotImplementedError
 
     def submit(self, outcome: RunOutcome, message: str) -> SubmitResult:
-        from pathlib import Path
-
-        import numpy as np
-
-        from kego.pipeline.submit import Submitter
-
         submitter = Submitter(self.task, self.config.submit)
 
         is_sim = "pokemon" in self.task.kaggle_slug
@@ -751,9 +735,6 @@ class Pipeline:
         return result
 
     def status(self) -> None:
-        import json
-        from pathlib import Path
-
         # 1. Check local active runs
         local_found = False
         active_runs_dir = Path(".kego/active_runs")
@@ -761,15 +742,11 @@ class Pipeline:
             runs = list(active_runs_dir.glob("*.json"))
             active_list = []
             for run_file in runs:
-                import contextlib
-
                 with contextlib.suppress(Exception):
                     with open(run_file) as f:
                         data = json.load(f)
                     pid = data.get("pid")
                     if isinstance(pid, int):
-                        import os
-
                         try:
                             os.kill(pid, 0)
                         except OSError:
@@ -800,8 +777,6 @@ class Pipeline:
                 print("=" * 80)
 
         # 2. Check remote Ray jobs
-        import os
-
         dashboard_address = _resolve_dashboard_address(os.environ.get("RAY_ADDRESS"))
         ray_queried = False
         active_jobs = []
@@ -827,9 +802,7 @@ class Pipeline:
             for job in active_jobs:
                 print(f"[Job {job.job_id}] - status: {job.status} | entrypoint: {job.entrypoint}")
                 if job.start_time:
-                    import datetime
-
-                    start_dt = datetime.datetime.fromtimestamp(job.start_time / 1000.0)
+                    start_dt = datetime.fromtimestamp(job.start_time / 1000.0)
                     print(f"Started: {start_dt.isoformat()}")
                 print("-" * 80)
             print("=" * 80)
@@ -837,19 +810,13 @@ class Pipeline:
             print("No active training runs found.")
 
         # 3. Check Fleet Status (from fleet.toml)
-        from kego.fleet import repo_root as find_repo_root
-
         live_run_ids: set[str] = set()
         polled_online: set[str] = set()
         fleet_path = find_repo_root() / "fleet.toml"
         if fleet_path.exists():
-            from kego.fleet import load_fleet
-
             try:
                 fleet = load_fleet(fleet_path)
                 if fleet.machines:
-                    import concurrent.futures
-
                     with concurrent.futures.ThreadPoolExecutor(max_workers=len(fleet.machines)) as executor:
                         results = list(executor.map(_poll_machine, fleet.machines))
 
@@ -864,8 +831,6 @@ class Pipeline:
                         value = res.get("gpu", "-").replace(" GB", "G")
                         count = res.get("gpu_count", 0)
                         return f"{count} GPUs: {value}" if count > 1 else value
-
-                    import contextlib
 
                     def cpu_label(res: dict) -> str:
                         load_str = res.get("load", "-")
@@ -933,15 +898,11 @@ class Pipeline:
         # 4. Recent hub runs. A run that crashed, was OOM-killed, or lost its machine
         # stays RUNNING in MLflow forever; cross-reference against the live PIDs polled
         # above so dead "RUNNING" rows are called out instead of silently looking healthy.
-        from kego.tracking import default_tracking_uri
-
         uri = default_tracking_uri(fleet_path if fleet_path.exists() else None)
         if uri.startswith("http") and not _is_port_open(uri, timeout=0.5):
             print(f"\nRecent Hub Runs: unavailable (hub MLflow unreachable at {uri})")
             return
         try:
-            from datetime import datetime
-
             from mlflow.tracking import MlflowClient
 
             client = MlflowClient(tracking_uri=uri)
@@ -989,13 +950,6 @@ class Pipeline:
             print("crashed; check logs with:  kego logs <run-id>  or check dmesg for OOM kills.")
 
     def _submission_history(self) -> tuple[str, str | None]:
-        import shutil
-        import subprocess
-        import sys
-        import tempfile
-        import zipfile
-        from pathlib import Path
-
         kaggle_bin = Path(sys.executable).parent / "kaggle"
         cmd = ["kaggle"] if shutil.which("kaggle") else [str(kaggle_bin) if kaggle_bin.exists() else "kaggle"]
         competition = self.task.kaggle_slug
@@ -1039,10 +993,6 @@ class Pipeline:
         print(format_submissions(submissions_csv, leaderboard_csv=leaderboard_csv))
 
     def cache(self, action: str) -> None:
-        from pathlib import Path
-
-        from kego.pipeline.config import expand_grid
-
         # Expand active config grid
         specs = expand_grid(self.config)
         total_specs = len(specs)

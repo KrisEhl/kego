@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from omegaconf import OmegaConf
+
 # Bump (or set per-task in YAML) to invalidate every cached prediction at once,
 # e.g. after changing feature engineering or the train/holdout split logic.
 DATA_VERSION = "v1"
@@ -267,10 +269,8 @@ def load_config(path: str, overrides: list[str] | None = None, task_name: str | 
     """Load YAML into a :class:`PipelineConfig`, applying CLI dotlist overrides.
 
     Resolution order: built-in defaults < YAML file < ``overrides``.
-    Implemented with OmegaConf (imported lazily).
+    Implemented with OmegaConf.
     """
-    from omegaconf import OmegaConf
-
     p = Path(path)
     if not p.exists():
         paths_to_try = []
@@ -350,8 +350,6 @@ def load_config(path: str, overrides: list[str] | None = None, task_name: str | 
                             val_parsed.append(item)
             elif v.startswith("{") and v.endswith("}"):
                 try:
-                    import json
-
                     val_parsed = json.loads(v.replace("'", '"'))
                 except Exception:
                     val_parsed = v

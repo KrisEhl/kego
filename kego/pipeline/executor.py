@@ -7,8 +7,13 @@ pool is hidden behind :class:`Executor`, so the core stays testable without Ray.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from typing import Protocol, TypeVar
+
+# ray is an optional dependency (see pyproject.toml `[project.optional-dependencies].ml`);
+# kept as a local, try/except-guarded import in RayExecutor.map so plain kego usage,
+# including the SerialExecutor default, doesn't require it.
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -33,10 +38,8 @@ class RayExecutor:
         self.num_gpus = num_gpus
 
     def map(self, fn: Callable[[T], R], items: list[T]) -> list[R]:
-        import os
-
         try:
-            import ray  # ty: ignore[unresolved-import]
+            import ray
         except ImportError:
             raise ImportError(
                 "Ray is not installed. Please install ray via 'pip install ray' to use the Ray executor."

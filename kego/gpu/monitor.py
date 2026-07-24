@@ -3,6 +3,9 @@
 import subprocess
 import threading
 
+# torch is an optional dependency (see pyproject.toml `[project.optional-dependencies].ml`);
+# kept as a local, try/except-guarded import below so plain kego usage doesn't require it.
+
 
 def resolve_smi_index(cuda_index: int = 0) -> int:
     """Map a PyTorch CUDA device index to its nvidia-smi device index via UUID.

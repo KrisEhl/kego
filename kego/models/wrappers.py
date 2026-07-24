@@ -10,8 +10,10 @@ This module is never auto-imported from kego.models — use explicit imports:
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 
 
 class ScaledLogisticRegression:
@@ -42,9 +44,6 @@ class SubsampledSVC:
         self.kwargs.setdefault("kernel", "rbf")
 
     def fit(self, X, y, **kwargs):
-        from sklearn.model_selection import train_test_split
-        from sklearn.svm import SVC
-
         if len(X) > self.max_train_rows:
             X, _, y, _ = train_test_split(
                 X,
@@ -86,8 +85,6 @@ class SubsampledTabPFN:
 
         X = self._prepare(X)
         if len(X) > self.max_train_rows:
-            from sklearn.model_selection import train_test_split
-
             X, _, y, _ = train_test_split(
                 X,
                 y,

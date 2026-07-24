@@ -9,6 +9,11 @@ except ImportError:
     from agents.base import BaseAgent
 from cg.api import Observation, search_begin, search_end, search_step, to_observation_class
 
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore
+
 from .encoding import encode_actions, encode_state
 from .model import MODEL_ARGS, PolicyValueNet, ensure_tensors, model_args_from_state_dict
 from .opponent import infer_opponent_hidden_cards
@@ -51,10 +56,6 @@ class MCTSTransformerAgent(BaseAgent):
         var_path = next((p for p in candidate_paths if os.path.exists(p)), None)
         if var_path:
             try:
-                try:
-                    import tomllib
-                except ImportError:
-                    import tomli as tomllib  # type: ignore
                 with open(var_path, "rb") as f:
                     variant_data = tomllib.load(f)
                 print(f"[MCTSTransformerAgent] Loaded configuration from {var_path}", flush=True)

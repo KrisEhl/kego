@@ -6,6 +6,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# mlflow is an optional dependency (see pyproject.toml `[project.optional-dependencies].ml`).
+# kego.tracking's package __init__ re-exports these functions eagerly, so importing mlflow
+# at this module's top level would force every `import kego.tracking` to require mlflow —
+# every use below stays a local import to keep that path optional.
+
 
 def load_predictions_from_runs(runs_df, tracking_uri):
     """Load and average predictions from a DataFrame of MLflow runs.

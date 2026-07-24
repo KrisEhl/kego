@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import ast
 import json
 import re
 import shutil
@@ -17,6 +19,11 @@ from mlflow.tracking import MlflowClient
 from run_league import download_checkpoint
 
 from kego.tracking import default_tracking_uri, leaderboard
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore
 
 
 def select_elo_leader(rows: list[dict]) -> dict:
@@ -39,10 +46,6 @@ def set_competition_value(content: str, key: str, value: str) -> str:
 def validate_variant_metadata(
     version: str, deck_name: str, model_args_raw: str | None, variant_name: str, variant_path: Path
 ) -> tuple[int, ...]:
-    import ast
-
-    import tomllib
-
     parsed = ast.literal_eval(model_args_raw) if model_args_raw else None
     model_args = tuple(parsed) if isinstance(parsed, (list, tuple)) else None
     with open(variant_path, "rb") as f:
@@ -88,11 +91,6 @@ def prepare_submission(requested_version: str | None = None) -> dict[str, object
         sys.exit(1)
 
     try:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore
-
         with open(kego_toml_path, "rb") as f:
             cfg = tomllib.load(f)
         comp_cfg = cfg.get("competition", {})
@@ -260,8 +258,6 @@ def prepare_submission(requested_version: str | None = None) -> dict[str, object
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Submit a Pokémon registry model to Kaggle.")
     parser.add_argument("version", nargs="?", help="registry version; defaults to the current Elo leader")
     args = parser.parse_args()

@@ -7,6 +7,7 @@ over the encoded state before its scalar action head. ``MODEL_ARGS`` contains
 ``num_heads`` must divide ``d_model``.
 """
 
+import numpy as np
 import torch
 
 from cg.api import all_attack, all_card_data
@@ -39,8 +40,6 @@ MODEL_ARGS = (256, 4, 512, 2, 2)
 
 def ensure_tensors(state_dict: dict) -> dict:
     """Ensure all numpy array values in state_dict are converted to PyTorch Tensors."""
-    import numpy as np
-
     res = {}
     for k, v in state_dict.items():
         if isinstance(v, np.ndarray):

@@ -9,7 +9,10 @@ means implementing one ``Task`` and registering it; no pipeline changes.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -71,10 +74,6 @@ def register_task(name: str):
 def get_task(name: str) -> Task:
     """Instantiate a registered task by name."""
     if name not in _REGISTRY:
-        import importlib.util
-        import sys
-        from pathlib import Path
-
         paths_to_try = [
             Path("competitions") / name / "task.py",
             Path("competitions") / name.replace("-", "_") / "task.py",
