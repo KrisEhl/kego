@@ -21,28 +21,28 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from kego.datasets.split import split_dataset  # noqa: E402
-from kego.ensemble import compute_ensemble  # noqa: E402
-from kego.models.neural.ft_transformer import (  # noqa: E402
+from kego.datasets.split import split_dataset
+from kego.ensemble import compute_ensemble
+from kego.models.neural.ft_transformer import (
     SkorchFTTransformer,
 )
-from kego.models.neural.resnet import SkorchResNet  # noqa: E402
-from kego.models.wrappers import (  # noqa: E402
+from kego.models.neural.resnet import SkorchResNet
+from kego.models.wrappers import (
     GPUXGBClassifier,
     ScaledLogisticRegression,
     ScaledRealMLP,
     SubsampledSVC,
     SubsampledTabPFN,
 )
-from kego.preprocessing import make_te_preprocess  # noqa: E402
-from kego.tracking import (  # noqa: E402
+from kego.preprocessing import make_te_preprocess
+from kego.tracking import (
     get_completed_fingerprints,
     load_predictions_from_ensemble,
     load_predictions_from_mlflow,
     load_predictions_from_runs,
 )
-from kego.train import train_model_split  # noqa: E402
-from kego.utils import (  # noqa: E402
+from kego.train import train_model_split
+from kego.utils import (
     filter_model_config,
     get_seeds_for_learner,
     make_learner_id,
@@ -148,7 +148,8 @@ FEATURES_FORWARD_SELECTED = [
     "chestpain_x_angina",
 ]
 
-FEATURES_RESEARCH = FEATURES_ABLATION_PRUNED + [
+FEATURES_RESEARCH = [
+    *FEATURES_ABLATION_PRUNED,
     "framingham_partial",
     "heart_score_partial",
     "duke_treadmill_approx",
@@ -1601,7 +1602,7 @@ def _train_ensemble(
             ) = ray.get(done[0])
         except Exception as e:
             completed += 1
-            logger.error(f"[{completed}/{len(futures)}] Task failed: {e}")
+            logger.exception(f"[{completed}/{len(futures)}] Task failed: {e}")
             continue
         completed += 1
 
@@ -2127,7 +2128,7 @@ def main():
             )
             logger.info("Kaggle submission uploaded, polling for score...")
         except subprocess.CalledProcessError as e:
-            logger.error(f"Kaggle submit failed: {e.stderr}")
+            logger.exception(f"Kaggle submit failed: {e.stderr}")
             if not args.from_experiment and not args.from_ensemble:
                 ray.shutdown()
             sys.exit(1)

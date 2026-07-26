@@ -14,10 +14,6 @@ def locate_cg_dir() -> Path:
     dirs_to_try = [
         repo_root / "data/pokemon/pokemon-tcg-ai-battle-challenge-strategy/sample_submission/sample_submission",
         repo_root / "data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission",
-        Path(
-            "/home/kristian/projects/kego/data/pokemon/pokemon-tcg-ai-battle-challenge-strategy/sample_submission/sample_submission"
-        ),
-        Path("/home/kristian/projects/kego/data/pokemon/pokemon-tcg-ai-battle/sample_submission/sample_submission"),
         repo_root / "data/pokemon/pokemon-tcg-ai-battle-challenge-strategy/sample_submission",
         repo_root / "data/pokemon/pokemon-tcg-ai-battle/sample_submission",
         repo_root / "competitions/pokemon-tcg-ai-battle/sample_submission",

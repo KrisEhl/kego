@@ -22,9 +22,9 @@ import pandas as pd
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from kego.datasets.split import split_dataset  # noqa: E402
-from kego.ensemble.compare import compare_stacking_methods  # noqa: E402
-from kego.tracking import load_predictions_from_mlflow  # noqa: E402
+from kego.datasets.split import split_dataset
+from kego.ensemble.compare import compare_stacking_methods
+from kego.tracking import load_predictions_from_mlflow
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

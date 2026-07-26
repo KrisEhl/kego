@@ -768,7 +768,7 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
     pf_a, std_a = run_pf_ancc(hw, tw_tvt, tw_gr, seed=pf_seed)
     if len(pf_a) == 0:
         return None
-    pf_z, std_z = run_pf_z(hw, tw_tvt, tw_gr, seed=pf_seed + 1)
+    pf_z, _std_z = run_pf_z(hw, tw_tvt, tw_gr, seed=pf_seed + 1)
     pf_use = pf_a.astype(np.float32)
     std_use = std_a.astype(np.float32)
     has_z = len(pf_z) == len(pf_a) and not np.any(np.isnan(pf_z))
@@ -848,7 +848,7 @@ def build_well(hw_path, tw_path, is_train, FI: FormationPlaneKNN, DI: DenseANCCI
 
     d_ancc, d_std, d_dist = DI.impute(xy_ev, self_wid=swid)
     d_kn, d_std_kn, _ = DI.impute(xy_kn, self_wid=swid)
-    _, b_de, b_dm, b_dl, b_dw = seg_b_well(ktvt, z_kn, d_kn)
+    _, _b_de, _b_dm, b_dl, b_dw = seg_b_well(ktvt, z_kn, d_kn)
     b_d = float(np.median(ktvt + z_kn - d_kn))
     tvt_dense = (-z_ev + d_ancc + b_d).astype(np.float32)
     tvt_densew = (-z_ev + d_ancc + b_dw).astype(np.float32)

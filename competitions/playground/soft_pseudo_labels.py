@@ -146,7 +146,7 @@ def train_cv(
         "seed": seed,
     }
 
-    for fold, (tr_idx, val_idx) in enumerate(skf.split(X_train, y_hard)):
+    for _fold, (tr_idx, val_idx) in enumerate(skf.split(X_train, y_hard)):
         X_tr, X_val = X_train.iloc[tr_idx], X_train.iloc[val_idx]
         y_tr = y_train.iloc[tr_idx]
         y_val_hard = y_hard.iloc[val_idx]

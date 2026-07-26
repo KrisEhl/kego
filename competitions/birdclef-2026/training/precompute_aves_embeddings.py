@@ -201,7 +201,7 @@ def main():
     print("\n--- OOF LogReg probe benchmark ---")
     taxonomy = pd.read_csv(TAXONOMY_CSV)
     labels_csv = pd.read_csv(LABELS_CSV)
-    Y_true, primary_labels = build_ground_truth(meta, labels_csv, taxonomy)
+    Y_true, _primary_labels = build_ground_truth(meta, labels_csv, taxonomy)
 
     # WavLM-only probes
     wavlm_cmap = oof_probe_cmap(all_emb, Y_true, meta)

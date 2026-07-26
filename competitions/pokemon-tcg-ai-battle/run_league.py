@@ -24,6 +24,8 @@ repo_root = comp_dir.parent.parent
 sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(comp_dir))
 
+import tomllib
+
 from mlflow.tracking import MlflowClient
 
 from kego.fleet import load_fleet
@@ -31,11 +33,6 @@ from kego.pipeline.battle import load_agent, load_deck, locate_cg_dir, run_game
 from kego.tracking import create_run, default_tracking_uri, read_ratings, write_ratings
 from kego.tracking.league import Rating, rate_round, results_from_winmatrix
 from kego.tracking.prune import active_model_versions
-
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore
 
 # 1. Setup CG path
 cg_parent = locate_cg_dir()
@@ -142,10 +139,8 @@ def default_workers() -> int:
 def _finish_mlflow_run(client: MlflowClient, run_id: str | None, status: str = "FINISHED") -> None:
     if not run_id:
         return
-    try:
+    with contextlib.suppress(Exception):
         client.set_terminated(run_id, status=status)
-    except Exception:
-        pass
 
 
 def _ensure_league_run(client: MlflowClient, uri: str, task: str, args) -> tuple[str | None, bool]:
@@ -317,7 +312,7 @@ def _run_single_game(payload):
         cm = contextlib.nullcontext()
     else:
         cm = contextlib.ExitStack()
-        devnull = open(os.devnull, "w")
+        devnull = cm.enter_context(open(os.devnull, "w"))
         cm.enter_context(contextlib.redirect_stdout(devnull))
         cm.enter_context(contextlib.redirect_stderr(devnull))
 
@@ -357,13 +352,15 @@ def _valid_checkpoint(path: Path) -> bool:
     """Reject truncated/partial downloads: torch>=1.6 checkpoints are zip archives, and a
     failed scp/MLflow fetch can leave a partial file that would poison the cache forever."""
     try:
-        if not zipfile.is_zipfile(path):
-            print(f"  Discarding corrupt cached checkpoint {path}", flush=True)
-            path.unlink(missing_ok=True)
-            return False
-        return True
+        is_zip = zipfile.is_zipfile(path)
     except OSError:
         return False
+
+    if not is_zip:
+        print(f"  Discarding corrupt cached checkpoint {path}", flush=True)
+        path.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def _select_checkpoint(path: str, wanted: str | None) -> str | None:
@@ -402,7 +399,7 @@ def _fleet_ssh_targets(machine_tag: str) -> list[str]:
     ordered = []
     if machine_tag and machine_tag in machines:
         ordered.append(machines[machine_tag])
-    if "omarchyd" in machines and "omarchyd" != machine_tag:
+    if "omarchyd" in machines and machine_tag != "omarchyd":
         ordered.append(machines["omarchyd"])
     ordered.extend(ssh for name, ssh in machines.items() if name not in {machine_tag, "omarchyd"})
     return list(dict.fromkeys(ordered))
@@ -483,10 +480,8 @@ def download_checkpoint(client, v, local_dir, debug):
             final_path = os.path.join(local_dir, os.path.basename(selected))
             shutil.move(selected, final_path)
             # Clean up temp directory
-            try:
+            with contextlib.suppress(Exception):
                 shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception:
-                pass
             return final_path
     except Exception as e:
         errors.append(f"mlflow: {e}")
@@ -494,10 +489,8 @@ def download_checkpoint(client, v, local_dir, debug):
             print(f"  MLflow client download failed: {e}. Trying SCP fallback...")
     finally:
         # Always clean up temp directory on failure
-        try:
+        with contextlib.suppress(Exception):
             shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            pass
 
     machine_tag = (v.tags or {}).get("machine", "")
     for ssh_target in _fleet_ssh_targets(machine_tag):
@@ -629,7 +622,7 @@ def main():
         downloaded_count = 0
         total_downloaded_bytes = 0
 
-    for i, v in enumerate(versions, 1):
+    for v in versions:
         v_name = f"Registry v{v.version}"
         if args.debug:
             print(f"Loading checkpoint for {v_name} (run {v.run_id})...")
@@ -664,7 +657,7 @@ def main():
 
             dl_start = time.perf_counter()
             checkpoint_path = download_checkpoint(client, v, str(local_dir), args.debug)
-            dl_elapsed = time.perf_counter() - dl_start
+            time.perf_counter() - dl_start
             model_checkpoints[v_name] = checkpoint_path
 
             if args.debug:
@@ -789,7 +782,7 @@ def main():
             participants[name] = cfg
 
     # Resolve all deck and file paths to absolute paths
-    for name, cfg in participants.items():
+    for cfg in participants.values():
         cfg["deck"] = str(repo_root / cfg["deck"]) if not Path(cfg["deck"]).is_absolute() else cfg["deck"]
         cfg["file"] = str(repo_root / cfg["file"]) if not Path(cfg["file"]).is_absolute() else cfg["file"]
 

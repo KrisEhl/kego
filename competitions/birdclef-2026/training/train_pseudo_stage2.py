@@ -55,7 +55,7 @@ import torch
 TRAIN_DIR = Path(__file__).parent
 sys.path.insert(0, str(TRAIN_DIR))
 
-from train_protossm import (  # noqa: E402
+from train_protossm import (
     D_RESIDUAL,
     DROPOUT_RESIDUAL,
     N_CLASSES,

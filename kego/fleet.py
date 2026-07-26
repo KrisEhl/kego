@@ -8,10 +8,9 @@ import json
 import os
 import socket
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-
-import tomllib
 
 
 def _tailscale_short(dns: str) -> str:

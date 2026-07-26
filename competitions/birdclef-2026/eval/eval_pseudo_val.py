@@ -24,7 +24,7 @@ import torch.nn as nn
 from sklearn.metrics import average_precision_score
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "training"))
-from train_cnn import (  # noqa: E402
+from train_cnn import (
     SOUNDSCAPE_CACHE_DIR_BASELINE_HTK,
     BirdModel,
     BirdModelBaseline,

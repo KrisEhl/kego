@@ -15,26 +15,20 @@ dotlist overrides applied on top. Wire as a console script in pyproject:
 from __future__ import annotations
 
 import argparse
-import contextlib
-import csv
 import dataclasses
 import importlib.util
 import json
 import math
 import os
-import runpy
-import shlex
-import subprocess
 import sys
-import tempfile
+import tomllib
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-import numpy as np
-import tomllib
-
-from kego.dispatch import DEFAULT_EXCLUDES, dispatch, other_competition_excludes
-from kego.fleet import git_sha, load_fleet, machine_name
+from kego.cli.commands.cancel import cancel_run
+from kego.cli.commands.league import dispatch_league, merge_leagues, run_league_locally, show_league_matrix
+from kego.cli.commands.logs import run_logs
+from kego.cli.commands.train_agent import dispatch_train_agent, train_agent_overrides
 from kego.fleet import repo_root as find_repo_root
 from kego.pipeline.battle import run_battle_benchmark
 from kego.pipeline.config import ModelConfig, PipelineConfig, load_config
@@ -43,7 +37,6 @@ from kego.pipeline.runner import Pipeline, RunOutcome
 from kego.pipeline.tune import HPSpace
 from kego.tracking import (
     archive_version,
-    create_run,
     default_tracking_uri,
     filter_worse_versions,
     format_leaderboard,
@@ -52,10 +45,7 @@ from kego.tracking import (
     sync_outbox,
     unarchive_version,
 )
-from kego.tracking.league import Rating, rate_round, results_from_winmatrix
 from kego.tracking.prune import active_model_versions
-from kego.tracking.registry import read_ratings
-from kego.tracking.registry import write_ratings as write_registry_ratings
 
 # mlflow is an optional dependency (see pyproject.toml `[project.optional-dependencies].ml`)
 # and is never imported at module top level anywhere in kego — every use below is a local
@@ -107,6 +97,15 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--message", default="")
 
     sub.add_parser("status", parents=[common], help="check current training runs")
+
+    cancel = sub.add_parser("cancel", parents=[common], help="kill an active local, Ray, or fleet run")
+    cancel.add_argument(
+        "target_or_run_id",
+        nargs="?",
+        help="fleet machine name, 'ray', or MLflow run ID prefix; omit to kill the local run "
+        "(falling back to a lone active Ray job)",
+    )
+    cancel.add_argument("job_id", nargs="?", help="Ray job ID to stop (only used when target_or_run_id is 'ray')")
 
     cache = sub.add_parser("cache", parents=[common], help="manage cache")
     cache.add_argument("action", choices=["status", "prune"], help="cache action")
@@ -323,393 +322,14 @@ def detect_task() -> str:
     return "default"
 
 
-def _train_agent_overrides(args) -> dict:
-    keys = [
-        "agent",
-        "init_checkpoint",
-        "num_workers",
-        "variant",
-    ]
-    return {k: getattr(args, k, None) for k in keys if getattr(args, k, None) is not None}
+_train_agent_overrides = train_agent_overrides
+_dispatch_train_agent = dispatch_train_agent
+_dispatch_league = dispatch_league
+_run_logs = run_logs
+_run_league_locally = run_league_locally
 
 
-def _dispatch_train_agent(task_name: str, target: str, epochs: int | None, output: str | None, overrides: dict) -> int:
-    """Ship the local tree to fleet machine ``target`` and SSH-launch training there (§5.4)."""
-
-    repo_root = find_repo_root()
-    fleet_path = repo_root / "fleet.toml"
-    if not fleet_path.exists():
-        print(f"No fleet.toml at {fleet_path}; cannot dispatch --target {target}.")
-        return 1
-    try:
-        machine = load_fleet(fleet_path).machine(target)
-    except KeyError as e:
-        print(f"Error: {e}")
-        return 1
-
-    uri = default_tracking_uri(fleet_path)
-    tags = {
-        "machine": machine.name,
-        "task": task_name,
-        "git_sha": git_sha(repo_root),
-        "dispatched_from": machine_name(),
-        "target": target,
-    }
-    run_id = create_run(uri, experiment=task_name, run_name=f"{machine.name}-{task_name}", tags=tags)
-    if not run_id:
-        print(
-            f"Could not create an MLflow run at {uri} (hub unreachable). Offline dispatch is a later phase; aborting."
-        )
-        return 1
-
-    cmd_args = ["train-agent", "--task", task_name]
-    if epochs is not None:
-        cmd_args += ["--epochs", str(epochs)]
-    if output:
-        cmd_args += ["--output", output]
-    for key, flag in [
-        ("agent", "--agent"),
-        ("init_checkpoint", "--init-checkpoint"),
-        ("num_workers", "--num-workers"),
-        ("variant", "--variant"),
-    ]:
-        if key in overrides:
-            cmd_args += [flag, str(overrides[key])]
-
-    excludes = DEFAULT_EXCLUDES + other_competition_excludes(repo_root, keep=task_name)
-    print(f"Dispatching {task_name} to {machine.name} ({machine.ssh}) — run {run_id}")
-    try:
-        dispatch(machine, cmd_args, run_id=run_id, local_dir=str(repo_root), excludes=excludes)
-    except Exception as e:
-        print(f"Dispatch failed: {e}")
-        return 1
-    print(f"Launched on {machine.name}. Track metrics in MLflow at: {uri}")
-    print(f"To view remote logs, run:\n  kego logs {machine.name} {run_id}")
-    return 0
-
-
-def _dispatch_league(task_name: str, target: str, args) -> int:
-    from mlflow.tracking import MlflowClient
-
-    repo_root = find_repo_root()
-    fleet_path = repo_root / "fleet.toml"
-    if not fleet_path.exists():
-        print(f"No fleet.toml at {fleet_path}; cannot dispatch --target {target}.")
-        return 1
-    try:
-        machine = load_fleet(fleet_path).machine(target)
-    except KeyError as e:
-        print(f"Error: {e}")
-        return 1
-
-    uri = default_tracking_uri(fleet_path)
-    tags = {
-        "machine": machine.name,
-        "task": task_name,
-        "git_sha": git_sha(repo_root),
-        "dispatched_from": machine_name(),
-        "target": target,
-        "job": "leaderboard",
-        "write_ratings": str(args.write_ratings),
-    }
-    run_id = create_run(uri, experiment=task_name, run_name=f"{machine.name}-{task_name}-leaderboard", tags=tags)
-    if not run_id:
-        print(f"Could not create an MLflow run at {uri}; aborting league dispatch.")
-        return 1
-
-    cmd_args = [
-        "league",
-        "--task",
-        task_name,
-        "--games",
-        str(args.games),
-        "--search-count",
-        str(args.search_count),
-    ]
-    if args.workers is not None:
-        cmd_args += ["--workers", str(args.workers)]
-    if args.debug:
-        cmd_args.append("--debug")
-    if args.cache_dir:
-        cmd_args += ["--cache-dir", args.cache_dir]
-    if args.include_local_mcts:
-        cmd_args.append("--include-local-mcts")
-    cmd_args += ["--partial-save-every", str(args.partial_save_every)]
-    cmd_args += ["--stall-timeout", str(args.stall_timeout)]
-    cmd_args.append("--write-ratings" if args.write_ratings else "--no-write-ratings")
-
-    excludes = DEFAULT_EXCLUDES + other_competition_excludes(repo_root, keep=task_name)
-    print(f"Dispatching league for {task_name} to {machine.name} ({machine.ssh}) — run {run_id}")
-    try:
-        dispatch(machine, cmd_args, run_id=run_id, local_dir=str(repo_root), excludes=excludes)
-    except Exception as e:
-        print(f"Dispatch failed: {e}")
-        with contextlib.suppress(Exception):
-            MlflowClient(tracking_uri=uri).set_terminated(run_id, status="FAILED")
-        return 1
-    print(f"Launched league on {machine.name}. Track run/log metadata in MLflow at: {uri}")
-    print(f"To view remote logs, run:\n  kego logs {machine.name} {run_id}")
-    return 0
-
-
-def _resolve_run_machine(task_name: str, run_id_prefix: str) -> tuple[str, str] | None:
-    from mlflow.tracking import MlflowClient
-
-    with contextlib.suppress(Exception):
-        uri = default_tracking_uri()
-        client = MlflowClient(tracking_uri=uri)
-
-        # Try exact match first
-        if len(run_id_prefix) == 32:
-            with contextlib.suppress(Exception):
-                run = client.get_run(run_id_prefix)
-                machine = run.data.tags.get("machine")
-                if machine:
-                    return run_id_prefix, machine
-
-        # Search runs in the experiment
-        exp = client.get_experiment_by_name(task_name)
-        if exp:
-            runs = client.search_runs(
-                experiment_ids=[exp.experiment_id],
-                max_results=200,
-            )
-            for run in runs:
-                if run.info.run_id.startswith(run_id_prefix):
-                    machine = run.data.tags.get("machine")
-                    if machine:
-                        return run.info.run_id, machine
-
-        # Fallback: search all experiments
-        runs = client.search_runs(
-            experiment_ids=[e.experiment_id for e in client.search_experiments()],
-            max_results=200,
-        )
-        for run in runs:
-            if run.info.run_id.startswith(run_id_prefix):
-                machine = run.data.tags.get("machine")
-                if machine:
-                    return run.info.run_id, machine
-    return None
-
-
-def _run_logs(target_or_run_id: str | None, run_id_prefix: str | None, tail: bool, lines: int, task_name: str) -> int:
-    # 1. Resolve target machine
-    repo_root = find_repo_root()
-    fleet_path = repo_root / "fleet.toml"
-
-    target = target_or_run_id
-    run_id = run_id_prefix
-
-    if not target:
-        target = "local"
-        run_id = None
-    else:
-        # Check if the target is a valid machine name
-        fleet_machines = []
-        if fleet_path.exists():
-            with contextlib.suppress(Exception):
-                fleet_machines = [m.name for m in load_fleet(fleet_path).machines]
-
-        is_machine = target.lower() in ("local", "self", "localhost") or target in fleet_machines
-
-        if not is_machine:
-            run_id = target
-            target = None
-
-    if not target:
-        if not run_id:
-            print("Error: no run id or machine target given.")
-            return 1
-        # Resolve machine from run_id via MLflow lookup
-        print(f"Searching MLflow for run '{run_id}'...")
-        resolved = _resolve_run_machine(task_name, run_id)
-        if not resolved:
-            print(f"Error: Could not resolve machine for run ID prefix: {run_id}")
-            return 1
-        full_run_id, resolved_machine = resolved
-        print(f"Found run {full_run_id} on machine {resolved_machine}")
-        target = resolved_machine
-        run_id = full_run_id
-
-    is_local = target.lower() in ("local", "self", "localhost")
-    if not is_local:
-        with contextlib.suppress(Exception):
-            if target == machine_name():
-                is_local = True
-
-    if is_local:
-        log_dir = Path("~/.kego/logs").expanduser()
-        if not log_dir.exists():
-            print(f"Log directory {log_dir} does not exist locally.")
-            return 1
-
-        # Resolve target log file
-        if run_id:
-            matches = list(log_dir.glob(f"{run_id}*.log"))
-            if not matches:
-                print(f"No local log file matches prefix: {run_id}")
-                return 1
-            # Sort by modification time to get the newest match
-            matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-            log_path = matches[0]
-        else:
-            logs = list(log_dir.glob("*.log"))
-            if not logs:
-                print(f"No local log files found in {log_dir}")
-                return 1
-            logs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-            log_path = logs[0]
-
-        print(f"Viewing local log: {log_path}")
-        tail_cmd = ["tail", "-n", str(lines)]
-        if tail:
-            tail_cmd.append("-f")
-        tail_cmd.append(str(log_path))
-        try:
-            res = subprocess.run(tail_cmd)
-        except KeyboardInterrupt:
-            return 0
-        return res.returncode
-
-    # Remote target
-    if not fleet_path.exists():
-        print(f"No fleet.toml at {fleet_path}; cannot view remote logs for {target}.")
-        return 1
-    try:
-        machine = load_fleet(fleet_path).machine(target)
-    except KeyError as e:
-        print(f"Error: {e}")
-        return 1
-
-    # Find the correct log file on the remote machine
-    # We run a remote shell script to find the log path and execute tail
-    tail_flag = "-f" if tail else ""
-
-    if run_id:
-        # Match by prefix
-        remote_script = f"""
-        log_dir=~/.kego/logs
-        log_path=$(ls -dt $log_dir/{shlex.quote(run_id)}*.log 2>/dev/null | head -n 1)
-        if [ -z "$log_path" ]; then
-            echo "Error: No remote log file matches prefix: {run_id}" >&2
-            exit 1
-        fi
-        echo "Viewing log on {machine.name}: $log_path"
-        tail -n {lines} {tail_flag} "$log_path"
-        """
-    else:
-        # Latest log file
-        remote_script = f"""
-        log_dir=~/.kego/logs
-        log_path=$(ls -dt $log_dir/*.log 2>/dev/null | head -n 1)
-        if [ -z "$log_path" ]; then
-            echo "Error: No remote log files found in $log_dir on {machine.name}" >&2
-            exit 1
-        fi
-        echo "Viewing latest log on {machine.name}: $log_path"
-        tail -n {lines} {tail_flag} "$log_path"
-        """
-
-    # Run the tail command over ssh. We want ssh to be interactive so we don't pass -f or -n.
-    # We can pass -t if we want a pseudo-tty (helpful for tail -f, propagating signals/Ctrl+C).
-    ssh_cmd = ["ssh"]
-    if tail:
-        ssh_cmd.append("-t")
-    ssh_cmd += [machine.ssh, f"bash -lc {shlex.quote(remote_script)}"]
-
-    try:
-        res = subprocess.run(ssh_cmd)
-    except KeyboardInterrupt:
-        return 0
-    return res.returncode
-
-
-def _run_league_locally(task_name: str, args) -> int:
-    if task_name != "pokemon-tcg-ai-battle":
-        print(f"Task '{task_name}' does not implement a league runner.")
-        return 1
-
-    repo_root = find_repo_root()
-    script = repo_root / "competitions" / task_name / "run_league.py"
-    argv = [
-        str(script),
-        "--task",
-        task_name,
-        "--games",
-        str(args.games),
-        "--search-count",
-        str(args.search_count),
-        "--write-ratings" if args.write_ratings else "--no-write-ratings",
-    ]
-    if args.workers is not None:
-        argv += ["--workers", str(args.workers)]
-    if args.debug:
-        argv.append("--debug")
-    if args.cache_dir:
-        argv += ["--cache-dir", args.cache_dir]
-    if args.include_local_mcts:
-        argv.append("--include-local-mcts")
-    argv += ["--partial-save-every", str(args.partial_save_every)]
-    argv += ["--stall-timeout", str(args.stall_timeout)]
-
-    old_argv = sys.argv
-    try:
-        sys.argv = argv
-        runpy.run_path(str(script), run_name="__main__")
-    finally:
-        sys.argv = old_argv
-    return 0
-
-
-def _show_league_matrix(task_name: str, run_id: str | None = None) -> int:
-    from mlflow.tracking import MlflowClient
-
-    uri = default_tracking_uri()
-    client = MlflowClient(tracking_uri=uri)
-    if not run_id:
-        exp = client.get_experiment_by_name(task_name)
-        if not exp:
-            print(f"No MLflow experiment named {task_name!r}.")
-            return 1
-        runs = client.search_runs(
-            [exp.experiment_id],
-            "tags.job = 'leaderboard' and attributes.status = 'FINISHED'",
-            order_by=["attributes.start_time DESC"],
-            max_results=100,
-        )
-        if not runs:
-            print(f"No saved league runs found for {task_name}.")
-            return 1
-        run_id = next((run.info.run_id for run in runs if _has_league_artifacts(client, run.info.run_id)), None)
-        if not run_id:
-            print(f"No saved league runs with league artifacts found for {task_name}.")
-            return 1
-
-    with tempfile.TemporaryDirectory() as tmp:
-        last_error = None
-        for artifact_path in ("league/matrix.md", "matrix.md"):
-            try:
-                path = Path(client.download_artifacts(run_id, artifact_path, dst_path=tmp))
-            except Exception as e:
-                last_error = f"{artifact_path}: {e}"
-                continue
-            print(f"{task_name} league matrix from MLflow run {run_id}")
-            print(path.read_text().rstrip())
-            return 0
-        print(f"Could not download league matrix for run {run_id}: {last_error or 'no matching artifact path'}")
-        return 1
-
-
-def _load_league_module(task_name: str):
-    repo_root = find_repo_root()
-    script = repo_root / "competitions" / task_name / "run_league.py"
-    spec = importlib.util.spec_from_file_location(f"{task_name}_run_league", script)
-    if not spec or not spec.loader:
-        raise RuntimeError(f"Could not load league runner at {script}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+_show_league_matrix = show_league_matrix
 
 
 def _load_submission_module(task_name: str):
@@ -722,191 +342,7 @@ def _load_submission_module(task_name: str):
     return module
 
 
-def _read_league_csv(path):
-    with open(path, newline="") as f:
-        rows = list(csv.reader(f))
-    names = rows[0][1:]
-    values = {}
-    for row in rows[1:]:
-        player = row[0]
-        for opponent, value in zip(names, row[1:], strict=True):
-            values[(player, opponent)] = int(float(value))
-    return names, values
-
-
-def _has_league_artifacts(client, run_id: str) -> bool:
-    try:
-        names = {a.path for a in client.list_artifacts(run_id, "league")}
-    except Exception:
-        names = set()
-    if {
-        "league/matrix.md",
-        "league/wins.csv",
-        "league/games.csv",
-        "league/results.json",
-        "league/participants.json",
-    } <= names:
-        return True
-    try:
-        names = {a.path for a in client.list_artifacts(run_id, "")}
-    except Exception:
-        local_dir = Path.cwd() / "outputs" / "league_runs" / run_id
-        return all(
-            (local_dir / name).exists()
-            for name in ["matrix.md", "wins.csv", "games.csv", "results.json", "participants.json"]
-        )
-    else:
-        return {"matrix.md", "wins.csv", "games.csv", "results.json", "participants.json"} <= names
-
-
-def _auto_league_run_ids(task_name: str, latest: int | None = None) -> list[str]:
-    from mlflow.tracking import MlflowClient
-
-    client = MlflowClient(tracking_uri=default_tracking_uri())
-    exp = client.get_experiment_by_name(task_name)
-    if not exp:
-        return []
-
-    merge_runs = client.search_runs(
-        [exp.experiment_id],
-        "tags.job = 'leaderboard_merge'",
-        order_by=["attributes.start_time DESC"],
-        max_results=1000,
-    )
-    consumed: set[str] = set()
-    for run in merge_runs:
-        consumed.update(rid for rid in run.data.tags.get("source_run_ids", "").split(",") if rid)
-
-    league_runs = client.search_runs(
-        [exp.experiment_id],
-        "tags.job = 'leaderboard' and attributes.status = 'FINISHED'",
-        order_by=["attributes.start_time DESC"],
-        max_results=1000,
-    )
-    selected = [
-        run.info.run_id
-        for run in league_runs
-        if run.info.run_id not in consumed and _has_league_artifacts(client, run.info.run_id)
-    ]
-    return selected[:latest] if latest is not None else selected
-
-
-def _merge_leagues(task_name: str, run_ids: list[str], write_ratings: bool, latest: int | None = None) -> int:
-    from mlflow.tracking import MlflowClient
-
-    uri = default_tracking_uri()
-    client = MlflowClient(tracking_uri=uri)
-    league_module = _load_league_module(task_name)
-    if not run_ids:
-        print("No league run ids provided; selecting finished unmerged league runs automatically.")
-        run_ids = _auto_league_run_ids(task_name, latest=latest)
-    if not run_ids:
-        print("No finished unmerged league runs with league artifacts found.")
-        return 1
-    print(f"Merging {len(run_ids)} league run(s): {' '.join(run_ids)}")
-
-    names: list[str] = []
-    wins_by_pair: dict[tuple[str, str], int] = {}
-    games_by_pair: dict[tuple[str, str], int] = {}
-    name_to_version: dict[str, str] = {}
-    anchor_elos: dict[str, float] = {}
-
-    with tempfile.TemporaryDirectory() as tmp:
-        for run_id in run_ids:
-            try:
-                league_dir = Path(client.download_artifacts(run_id, "league", dst_path=tmp))
-            except Exception:
-                local_dir = Path.cwd() / "outputs" / "league_runs" / run_id
-                if not (local_dir / "participants.json").exists():
-                    raise
-                league_dir = local_dir
-            meta = json.loads((league_dir / "participants.json").read_text())
-            for name in meta["participants"]:
-                if name not in names:
-                    names.append(name)
-            name_to_version.update(meta.get("name_to_version", {}))
-            anchor_elos.update({k: float(v) for k, v in meta.get("anchor_elos", {}).items()})
-
-            _, wins = _read_league_csv(league_dir / "wins.csv")
-            _, games = _read_league_csv(league_dir / "games.csv")
-            for key, value in wins.items():
-                wins_by_pair[key] = wins_by_pair.get(key, 0) + value
-            for key, value in games.items():
-                games_by_pair[key] = games_by_pair.get(key, 0) + value
-
-    n = len(names)
-    wins_matrix = np.zeros((n, n))
-    games_matrix = np.zeros((n, n))
-    for i, a in enumerate(names):
-        for j, b in enumerate(names):
-            wins_matrix[i][j] = wins_by_pair.get((a, b), 0)
-            games_matrix[i][j] = games_by_pair.get((a, b), 0)
-
-    results = []
-    for i, name in enumerate(names):
-        total_wins = sum(wins_matrix[i][j] for j in range(n) if i != j)
-        total_games = sum(games_matrix[i][j] for j in range(n) if i != j)
-        avg_wr = (total_wins / total_games) * 100 if total_games > 0 else 0
-        results.append({"name": name, "avg_wr": avg_wr, "wins": total_wins, "games": total_games})
-    results.sort(key=lambda x: x["avg_wr"], reverse=True)
-
-    matrix_md = league_module._format_league_matrix(names, wins_matrix, games_matrix, results)
-    print(matrix_md)
-
-    merged_run_id = create_run(
-        uri,
-        experiment=task_name,
-        run_name=f"{task_name}-leaderboard-merge",
-        tags={
-            "job": "leaderboard_merge",
-            "task": task_name,
-            "source_run_ids": ",".join(run_ids),
-            "write_ratings": str(write_ratings),
-        },
-    )
-    if merged_run_id:
-        args = __import__("types").SimpleNamespace(
-            task=task_name, games="merged", search_count="merged", workers=0, write_ratings=write_ratings
-        )
-        artifact_dir = league_module._persist_league_artifacts(
-            client,
-            merged_run_id,
-            names,
-            wins_matrix,
-            games_matrix,
-            results,
-            name_to_version,
-            anchor_elos,
-            args,
-        )
-        client.log_metric(merged_run_id, "league_participants", n)
-        client.log_metric(merged_run_id, "league_games_total", int(games_matrix.sum() / 2))
-        client.set_terminated(merged_run_id, status="FINISHED")
-        print(f"\nMerged league artifacts written to {artifact_dir} and MLflow run {merged_run_id}")
-
-    if write_ratings:
-        round_results = results_from_winmatrix(names, wins_matrix.tolist(), games_matrix.tolist())
-        version_ratings = read_ratings(uri, task_name)
-        prior = {
-            name: Rating(version_ratings[v]["elo"], version_ratings[v]["elo_rd"])
-            for name, v in name_to_version.items()
-            if v in version_ratings
-        }
-        updated = rate_round(prior, round_results, anchor_elos)
-        round_games = {name: len(res) for name, res in round_results.items()}
-        prior_games = {name: version_ratings.get(v, {}).get("games", 0) for name, v in name_to_version.items()}
-        ratings_by_version = {
-            name_to_version[name]: {
-                "elo": r.elo,
-                "elo_rd": r.rd,
-                "games": prior_games.get(name, 0) + round_games.get(name, 0),
-            }
-            for name, r in updated.items()
-            if name in name_to_version
-        }
-        write_registry_ratings(uri, task_name, ratings_by_version)
-        print(f"Updated Elo ratings for {len(ratings_by_version)} registered agent(s).")
-    return 0
+_merge_leagues = merge_leagues
 
 
 def _rule_agent_rows(task_name: str) -> list[dict]:
@@ -975,6 +411,23 @@ def _mlflow_run_link(tracking_uri: str, experiment_id: str, run_id: str) -> str:
     )
 
 
+def _format_mlflow_links(rows: list[dict]) -> str:
+    """A ``v<versions>  <full url>`` line per unique training run, printed after (not
+    inside) the leaderboard table: the table row is already wide, and a full run URL
+    appended to it wraps mid-URL in most terminals — copying a wrapped line turns the
+    wrap into a literal space, corrupting the URL. One URL per line avoids that."""
+    by_link: dict[str, list[str]] = {}
+    for row in rows:
+        link = row.get("mlflow_link")
+        if link and link != "-":
+            by_link.setdefault(link, []).append(str(row.get("version", "-")))
+    if not by_link:
+        return ""
+    lines = ["", "MLflow run links:"]
+    lines.extend(f"  v{','.join(versions)}  {link}" for link, versions in by_link.items())
+    return "\n".join(lines)
+
+
 def _use_color(force: bool | None = None) -> bool:
     if force is not None:
         return force
@@ -993,6 +446,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "logs":
         return _run_logs(args.target_or_run_id, args.run_id, args.tail, args.lines, task_name)
+
+    if args.command == "cancel":
+        return cancel_run(args.target_or_run_id, args.job_id, task_name)
 
     if args.command == "sync":
         pending = pending_registrations()
@@ -1071,6 +527,7 @@ def main(argv: list[str] | None = None) -> int:
         rows = leaderboard(uri, task_name, sort_by=args.sort_by)
         submission_stats = Pipeline(PipelineConfig(task=task_name)).model_submission_stats()
         mlflow_client = MlflowClient(tracking_uri=uri) if args.mlflow else None
+        use_color = _use_color(args.color)
         for row in rows:
             row.setdefault("trained", row.get("completed_iterations") or row.get("epoch") or "-")
             row.setdefault("agent", _registry_agent_name(row))
@@ -1104,7 +561,9 @@ def main(argv: list[str] | None = None) -> int:
                     if not row.get("training_run_id") and not run.data.metrics:
                         row["mlflow"] = "-"
                     else:
-                        row["mlflow"] = _mlflow_run_link(uri, run.info.experiment_id, training_run_id)
+                        link = _mlflow_run_link(uri, run.info.experiment_id, training_run_id)
+                        row["mlflow"] = training_run_id[:12] if link != "-" else "-"
+                        row["mlflow_link"] = link
                 except Exception:
                     row["mlflow"] = "-"
         rows = [*rows, *_rule_agent_rows(task_name)]
@@ -1135,10 +594,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.mlflow:
             cols.append("mlflow")
         print(f"{task_name} — {len(rows)} agents · tracking {uri}")
-        use_color = _use_color(args.color)
         if "elo" in cols and use_color:
             print("elo color: green <= +/-1 RD, yellow <= +/-5 RD, red > +/-5 RD")
         print(format_leaderboard(rows, cols, max_widths={"git_sha": 8}, color_elo=use_color))
+        if args.mlflow:
+            links = _format_mlflow_links(rows)
+            if links:
+                print(links)
         return 0
 
     if args.command == "league":

@@ -396,7 +396,7 @@ def train(args):
     rng = np.random.default_rng(args.seed)
     idx = np.arange(n)
     rng.shuffle(idx)
-    v = int(round(args.val_frac * n))
+    v = round(args.val_frac * n)
     val_idx = idx[:v]
     tr_idx = idx[v:]
 

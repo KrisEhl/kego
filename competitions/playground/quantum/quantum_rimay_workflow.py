@@ -888,7 +888,7 @@ def main():
             )
 
             # Stage 2b: Submit quantum job (after both datapools approved)
-            metadata, client, execution = submit_quantum_job(config)
+            metadata, _client, execution = submit_quantum_job(config)
             output_dp_id = metadata["output_datapool_id"]
 
             # ────────────────────────────────────────────────────────────────────

@@ -288,7 +288,7 @@ def solve_with_voting(problem: str, client: OpenAI, n: int = N_SAMPLES, verbose:
             {"role": "user", "content": problem},
         ]
 
-        for step in range(MAX_TIR_STEPS):
+        for _step in range(MAX_TIR_STEPS):
             reply = _chat(client, messages, temperature=temp)
             messages.append({"role": "assistant", "content": reply})
 

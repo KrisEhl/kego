@@ -907,7 +907,7 @@ def build_xc_batches(
     Returns list of (emb_T, comp_logits_T, proto_probs_T, labels_T) tensors.
     Each tensor shape: (T, dim).
     """
-    import scipy.special as sp  # noqa: PLC0415
+    import scipy.special as sp
 
     print(f"Loading XC cache from {xc_cache_path}...", flush=True)
     xc = np.load(xc_cache_path)
@@ -1771,7 +1771,7 @@ def main() -> None:
             model = ProtoSSM(n_tax_groups=len(group_names))
             init_prototypes(model, emb[train_row_idx], labels[train_row_idx])
 
-            model, history = train_model(
+            model, _history = train_model(
                 model=model,
                 batches_train=batches_tr,
                 batches_val=batches_vl,

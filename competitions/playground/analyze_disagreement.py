@@ -23,7 +23,7 @@ from sklearn.model_selection import train_test_split
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from kego.ensemble.disagreement import (  # noqa: E402
+from kego.ensemble.disagreement import (
     build_disagreement_matrix,
     print_disagreement_report,
     unique_correct_counts,

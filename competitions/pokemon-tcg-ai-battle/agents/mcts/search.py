@@ -14,6 +14,8 @@ the search tree.
 import math
 from collections.abc import Callable
 
+# The cg API exposes match results as raw integers: player 0, player 1, or draw.
+import numpy as np
 import torch
 
 from cg.api import Observation, SearchState
@@ -21,7 +23,6 @@ from cg.api import Observation, SearchState
 from .encoding import SparseVector
 from .model import PolicyValueNet
 
-# The cg API exposes match results as raw integers: player 0, player 1, or draw.
 RESULT_DRAW = 2
 EXPLORATION_C = 0.4
 POLICY_TEMPERATURE = 10.0
@@ -30,15 +31,61 @@ MAX_ACTION_COMBINATIONS = 64
 
 def evaluate_position(sv_enc: SparseVector, sv_dec: SparseVector, model: PolicyValueNet) -> tuple[float, list[float]]:
     device = next(model.parameters()).device
+
+    if not hasattr(model, "_enc_index_buf"):
+        model._enc_index_buf = torch.zeros(30000, dtype=torch.int32, device=device)
+        model._enc_value_buf = torch.zeros(30000, dtype=torch.float32, device=device)
+        model._enc_offset_buf = torch.zeros(100, dtype=torch.int32, device=device)
+        model._dec_index_buf = torch.zeros(100000, dtype=torch.int32, device=device)
+        model._dec_value_buf = torch.zeros(100000, dtype=torch.float32, device=device)
+        model._dec_offset_buf = torch.zeros(1000, dtype=torch.int32, device=device)
+
+    enc_idx_len = len(sv_enc.index)
+    enc_val_len = len(sv_enc.value)
+    enc_off_len = len(sv_enc.offset)
+    dec_idx_len = len(sv_dec.index)
+    dec_val_len = len(sv_dec.value)
+    dec_off_len = len(sv_dec.offset)
+
+    if enc_idx_len > model._enc_index_buf.shape[0]:
+        new_size = max(enc_idx_len, model._enc_index_buf.shape[0] * 2)
+        model._enc_index_buf = torch.zeros(new_size, dtype=torch.int32, device=device)
+        model._enc_value_buf = torch.zeros(new_size, dtype=torch.float32, device=device)
+    if enc_off_len > model._enc_offset_buf.shape[0]:
+        new_size = max(enc_off_len, model._enc_offset_buf.shape[0] * 2)
+        model._enc_offset_buf = torch.zeros(new_size, dtype=torch.int32, device=device)
+
+    if dec_idx_len > model._dec_index_buf.shape[0]:
+        new_size = max(dec_idx_len, model._dec_index_buf.shape[0] * 2)
+        model._dec_index_buf = torch.zeros(new_size, dtype=torch.int32, device=device)
+        model._dec_value_buf = torch.zeros(new_size, dtype=torch.float32, device=device)
+    if dec_off_len > model._dec_offset_buf.shape[0]:
+        new_size = max(dec_off_len, model._dec_offset_buf.shape[0] * 2)
+        model._dec_offset_buf = torch.zeros(new_size, dtype=torch.int32, device=device)
+
+    enc_idx_arr = np.array(sv_enc.index, dtype=np.int32)
+    enc_val_arr = np.array(sv_enc.value, dtype=np.float32)
+    enc_off_arr = np.array(sv_enc.offset, dtype=np.int32)
+    dec_idx_arr = np.array(sv_dec.index, dtype=np.int32)
+    dec_val_arr = np.array(sv_dec.value, dtype=np.float32)
+    dec_off_arr = np.array(sv_dec.offset, dtype=np.int32)
+
+    model._enc_index_buf[:enc_idx_len].copy_(torch.from_numpy(enc_idx_arr))
+    model._enc_value_buf[:enc_val_len].copy_(torch.from_numpy(enc_val_arr))
+    model._enc_offset_buf[:enc_off_len].copy_(torch.from_numpy(enc_off_arr))
+    model._dec_index_buf[:dec_idx_len].copy_(torch.from_numpy(dec_idx_arr))
+    model._dec_value_buf[:dec_val_len].copy_(torch.from_numpy(dec_val_arr))
+    model._dec_offset_buf[:dec_off_len].copy_(torch.from_numpy(dec_off_arr))
+
+    enc_idx = model._enc_index_buf[:enc_idx_len]
+    enc_val = model._enc_value_buf[:enc_val_len]
+    enc_off = model._enc_offset_buf[:enc_off_len]
+    dec_idx = model._dec_index_buf[:dec_idx_len]
+    dec_val = model._dec_value_buf[:dec_val_len]
+    dec_off = model._dec_offset_buf[:dec_off_len]
+
     with torch.no_grad():
-        value, policy = model(
-            torch.tensor(sv_enc.index, dtype=torch.int32, device=device),
-            torch.tensor(sv_enc.value, dtype=torch.float32, device=device),
-            torch.tensor(sv_enc.offset, dtype=torch.int32, device=device),
-            torch.tensor(sv_dec.index, dtype=torch.int32, device=device),
-            torch.tensor(sv_dec.value, dtype=torch.float32, device=device),
-            torch.tensor(sv_dec.offset, dtype=torch.int32, device=device),
-        )
+        value, policy = model(enc_idx, enc_val, enc_off, dec_idx, dec_val, dec_off)
     return (value.tolist()[0][0], policy.tolist()[0])
 
 

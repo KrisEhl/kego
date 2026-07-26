@@ -161,7 +161,7 @@ for sp_idx, sp in enumerate(species):
     oof_sp = np.zeros(n_windows, dtype=np.float32)
     trained_models = []
 
-    for fold, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups)):
+    for _fold, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups)):
         X_tr, X_val = X[train_idx], X[val_idx]
         y_tr = y[train_idx]
 

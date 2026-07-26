@@ -90,13 +90,13 @@ def precompute_well(wid: str, directory: Path, out_dir: Path) -> None:
 
     target = (h["TVT"].values - ps_tvt).astype(np.float32) if "TVT" in h.columns else None
 
-    kwargs: dict = dict(
-        feat=feat,
-        ps=np.array(ps, dtype=np.int64),
-        ps_tvt=np.array(ps_tvt, dtype=np.float64),
-        row_idx=np.arange(n, dtype=np.int64),
-        tvt_input_is_nan=h["TVT_input"].isna().values,
-    )
+    kwargs: dict = {
+        "feat": feat,
+        "ps": np.array(ps, dtype=np.int64),
+        "ps_tvt": np.array(ps_tvt, dtype=np.float64),
+        "row_idx": np.arange(n, dtype=np.int64),
+        "tvt_input_is_nan": h["TVT_input"].isna().values,
+    }
     if target is not None:
         kwargs["target"] = target
 

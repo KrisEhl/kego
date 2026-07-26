@@ -17,7 +17,7 @@ from kego.plotting.figures import (
 def plot_lines(
     xs: np.ndarray,
     ys: np.ndarray,
-    labels: None | tuple[np.ndarray] = None,
+    labels: tuple[np.ndarray] | None = None,
     nx_max=4,
     filename: str | None = None,
     log: str | tuple[str, str] = "false",

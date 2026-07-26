@@ -451,7 +451,7 @@ def _beam_search_tvt(
         return np.full(n_h, ps_tvt)
 
     dt = float(np.median(np.diff(tvt_grid))) if n_grid > 1 else 0.5
-    max_step = max(1, int(round(max_step_ft / dt)))
+    max_step = max(1, round(max_step_ft / dt))
 
     # Initialise: start at ps_tvt position with log-prob 0
     start_idx = int(np.argmin(np.abs(tvt_grid - ps_tvt)))
@@ -559,7 +559,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # TVT_input: linear interpolation within each well, extrapolate at ends
     tvt_interp = df["TVT_input"].copy()
-    for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
+    for grp_idx in df.groupby("well_id", sort=False).groups.values():
         s = df.loc[grp_idx, "TVT_input"]
         s_filled = s.interpolate(method="linear", limit_direction="both").ffill().bfill()
         tvt_interp.loc[grp_idx] = s_filled.fillna(0).to_numpy()
@@ -574,7 +574,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["prePS_tvt_nn"] = df["_prePS_tvt_nn"]
 
     # PS anchor features: TVT at the last known point, and MD distance from it
-    for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
+    for grp_idx in df.groupby("well_id", sort=False).groups.values():
         grp = df.loc[grp_idx]
         known = grp["TVT_input"].notna()
         anchor_tvt = grp.loc[known, "TVT_input"].iloc[-1] if known.any() else 0.0
@@ -622,7 +622,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         return num / den if den > 1e-9 else 0.0
 
     # Anchor-zone statistics (pre-PS TVT + GR summary — from XGB Starter notebook)
-    for wid, grp_idx in df.groupby("well_id", sort=False).groups.items():
+    for grp_idx in df.groupby("well_id", sort=False).groups.values():
         grp = df.loc[grp_idx]
         known = grp["TVT_input"].notna()
         if known.any():
@@ -782,7 +782,7 @@ def _fit_formation_surface(df: pd.DataFrame, max_points_per_well: int = 120) -> 
         return None
 
     sampled_idx: list[int] = []
-    for _, idx in valid.groupby("well_id", sort=False).groups.items():
+    for idx in valid.groupby("well_id", sort=False).groups.values():
         idx_arr = np.asarray(list(idx))
         if len(idx_arr) > max_points_per_well:
             idx_arr = idx_arr[np.linspace(0, len(idx_arr) - 1, max_points_per_well, dtype=int)]
@@ -811,7 +811,7 @@ def add_formation_features(df: pd.DataFrame, surface: Any | None) -> pd.DataFram
 
     pred = pd.Series(base_tvt, index=df.index, dtype="float64")
     bias_s = pd.Series(0.0, index=df.index, dtype="float64")
-    for _, grp_idx in df.groupby("well_id", sort=False).groups.items():
+    for grp_idx in df.groupby("well_id", sort=False).groups.values():
         grp = df.loc[grp_idx]
         known = grp["TVT_input"].notna()
         bias = float((grp.loc[known, "TVT_input"] - pred.loc[grp.loc[known].index]).mean()) if known.any() else 0.0

@@ -3,7 +3,7 @@ name = "kego"
 version = "0.8.1"
 description = "Helpers for quick ML analysis of kaggle competitions."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "omegaconf>=2.3.0",
 ]
@@ -81,7 +81,7 @@ addopts = "-n auto"
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = [
@@ -128,6 +128,8 @@ ignore = [
     "W291", "W293",  # whitespace in notebooks
 ]
 "tests/**/*.py" = ["S101"]
+"tests/test_cli_cancel.py" = ["S607"]
+"tests/test_cli_integration.py" = ["S607"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["kego"]

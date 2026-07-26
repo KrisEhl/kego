@@ -11,7 +11,7 @@ def train_model(
     model,
     X_train,
     y_train,
-    ignore_columns: None | list[str] = None,
+    ignore_columns: list[str] | None = None,
     feature_selector=None,
     feature_space=None,
 ):

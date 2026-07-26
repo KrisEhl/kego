@@ -43,7 +43,7 @@ import torch
 import torch.nn as nn
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "training"))
-from train_cnn import BirdModel, BirdModelBaseline  # noqa: E402
+from train_cnn import BirdModel, BirdModelBaseline
 
 # ── paths ──────────────────────────────────────────────────────────────────────
 DATA = Path(os.getenv("KEGO_PATH_DATA", "data")) / "birdclef" / "birdclef-2026"

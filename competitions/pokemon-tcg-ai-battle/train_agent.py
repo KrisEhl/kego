@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 import multiprocessing as mp
 import os
@@ -6,11 +8,12 @@ import re
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 import torch
 
-# Setup paths to import cg and agents
 comp_dir = Path(__file__).parent.resolve()
 repo_root = comp_dir.parent.parent
 sys.path.insert(0, str(repo_root))
@@ -26,9 +29,7 @@ from kego.tracking import (
     resolve_training_resume,
 )
 
-# mlflow is an optional dependency (see pyproject.toml `[project.optional-dependencies].ml`)
-# and stays a local `from mlflow.tracking import MlflowClient` import below: this training
-# script must keep working (crash-safe telemetry) when mlflow isn't installed or unreachable.
+# NOTE: MLflow stays locally imported where used so telemetry remains optional.
 
 cg_parent = locate_cg_dir()
 sys.path.insert(0, str(cg_parent))
@@ -37,6 +38,7 @@ from agents.mcts import (
     MAX_ACTION_COMBINATIONS,
     MODEL_ARGS,
     RESULT_DRAW,
+    Child,
     Node,
     PolicyValueNet,
     SparseVector,
@@ -81,6 +83,99 @@ class LearnInput:
         self.value.extend(sv.value)
         for o in sv.offset:
             self.offset.append(o + count)
+
+
+@dataclass(frozen=True, slots=True)
+class PendingLeaf:
+    node: Node
+    path: tuple[Node, ...]
+    actions: list[list[int]]
+    encoder: SparseVector
+    decoder: SparseVector
+    player_index: int
+    root_player_index: int
+    virtual_loss: float
+
+    def add_virtual_loss(self) -> None:
+        for node in self.path:
+            node.visit += 1
+            node.total -= self.virtual_loss
+
+    def resolve(self, value: float, policy: list[float]) -> None:
+        for node in self.path:
+            node.visit -= 1
+            node.total += self.virtual_loss
+        resolved_value = -value if self.player_index != self.root_player_index else value
+        self.node.value = resolved_value
+        self.node.backprop(resolved_value)
+        build_children(self.node, self.actions, policy)
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedLeaf:
+    node: Node
+
+
+class OpponentKind(StrEnum):
+    RANDOM = "random"
+    RULE = "rule"
+    SELF = "self"
+
+
+@dataclass(frozen=True, slots=True)
+class GauntletPayload:
+    model_state: dict
+    opponent_kind: OpponentKind
+    opponent_agent_path: str | None
+    opponent_deck_path: str | None
+    agent_deck: list[int]
+    game_indices: list[int]
+    seed: int
+    search_count: int
+    best_state: dict | None
+
+
+@dataclass(frozen=True, slots=True)
+class OpponentSpec:
+    kind: OpponentKind
+    name: str
+    agent_path: str | None = None
+    deck_path: str | None = None
+
+    @classmethod
+    def parse(cls, value: str) -> OpponentSpec:
+        if value in (OpponentKind.RANDOM, OpponentKind.SELF):
+            return cls(OpponentKind(value), value)
+        if value.startswith("rule:"):
+            name = value.split(":", 1)[1]
+            return cls(
+                OpponentKind.RULE,
+                name,
+                str(comp_dir / "agents" / f"{name}.py"),
+                str(comp_dir / "decks" / f"{name}.csv"),
+            )
+        raise ValueError(f"unknown opponent specification: {value!r}")
+
+    def worker_payload(
+        self,
+        model_state: dict,
+        agent_deck: list[int],
+        game_indices: list[int],
+        seed: int,
+        search_count: int,
+        best_state: dict | None,
+    ) -> GauntletPayload:
+        return GauntletPayload(
+            model_state,
+            self.kind,
+            self.agent_path,
+            self.deck_path,
+            agent_deck,
+            game_indices,
+            seed,
+            search_count,
+            best_state,
+        )
 
 
 def _max_action_combinations() -> int:
@@ -160,48 +255,64 @@ def create_node_train(
     return node, sample_cell[0]
 
 
+def _materialize_leaf(
+    parent: Node,
+    child: Child,
+    path: tuple[Node, ...],
+    your_index: int,
+    your_deck: list[int],
+    virtual_loss: float,
+) -> PendingLeaf | CompletedLeaf:
+    with timer("engine"):
+        search_state = search_step(parent.state.searchId, child.select)
+    node = Node(parent, search_state)
+    child.node = node
+    leaf_path = (*path, node)
+    state = search_state.observation.current
+    if state.result >= 0:
+        node.value = 0.0 if state.result == RESULT_DRAW else (1.0 if state.result == your_index else -1.0)
+        node.backprop(node.value)
+        return CompletedLeaf(node)
+    actions = enumerate_action_combinations(
+        search_state.observation.select.maxCount,
+        len(search_state.observation.select.option),
+        cap=_max_action_combinations(),
+    )
+    leaf = PendingLeaf(
+        node,
+        leaf_path,
+        actions,
+        encode_state(search_state.observation, your_deck),
+        encode_actions(search_state.observation, actions),
+        state.yourIndex,
+        your_index,
+        virtual_loss,
+    )
+    leaf.add_virtual_loss()
+    return leaf
+
+
 def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list[int], model: PolicyValueNet) -> None:
-    """Tree-parallel MCTS wave: select up to ``n_leaves`` leaves by UCB descent (with a
-    virtual loss so selections diversify and go DEEP), materialize them, evaluate them all
-    in ONE batched forward, then backprop with the virtual loss removed. Gives real search
-    depth AND batched inference (a move needs ~2 forwards instead of ~n_leaves)."""
-    VLOSS = 1.0
+    virtual_loss = 1.0
     completed = 0
     while completed < n_leaves:
-        pending = []  # (leaf_node, path, actions, sv_enc, sv_dec, leaf_state)
+        pending: list[PendingLeaf] = []
         for _ in range(n_leaves - completed):
             current = root
-            path = [root]
+            path = (root,)
             while current.children:
                 child = select_child(current, your_index)
                 if child is None:
                     break
                 if child.node is None:
-                    with timer("engine"):
-                        search_state = search_step(current.state.searchId, child.select)
-                    node = Node(current, search_state)
-                    child.node = node
-                    path.append(node)
-                    leaf = search_state.observation.current
-                    if leaf.result >= 0:
-                        node.value = 0.0 if leaf.result == RESULT_DRAW else (1.0 if leaf.result == your_index else -1.0)
-                        node.backprop(node.value)
-                        completed += 1
+                    leaf = _materialize_leaf(current, child, path, your_index, your_deck, virtual_loss)
+                    if isinstance(leaf, PendingLeaf):
+                        pending.append(leaf)
                     else:
-                        actions = enumerate_action_combinations(
-                            search_state.observation.select.maxCount,
-                            len(search_state.observation.select.option),
-                            cap=_max_action_combinations(),
-                        )
-                        sv_enc = encode_state(search_state.observation, your_deck)
-                        sv_dec = encode_actions(search_state.observation, actions)
-                        pending.append((node, path, actions, sv_enc, sv_dec, leaf))
-                        for path_node in path:
-                            path_node.visit += 1
-                            path_node.total -= VLOSS
+                        completed += 1
                     break
                 current = child.node
-                path.append(current)
+                path = (*path, current)
                 if current.state.observation.current.result >= 0:
                     current.backprop(current.value)
                     completed += 1
@@ -212,16 +323,9 @@ def _leaf_batch_wave(root: Node, n_leaves: int, your_index: int, your_deck: list
             if completed < n_leaves and not root.children:
                 raise RuntimeError("batched MCTS search exhausted a non-terminal tree before using its budget")
             continue
-        for (node, path, actions, _se, _sd, leaf), (value, policy) in zip(
-            pending, eval_nn_batch([(p[3], p[4]) for p in pending], model)
-        ):
-            for path_node in path:
-                path_node.visit -= 1
-                path_node.total += VLOSS
-            v = -value if leaf.yourIndex != your_index else value
-            node.value = v
-            node.backprop(v)
-            build_children(node, actions, policy)
+        encoded_leaves = [(leaf.encoder, leaf.decoder) for leaf in pending]
+        for leaf, (value, policy) in zip(pending, eval_nn_batch(encoded_leaves, model), strict=True):
+            leaf.resolve(value, policy)
             completed += 1
 
 
@@ -269,7 +373,6 @@ def mcts_train_agent(
                     current.backprop(current.value)
                     break
 
-    # Both paths produce real visit counts now, so select the most-visited (robust) child.
     max_child = None
     max_visit = -1
     min_value = 10.0
@@ -302,8 +405,7 @@ def random_agent(obs_dict: dict) -> list[int]:
 
 
 def _worker_init():
-    # Batch-1 inference gains nothing from intra-op threads; N workers each spawning
-    # a full torch thread pool oversubscribes the cores and collapses throughput.
+    # NOTE: Per-worker torch pools oversubscribe CPU cores during batch-1 inference.
     torch.set_num_threads(1)
 
 
@@ -362,7 +464,7 @@ def _resolve_init_checkpoint(spec: str, task: str, comp_dir: Path) -> Path:
     return path
 
 
-_AGENT_CACHE: dict = {}  # per-worker cache of loaded rule-agent modules
+_AGENT_CACHE: dict = {}
 
 
 def _opp_agent_fn(opp_file: str):
@@ -458,119 +560,138 @@ def _selfplay_worker(payload):
     return out, DEFAULT.as_dict()
 
 
-def _gauntlet_worker(payload):
+def _gauntlet_worker(payload: GauntletPayload):
     """Play eval games of the current MCTS model vs ONE opponent; return ([W,L,D], timings).
 
     opponent kinds: 'random' (random_agent), 'rule' (a loaded agent module's agent fn),
     'self' (MCTS driven by the best checkpoint so far).
     """
-    cur_state, kind, opp_file, opp_deck_path, mcts_deck, game_indices, seed, search_count, best_state = payload
-    random.seed(seed)
+    random.seed(payload.seed)
     DEFAULT.reset()
-    model = _build_cpu_model(cur_state)
+    model = _build_cpu_model(payload.model_state)
 
-    if kind == "random":
-        opp_move, opp_deck = random_agent, mcts_deck
-    elif kind == "rule":
-        opp_move, opp_deck = _opp_agent_fn(opp_file), load_deck(opp_deck_path)
-    elif kind == "self":
-        best_model = _build_cpu_model(best_state)
+    if payload.opponent_kind is OpponentKind.RANDOM:
+        opp_move, opp_deck = random_agent, payload.agent_deck
+    elif payload.opponent_kind is OpponentKind.RULE:
+        assert payload.opponent_agent_path is not None and payload.opponent_deck_path is not None
+        opp_move = _opp_agent_fn(payload.opponent_agent_path)
+        opp_deck = load_deck(payload.opponent_deck_path)
+    elif payload.opponent_kind is OpponentKind.SELF:
+        assert payload.best_state is not None
+        best_model = _build_cpu_model(payload.best_state)
 
         def opp_move(o):
-            return mcts_train_agent(o, mcts_deck, best_model, search_count)[0]
+            return mcts_train_agent(o, payload.agent_deck, best_model, payload.search_count)[0]
 
-        opp_deck = mcts_deck
+        opp_deck = payload.agent_deck
     else:
-        raise ValueError(f"unknown opponent kind: {kind}")
+        raise ValueError(f"unknown opponent kind: {payload.opponent_kind}")
 
     res = [0, 0, 0]
     with torch.no_grad():
-        for gi in game_indices:
-            res[_play_vs_game(mcts_deck, model, opp_deck, opp_move, gi % 2, search_count)] += 1
+        for game_index in payload.game_indices:
+            result = _play_vs_game(
+                payload.agent_deck,
+                model,
+                opp_deck,
+                opp_move,
+                game_index % 2,
+                payload.search_count,
+            )
+            res[result] += 1
     return res, DEFAULT.as_dict()
 
 
-def _tracking_tags(
-    task: str,
-    deck_path: Path,
-    model_args: tuple[int, int, int, int, int],
-    search_count: int,
-    self_play_games: int,
-    batched: bool,
-    variant: str | None,
-    init_checkpoint: str | None,
-    config_fingerprint: str | None,
-    resume_version: int | None,
-) -> dict[str, str]:
-    agent_name = variant or (
-        f"mcts-{deck_path.stem}-d{model_args[0]}-h{model_args[1]}-ff{model_args[2]}-"
-        f"enc{model_args[3]}-dec{model_args[4]}"
+@dataclass(frozen=True, slots=True)
+class TrackingMetadata:
+    task: str
+    variant: str | None
+    iterations: int
+    eval_games: int
+    self_play_games: int
+    eval_every: int
+    search_count: int
+    batched: bool
+    num_workers: int
+    eval_opponents: tuple[str, ...]
+    selfplay_opponents: tuple[str, ...]
+    replay_buffer_size: int
+    train_steps: int
+    model_args: tuple[int, int, int, int, int]
+    deck_path: Path
+    deck_file: str
+    init_checkpoint: str | None
+    init_checkpoint_path: Path | None
+    start_iteration: int
+    config_fingerprint: str | None
+    output_path: str
+    resume_version: int | None
+
+    def tags(self) -> dict[str, str]:
+        model = self.model_args
+        agent_name = self.variant or (
+            f"mcts-{self.deck_path.stem}-d{model[0]}-h{model[1]}-ff{model[2]}-enc{model[3]}-dec{model[4]}"
+        )
+        tags = {
+            "agent_name": agent_name,
+            "machine": machine_name(),
+            "git_sha": git_sha(Path(__file__).resolve().parents[2]),
+            "task": self.task,
+            "deck": self.deck_path.stem,
+            "search_count": str(self.search_count),
+            "self_play_games": str(self.self_play_games),
+            "batched": str(self.batched),
+            "model_args": str(self.model_args),
+        }
+        if self.variant:
+            tags["variant"] = self.variant
+        if continued_from := (
+            f"registry:{self.resume_version}" if self.resume_version is not None else self.init_checkpoint
+        ):
+            tags["continued_from"] = continued_from
+        if self.config_fingerprint:
+            tags["training_fingerprint"] = self.config_fingerprint
+        return tags
+
+    def params(self) -> dict[str, object]:
+        return {
+            "variant": self.variant,
+            "iterations": self.iterations,
+            "eval_games": self.eval_games,
+            "self_play_games": self.self_play_games,
+            "eval_every": self.eval_every,
+            "search_count": self.search_count,
+            "batched": self.batched,
+            "num_workers": self.num_workers,
+            "eval_opponents": ",".join(self.eval_opponents),
+            "selfplay_opponents": ",".join(self.selfplay_opponents),
+            "replay_buffer_size": self.replay_buffer_size,
+            "train_steps": self.train_steps,
+            "model_args": self.model_args,
+            "deck": self.deck_path.stem,
+            "deck_file": self.deck_file,
+            "init_checkpoint": self.init_checkpoint or "",
+            "init_checkpoint_resolved": str(self.init_checkpoint_path) if self.init_checkpoint_path else "",
+            "start_iteration": self.start_iteration,
+            "training_fingerprint": self.config_fingerprint or "",
+            "output_path": self.output_path,
+        }
+
+
+def _open_tracker(metadata: TrackingMetadata, uri: str, output_file: Path) -> tuple[Tracker, dict[str, str]]:
+    tags = metadata.tags()
+    tracker = Tracker.open(
+        uri,
+        experiment=metadata.task,
+        run_id=os.environ.get("KEGO_MLFLOW_RUN_ID"),
+        run_name=f"{tags['machine']}-{output_file.stem}",
+        tags=tags,
     )
-    tags = {
-        "agent_name": agent_name,
-        "machine": machine_name(),
-        "git_sha": git_sha(Path(__file__).resolve().parents[2]),
-        "task": task,
-        "deck": deck_path.stem,
-        "search_count": str(search_count),
-        "self_play_games": str(self_play_games),
-        "batched": str(batched),
-        "model_args": str(model_args),
-    }
-    if variant:
-        tags["variant"] = variant
-    if continued_from := f"registry:{resume_version}" if resume_version is not None else init_checkpoint:
-        tags["continued_from"] = continued_from
-    if config_fingerprint:
-        tags["training_fingerprint"] = config_fingerprint
-    return tags
-
-
-def _tracking_params(
-    *,
-    variant: str | None,
-    iterations: int,
-    eval_games: int,
-    self_play_games: int,
-    eval_every: int,
-    search_count: int,
-    batched: bool,
-    num_workers: int,
-    eval_opponents: list[str],
-    selfplay_opponents: list[str],
-    replay_buffer_size: int,
-    train_steps: int,
-    model_args: tuple[int, int, int, int, int],
-    deck_path: Path,
-    deck_file: str,
-    init_checkpoint: str | None,
-    init_checkpoint_path: Path | None,
-    start_iteration: int,
-    config_fingerprint: str | None,
-    output_path: str,
-) -> dict[str, object]:
-    return {
-        "variant": variant,
-        "iterations": iterations,
-        "eval_games": eval_games,
-        "self_play_games": self_play_games,
-        "eval_every": eval_every,
-        "search_count": search_count,
-        "batched": batched,
-        "num_workers": num_workers,
-        "eval_opponents": ",".join(eval_opponents),
-        "selfplay_opponents": ",".join(selfplay_opponents),
-        "replay_buffer_size": replay_buffer_size,
-        "train_steps": train_steps,
-        "model_args": model_args,
-        "deck": deck_path.stem,
-        "deck_file": deck_file,
-        "init_checkpoint": init_checkpoint or "",
-        "init_checkpoint_resolved": str(init_checkpoint_path) if init_checkpoint_path else "",
-        "start_iteration": start_iteration,
-        "training_fingerprint": config_fingerprint or "",
-        "output_path": output_path,
-    }
+    if tracker.run_id:
+        tags["training_run_id"] = tracker.run_id
+    tracker.set_tags(tags)
+    tracker.log_params(metadata.params())
+    return tracker, tags
 
 
 def run_training_loop(
@@ -593,13 +714,8 @@ def run_training_loop(
     config_fingerprint: str | None = None,
     features: dict | None = None,
 ):
-    # Opponents to evaluate the trained agent against. "random" = floor, "rule:<name>"
-    # = a heuristic meta-deck agent (agents/<name>.py + decks/<name>.csv), "self" = the
-    # best checkpoint so far. The best-checkpoint gate uses the rule-agent average.
     if eval_opponents is None:
         eval_opponents = ["random", "rule:zacian", "rule:abomasnow", "rule:dragapult", "rule:lucario", "self"]
-    # Opponents to GENERATE self-play data against. "self" = MCTS mirror (both seats
-    # collected); "rule:<name>" = learn to beat that heuristic (MCTS side collected).
     if selfplay_opponents is None:
         selfplay_opponents = ["self"]
 
@@ -617,8 +733,7 @@ def run_training_loop(
 
     opp_pool = _resolve_pool(selfplay_opponents)
 
-    # Toggle batched MCTS leaf evaluation; set before the worker pool so spawned
-    # children (and the inline path) inherit it via the environment.
+    # NOTE: Worker processes inherit these MCTS settings from the environment.
     os.environ["MCTS_BATCHED"] = "1" if batched else "0"
     features = features or {}
     max_action_combinations = int(features.get("max_action_combinations", MAX_ACTION_COMBINATIONS))
@@ -636,7 +751,6 @@ def run_training_loop(
     )
     if num_workers is None:
         num_workers = max(1, (os.cpu_count() or 2) - 2)
-    # No point spawning more workers than games in a phase.
     num_workers = max(1, min(num_workers, max(self_play_games, eval_games, 1)))
     print(f"Starting MCTS self-play training on {device} | rollout workers: {num_workers}...")
 
@@ -646,8 +760,7 @@ def run_training_loop(
     resume_payload = None
     if config_fingerprint and not init_checkpoint:
         try:
-            # MLflow preserves artifact filenames, so every lookup needs an isolated
-            # destination to avoid concurrent partial-download collisions.
+            # NOTE: Isolated destinations prevent concurrent MLflow artifact collisions.
             with tempfile.TemporaryDirectory(prefix="kego-training-resume-") as resume_cache:
                 resume = resolve_training_resume(
                     _uri,
@@ -658,27 +771,48 @@ def run_training_loop(
                 )
                 if resume:
                     resume_payload = torch.load(resume.path, map_location=device, weights_only=False)
-            if resume_payload:
-                required = {
-                    "model_state",
-                    "optimizer_state",
-                    "scheduler_state",
-                    "replay",
-                    "python_rng_state",
-                    "torch_rng_state",
-                }
-                if resume_payload.get("format_version") != 1:
-                    raise ValueError(f"unsupported training-state format {resume_payload.get('format_version')!r}")
-                if resume_payload.get("training_fingerprint") != config_fingerprint:
-                    raise ValueError("training-state fingerprint does not match its registry metadata")
-                if int(resume_payload.get("completed_iterations", -1)) != resume.completed_iterations:
-                    raise ValueError("training-state iteration does not match its registry metadata")
-                if missing := required - resume_payload.keys():
-                    raise ValueError(f"training state is missing required fields: {sorted(missing)}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"Automatic resume unavailable; starting fresh ({exc})", flush=True)
             resume = None
             resume_payload = None
+
+        if resume_payload:
+            required = {
+                "model_state",
+                "optimizer_state",
+                "scheduler_state",
+                "replay",
+                "python_rng_state",
+                "torch_rng_state",
+            }
+            if resume_payload.get("format_version") != 1:
+                print(
+                    f"Automatic resume unavailable; starting fresh (unsupported training-state format {resume_payload.get('format_version')!r})",
+                    flush=True,
+                )
+                resume = None
+                resume_payload = None
+            elif resume_payload.get("training_fingerprint") != config_fingerprint:
+                print(
+                    "Automatic resume unavailable; starting fresh (training-state fingerprint does not match its registry metadata)",
+                    flush=True,
+                )
+                resume = None
+                resume_payload = None
+            elif int(resume_payload.get("completed_iterations", -1)) != resume.completed_iterations:
+                print(
+                    "Automatic resume unavailable; starting fresh (training-state iteration does not match its registry metadata)",
+                    flush=True,
+                )
+                resume = None
+                resume_payload = None
+            elif missing := required - resume_payload.keys():
+                print(
+                    f"Automatic resume unavailable; starting fresh (training state is missing required fields: {sorted(missing)})",
+                    flush=True,
+                )
+                resume = None
+                resume_payload = None
 
     init_checkpoint_path = None
     init_state_dict = None
@@ -721,8 +855,7 @@ def run_training_loop(
         model.load_state_dict(ensure_tensors(init_state_dict))
         print(f"Warm-started model from {init_checkpoint_path}", flush=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-    # Target-independent decay: iteration 250 has the same LR history whether the
-    # run stops there or is later extended to iteration 300.
+    # NOTE: A fixed horizon keeps resumed runs on the same learning-rate history.
     decay_horizon = 250
     min_lr_ratio = 0.1
     scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -740,64 +873,38 @@ def run_training_loop(
     loss_fn_enc = torch.nn.HuberLoss(delta=0.2)
     loss_fn_dec = torch.nn.HuberLoss(reduction="none", delta=0.1)
 
-    # Replay buffer: train on a sliding window of recent self-play instead of only the
-    # latest iteration's games — larger, more diverse batches => lower-variance updates
-    # and less forgetting (the main source of the win-rate wobble).
     replay: list[LearnSample] = list(resume_payload.get("replay", [])) if resume_payload else []
 
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    run_timings = Timings()  # cumulative wall-clock per phase + merged worker components
+    run_timings = Timings()
 
-    # Fleet tracking: log live metrics to the central MLflow (or an offline sqlite fallback)
-    # and register the best checkpoint in the model registry. Crash-safe — a no-op if MLflow
-    # is unreachable, so training never blocks on telemetry. See the fleet-fabric spec.
-    _run_tags = _tracking_tags(
-        _task,
-        deck_path,
-        actual_model_args,
-        search_count,
-        self_play_games,
-        batched,
-        variant,
-        init_checkpoint,
-        config_fingerprint,
-        resume.version if resume else None,
+    tracking = TrackingMetadata(
+        task=_task,
+        variant=variant,
+        iterations=iterations,
+        eval_games=eval_games,
+        self_play_games=self_play_games,
+        eval_every=eval_every,
+        search_count=search_count,
+        batched=batched,
+        num_workers=num_workers,
+        eval_opponents=tuple(eval_opponents),
+        selfplay_opponents=tuple(selfplay_opponents),
+        replay_buffer_size=replay_buffer_size,
+        train_steps=train_steps,
+        model_args=actual_model_args,
+        deck_path=deck_path,
+        deck_file=deck_file,
+        init_checkpoint=init_checkpoint,
+        init_checkpoint_path=init_checkpoint_path,
+        start_iteration=start_iteration,
+        config_fingerprint=config_fingerprint,
+        output_path=output_path,
+        resume_version=resume.version if resume else None,
     )
-    # Attach to the dispatcher's run when dispatched (KEGO_MLFLOW_RUN_ID injected over SSH),
-    # else open a fresh run. set_tags after open so our tags land whether new or resumed.
-    _run_id = os.environ.get("KEGO_MLFLOW_RUN_ID")
-    _track = Tracker.open(
-        _uri, experiment=_task, run_id=_run_id, run_name=f"{_run_tags['machine']}-{output_file.stem}", tags=_run_tags
-    )
-    if _track.run_id:
-        _run_tags["training_run_id"] = _track.run_id
-    _track.set_tags(_run_tags)
-    _track.log_params(
-        _tracking_params(
-            variant=variant,
-            iterations=iterations,
-            eval_games=eval_games,
-            self_play_games=self_play_games,
-            eval_every=eval_every,
-            search_count=search_count,
-            batched=batched,
-            num_workers=num_workers,
-            eval_opponents=eval_opponents,
-            selfplay_opponents=selfplay_opponents,
-            replay_buffer_size=replay_buffer_size,
-            train_steps=train_steps,
-            model_args=actual_model_args,
-            deck_path=deck_path,
-            deck_file=deck_file,
-            init_checkpoint=init_checkpoint,
-            init_checkpoint_path=init_checkpoint_path,
-            start_iteration=start_iteration,
-            config_fingerprint=config_fingerprint,
-            output_path=output_path,
-        )
-    )
+    _track, _run_tags = _open_tracker(tracking, _uri, output_file)
     best_results: dict[str, float] = dict(resume_payload.get("best_results", {})) if resume_payload else {}
     best_score = float(resume_payload.get("best_score", -1.0)) if resume_payload else -1.0
     best_state = (
@@ -847,15 +954,11 @@ def run_training_loop(
         )
 
     print("[5/7] Spawning worker pool...", flush=True)
-    # Self-play/eval run on CPU-only worker processes: batch-1 inference is far cheaper
-    # on CPU than via per-call GPU launches/syncs, and the games are independent. The
-    # cg engine keeps global state, so each game needs its own process (not thread).
-    # Training (batched) still runs on the GPU in this process.
+    # NOTE: The game engine has global state, so concurrent games require processes.
     pool = None
     if num_workers > 1:
         print(f"  Configuring environment for {num_workers} workers...", flush=True)
-        # Spawned children must be able to import this module + agents/ + cg, and must
-        # run single-threaded torch (see _worker_init) to avoid core oversubscription.
+        # NOTE: Spawned workers need explicit import paths and single-threaded torch.
         os.environ["PYTHONPATH"] = os.pathsep.join(
             p for p in [str(comp_dir), str(repo_root), os.environ.get("PYTHONPATH", "")] if p
         )
@@ -872,26 +975,21 @@ def run_training_loop(
         return pool.map(worker, payloads) if pool is not None else [worker(p) for p in payloads]
 
     print("[6/7] Configuring evaluation opponents...", flush=True)
-    opponent_specs = []  # (kind, name, agent_file, deck_file)
-    for spec in eval_opponents:
-        if spec in ("random", "self"):
-            opponent_specs.append((spec, spec, None, None))
-        elif spec.startswith("rule:"):
-            nm = spec.split(":", 1)[1]
-            opponent_specs.append(
-                ("rule", nm, str(comp_dir / "agents" / f"{nm}.py"), str(comp_dir / "decks" / f"{nm}.csv"))
-            )
-    print(f"  Configured {len(opponent_specs)} evaluation opponents: {[s[1] for s in opponent_specs]}", flush=True)
+    opponent_specs = [OpponentSpec.parse(spec) for spec in eval_opponents]
+    print(
+        f"  Configured {len(opponent_specs)} evaluation opponents: {[spec.name for spec in opponent_specs]}",
+        flush=True,
+    )
 
     def _gauntlet(cur_state, best_state, seed_base):
         """Eval the current model vs each opponent; return {name: win_rate%} and the
         rule-agent average (the metric the best checkpoint is gated on)."""
         results = {}
-        for kind, name, opp_file, opp_deck_path in opponent_specs:
-            if kind == "self" and best_state is None:
+        for opponent in opponent_specs:
+            if opponent.kind == "self" and best_state is None:
                 continue
             payloads = [
-                (cur_state, kind, opp_file, opp_deck_path, agent_deck, chunk, seed_base + i, search_count, best_state)
+                opponent.worker_payload(cur_state, agent_deck, chunk, seed_base + i, search_count, best_state)
                 for i, chunk in enumerate(list(range(eval_games))[w::num_workers] for w in range(num_workers))
                 if chunk
             ]
@@ -903,8 +1001,8 @@ def run_training_loop(
                     agg[k] += triple[k]
                 run_timings.merge(tdict)
             wr = (100 * agg[0]) // max(1, agg[0] + agg[1])
-            results[name] = wr
-            print(f"  vs {name:<10} {wr:3d}%  (W{agg[0]} L{agg[1]} D{agg[2]})")
+            results[opponent.name] = wr
+            print(f"  vs {opponent.name:<10} {wr:3d}%  (W{agg[0]} L{agg[1]} D{agg[2]})")
         rule_wrs = [wr for nm, wr in results.items() if nm not in ("random", "self")]
         avg = sum(rule_wrs) / len(rule_wrs) if rule_wrs else float(results.get("random", 0))
         print(f"  gauntlet avg (rule agents): {avg:.1f}%")
@@ -924,7 +1022,6 @@ def run_training_loop(
                 print(f"\n--- Iteration {iter_idx + 1}/{iterations} ---", flush=True)
             cpu_state = _transport_state(model)
 
-            # 1. Evaluation gauntlet (throttled by eval_every, forced at checkpoint intervals); keep the best by rule avg.
             if eval_games > 0 and (iter_idx % eval_every == 0 or (iter_idx + 1) % 50 == 0):
                 print("Evaluating gauntlet (random / rule agents / self)...")
                 results, avg = _gauntlet(cpu_state, best_state, 7000 + iter_idx * 131)
@@ -940,8 +1037,6 @@ def run_training_loop(
                     torch.save(model.state_dict(), str(output_file))
                     print(f"  -> new best (avg {avg:.1f}%), checkpointed to {output_file}")
 
-            # 2. Self-Play data collection (parallel across workers)
-            # Dynamic MCTS Search Scheduling: ramp search_count from min(10, search_count) up to search_count
             search_count_start = min(10, search_count)
             if iterations > 1:
                 current_search_count = int(
@@ -965,7 +1060,6 @@ def run_training_loop(
                 sample_list.extend(samples)
                 run_timings.merge(tdict)
 
-            # 3. Model updates / Training — replay buffer + random minibatches.
             replay.extend(sample_list)
             if len(replay) > replay_buffer_size:
                 replay = replay[-replay_buffer_size:]
@@ -1030,7 +1124,6 @@ def run_training_loop(
             run_timings.report(f"timings @ iter {iter_idx + 1}")
             last_completed_iteration = current_epoch
 
-            # Save and register intermediate checkpoint every 50 iterations
             checkpoint_interval = 50
             if (iter_idx + 1) % checkpoint_interval == 0:
                 iter_output_file = output_file.parent / f"{output_file.stem}_iter{current_epoch}.pth"
@@ -1061,7 +1154,6 @@ def run_training_loop(
                 else:
                     print("  (Registry unavailable, checkpoint queued to outbox — run `kego sync` later.)")
 
-        # Final gauntlet on the fully-trained model (pool still open); keep it if best.
         if eval_games > 0:
             print("\nFinal gauntlet on trained model...")
             final_state = _transport_state(model)
@@ -1078,7 +1170,6 @@ def run_training_loop(
         if pool is not None:
             pool.close()
             pool.join()
-        # A completed run is resumable even when evaluation was disabled.
         if training_completed_normally:
             if best_score < 0:
                 torch.save(model.state_dict(), str(output_file))

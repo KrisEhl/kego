@@ -163,7 +163,7 @@ def evaluate_lgb(train_df, name, te_features=None):
     aucs = []
     importances_dict = {}
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+    for _fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
         X_tr, X_val = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
         y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
@@ -216,7 +216,7 @@ def evaluate_logreg(train_df, name, te_features=None, drop_original=False):
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     aucs = []
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+    for _fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
         X_tr, X_val = X.iloc[train_idx].copy(), X.iloc[val_idx].copy()
         y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
 

@@ -126,7 +126,7 @@ def load_window(path: Path, start_sec: float, sr_target: int = SAMPLE_RATE_CLAP)
     """Load a 5-second window from a .ogg file, resampled to CLAP's expected rate."""
     import librosa  # lazy import
 
-    y, sr = librosa.load(str(path), sr=sr_target, offset=start_sec, duration=WINDOW_SEC)
+    y, _sr = librosa.load(str(path), sr=sr_target, offset=start_sec, duration=WINDOW_SEC)
     if len(y) < WINDOW_SAMPLES:
         y = np.pad(y, (0, WINDOW_SAMPLES - len(y)))
     return y[:WINDOW_SAMPLES]

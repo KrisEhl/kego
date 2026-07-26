@@ -15,15 +15,12 @@ repo_root = comp_dir.parent.parent
 sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(comp_dir))
 
+import tomllib
+
 from mlflow.tracking import MlflowClient
 from run_league import download_checkpoint
 
 from kego.tracking import default_tracking_uri, leaderboard
-
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore
 
 
 def select_elo_leader(rows: list[dict]) -> dict:

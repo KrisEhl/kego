@@ -21,6 +21,8 @@ from scipy import stats
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
+import itertools
+
 from kego.plotting.figures import create_axes_grid, save_figure
 
 # ---------------------------------------------------------------------------
@@ -108,8 +110,8 @@ for col in CAT_FEATURES:
 
     # Ordinal check: is target rate monotonic with value?
     target_rates = [train.loc[train[col] == v, TARGET].mean() for v in vals]
-    is_monotonic_inc = all(a <= b for a, b in zip(target_rates, target_rates[1:]))
-    is_monotonic_dec = all(a >= b for a, b in zip(target_rates, target_rates[1:]))
+    is_monotonic_inc = all(a <= b for a, b in itertools.pairwise(target_rates))
+    is_monotonic_dec = all(a >= b for a, b in itertools.pairwise(target_rates))
     if not is_monotonic_inc and not is_monotonic_dec and len(vals) > 2:
         print("  ** NON-MONOTONIC target rate: NOT truly ordinal!")
         print(f"     Target rates by value: {dict(zip(vals, [f'{r:.3f}' for r in target_rates]))}")
@@ -278,7 +280,7 @@ print(ct3_target.round(3).to_string().replace("\n", "\n  "))
 section("CORRELATION WITH TARGET")
 
 numeric_cols = CONT_FEATURES + CAT_FEATURES
-corr = train[numeric_cols + [TARGET]].corr()[TARGET].drop(TARGET)
+corr = train[[*numeric_cols, TARGET]].corr()[TARGET].drop(TARGET)
 for col in corr.abs().sort_values(ascending=False).index:
     print(f"  {col:<25s}  r={corr[col]:+.4f}")
 
@@ -656,7 +658,7 @@ oof_probs = np.zeros(len(train))
 
 import lightgbm as lgb
 
-for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+for _fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
     X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
     y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
     model = LGBMClassifier(**LGB_PARAMS)

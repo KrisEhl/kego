@@ -23,7 +23,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_PROJECT_ROOT))
 sys.path.insert(0, str(Path(__file__).parent))
 
-import rogii_features as rf  # noqa: E402
+import rogii_features as rf
 
 _mlflow_run_id = os.environ.get("KEGO_MLFLOW_RUN_ID", "")
 

@@ -7,17 +7,31 @@ try:
     from base_agent import BaseAgent
 except ImportError:
     from agents.base import BaseAgent
-from cg.api import Observation, search_begin, search_end, search_step, to_observation_class
+import tomllib
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore
+from cg.api import (
+    Observation,
+    search_begin,
+    search_end,
+    search_step,
+    to_observation_class,
+)
 
 from .encoding import encode_actions, encode_state
-from .model import MODEL_ARGS, PolicyValueNet, ensure_tensors, model_args_from_state_dict
+from .model import (
+    MODEL_ARGS,
+    PolicyValueNet,
+    ensure_tensors,
+    model_args_from_state_dict,
+)
 from .opponent import infer_opponent_hidden_cards
-from .search import MAX_ACTION_COMBINATIONS, Evaluator, create_node, evaluate_position, select_child
+from .search import (
+    MAX_ACTION_COMBINATIONS,
+    Evaluator,
+    create_node,
+    evaluate_position,
+    select_child,
+)
 
 
 def _nn_evaluator(model: PolicyValueNet, your_deck: list[int]) -> Evaluator:

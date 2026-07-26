@@ -48,7 +48,7 @@ from sklearn.metrics import average_precision_score
 TRAIN_DIR = Path(__file__).parent.parent / "training"
 sys.path.insert(0, str(TRAIN_DIR))
 
-from train_protossm import (  # noqa: E402
+from train_protossm import (
     D_RESIDUAL,
     DROPOUT_RESIDUAL,
     N_CLASSES,

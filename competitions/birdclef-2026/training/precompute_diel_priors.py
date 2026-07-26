@@ -108,7 +108,7 @@ def main() -> None:
         "site_names": all_sites,
         "site_to_idx": site_to_idx,
         "global_mean_range": [float(global_mean.min()), float(global_mean.max())],
-        "n_windows": int(len(scores)),
+        "n_windows": len(scores),
         "n_sites": n_sites,
     }
     with open(OUT_DIR / "diel_priors_meta.json", "w") as f:

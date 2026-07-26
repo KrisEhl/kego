@@ -2,17 +2,15 @@ import time
 from collections import defaultdict
 
 try:
-    from agents.base import BaseAgent, get_int_value
+    from agents.base import BaseAgent, get_card_data, get_int_value
     from agents.base import get_card as get_card_helper
 except ImportError:
-    from base_agent import BaseAgent, get_int_value
+    from base_agent import BaseAgent, get_card_data, get_int_value
     from base_agent import get_card as get_card_helper
 from cg.api import (
     Card,
-    CardType,
     Observation,
     Pokemon,
-    all_card_data,
     to_observation_class,
 )
 
@@ -24,31 +22,6 @@ try:
     _SEARCH_OK = True
 except Exception:
     _SEARCH_OK = False
-
-
-class MockCardData:
-    def __init__(self, card_id):
-        self.cardId = card_id
-        self.megaEx = card_id in (723, 678)
-        self.ex = card_id in (121, 140, 184, 1071, 336, 678)
-        self.name = ""
-        self.stage2 = card_id in (121, 723)
-        self.stage1 = card_id in (120, 722, 674)
-        self.cardType = CardType.POKEMON if card_id < 1000 else CardType.ITEM
-
-
-card_table = {}
-try:
-    all_card = all_card_data()
-    card_table = {c.cardId: c for c in all_card}
-except Exception:
-    pass
-
-
-def get_card_data(card_id: int) -> MockCardData:
-    if card_id in card_table:
-        return card_table[card_id]
-    return MockCardData(card_id)
 
 
 class C:
@@ -682,7 +655,7 @@ class LucarioAgent(BaseAgent):
         if best_idx is None:
             return None
         rest = [i for i in base_order if i != best_idx]
-        return [best_idx] + rest
+        return [best_idx, *rest]
 
     def act(self, obs_dict: dict) -> list[int]:
         obs = to_observation_class(obs_dict)

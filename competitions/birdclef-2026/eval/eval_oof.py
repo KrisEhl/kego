@@ -245,7 +245,7 @@ def eval_soundscapes(
     preds = np.stack(all_preds)  # (N_chunks, n_species)
     labels = np.stack(all_labels)  # (N_chunks, n_species)
 
-    cmap, aps = compute_cmap(preds, labels)
+    cmap, _aps = compute_cmap(preds, labels)
 
     # Per-class breakdown (only species that appear in soundscape labels)
     present = np.where(labels.sum(axis=0) > 0)[0]
@@ -321,7 +321,7 @@ def main() -> None:
         all_preds[val_idx] = preds
         all_labels[val_idx] = labels
 
-        fold_cmap, fold_aps = compute_cmap(preds, labels)
+        fold_cmap, _fold_aps = compute_cmap(preds, labels)
         try:
             fold_auc = roc_auc_score((labels > 0).astype(int), preds, average="macro")
         except ValueError:

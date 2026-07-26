@@ -89,7 +89,7 @@ print(f"  Target species: {N_CLASSES}", flush=True)
 # Load Perch model
 # ---------------------------------------------------------------------------
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
-import tensorflow as tf  # noqa: E402
+import tensorflow as tf
 
 print(f"TensorFlow: {tf.__version__}", flush=True)
 print(f"Loading Perch from {MODEL_DIR} ...", flush=True)
@@ -179,7 +179,7 @@ for bi, batch in enumerate(batches):
     for path in batch:
         audio = read_soundscape(path)
         meta = parse_filename(path.name)
-        bstart = write_row + len(windows_list) // N_WINDOWS * N_WINDOWS  # noqa
+        bstart = write_row + len(windows_list) // N_WINDOWS * N_WINDOWS
         for i in range(N_WINDOWS):
             windows_list.append(audio[i * WINDOW_SAMPLES : (i + 1) * WINDOW_SAMPLES])
 

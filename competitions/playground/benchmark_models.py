@@ -24,9 +24,9 @@ import torch.nn as nn
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from sklearn.preprocessing import QuantileTransformer  # noqa: E402
-from skorch.callbacks import EarlyStopping  # noqa: E402
-from train_s6e2_baseline import (  # type: ignore[attr-defined]  # noqa: E402
+from sklearn.preprocessing import QuantileTransformer
+from skorch.callbacks import EarlyStopping
+from train_s6e2_baseline import (  # type: ignore[attr-defined]
     DATA_DIR,
     TARGET,
     TE_FEATURES,
@@ -41,10 +41,10 @@ from train_s6e2_baseline import (  # type: ignore[attr-defined]  # noqa: E402
     make_te_preprocess,
 )
 
-from kego.datasets.split import split_dataset  # noqa: E402
-from kego.gpu.benchmark import EpochTimer, log_benchmark_to_mlflow  # noqa: E402
-from kego.gpu.monitor import GPUMonitor  # noqa: E402
-from kego.models.neural.amp import AMPNeuralNetBinaryClassifier  # noqa: E402
+from kego.datasets.split import split_dataset
+from kego.gpu.benchmark import EpochTimer, log_benchmark_to_mlflow
+from kego.gpu.monitor import GPUMonitor
+from kego.models.neural.amp import AMPNeuralNetBinaryClassifier
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ def _benchmark_skorch(model, model_name, train, holdout, features, profile):
     # Prepare data the same way the model's fit() does
     if model_name == "resnet":
         te_preprocess = make_te_preprocess(TE_FEATURES, drop_original=True)
-        train_prep, holdout_prep, _, _ = te_preprocess(
+        train_prep, _holdout_prep, _, _ = te_preprocess(
             train.copy(),
             train[TARGET],
             holdout.copy(),

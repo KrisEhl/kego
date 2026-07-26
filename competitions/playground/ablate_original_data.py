@@ -113,7 +113,7 @@ def cross_val_auc(X, y, seed: int) -> tuple[float, float]:
     oof_preds = np.zeros(len(y))
     skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=seed)
 
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
+    for _fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
         X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
 

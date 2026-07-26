@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "training"))
 
-from train_cnn import (  # noqa: E402
+from train_cnn import (
     SOUNDSCAPE_CACHE_DIR_BASELINE,
     SOUNDSCAPE_CACHE_DIR_BASELINE_HTK,
     SOUNDSCAPE_CACHE_DIR_HGNETV2,

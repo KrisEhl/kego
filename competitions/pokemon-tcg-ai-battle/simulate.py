@@ -18,13 +18,10 @@ from kego.pipeline.battle import load_agent, load_deck, locate_cg_dir
 cg_parent = locate_cg_dir()
 sys.path.insert(0, str(cg_parent))
 
+import tomllib
+
 from cg.api import to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
-
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore
 
 
 def run_match():
@@ -66,12 +63,7 @@ def run_match():
             print(f"\nBattle Finished! Winner: Player {winner}")
             break
 
-        if obs.select is None:
-            # Game is starting or in deck selection phase
-            action = deck0
-        else:
-            # Query the agent for selected option indexes
-            action = agent_mod.agent(obs_dict)
+        action = deck0 if obs.select is None else agent_mod.agent(obs_dict)
 
         # Step the game simulator
         obs_dict = battle_select(action)

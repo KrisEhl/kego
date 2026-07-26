@@ -22,10 +22,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import GroupKFold
+from torch import nn
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_PROJECT_ROOT))
@@ -136,7 +136,7 @@ def _load_from_cache(wid: str, split: str) -> dict[str, Any] | None:
     return {
         "well_id": wid,
         "feat": d["feat"],
-        "target": d["target"] if "target" in d else None,
+        "target": d.get("target", None),
         "ps": int(d["ps"]),
         "ps_tvt": float(d["ps_tvt"]),
         "row_idx": d["row_idx"],

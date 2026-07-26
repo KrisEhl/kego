@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "training"))
 
-from train_cnn import (  # noqa: E402
+from train_cnn import (
     SOUNDSCAPE_CACHE_DIR_BASELINE_HTK,
     BirdModel,
     BirdModelBaseline,
@@ -214,7 +214,7 @@ def main():
     sc_for_cnn = sc_labels[sc_labels["filename"].isin(perch_files)].reset_index(drop=True)
     print(f"CNN inference: {len(sc_for_cnn)} labeled segments from {sc_for_cnn['filename'].nunique()} soundscapes")
 
-    cnn_preds_labeled, cnn_labels_labeled = get_cnn_preds(
+    cnn_preds_labeled, _cnn_labels_labeled = get_cnn_preds(
         sc_for_cnn, ckpt_paths, meta, species_to_idx, n_species, device
     )
     print(f"CNN predictions: {cnn_preds_labeled.shape}")

@@ -30,7 +30,7 @@ from sklearn.metrics import roc_auc_score
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from kego.datasets.split import split_dataset  # noqa: E402
+from kego.datasets.split import split_dataset
 
 DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
@@ -789,7 +789,7 @@ def main() -> None:
     screening_results = []
     t0 = time.perf_counter()
     for i, feat in enumerate(candidates):
-        test_features = abl_pruned_in_xtr + [feat]
+        test_features = [*abl_pruned_in_xtr, feat]
         auc_with = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, test_features, seeds)
         delta = auc_with - auc_abl_ref
         screening_results.append((feat, auc_with, delta))
@@ -843,7 +843,7 @@ def main() -> None:
         t0 = time.perf_counter()
 
         for i, (feat, _) in enumerate(helpful_candidates):
-            test_features = current_features + [feat]
+            test_features = [*current_features, feat]
             auc_with = _eval_features_multiseed(X_tr, y_train, X_ho, y_holdout, test_features, seeds)
             delta = auc_with - current_auc
             elapsed = time.perf_counter() - t0

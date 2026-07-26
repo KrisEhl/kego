@@ -28,7 +28,7 @@ from sklearn.preprocessing import StandardScaler
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from kego.datasets.split import split_dataset  # noqa: E402
+from kego.datasets.split import split_dataset
 
 DATA_DIR = Path(os.environ.get("KEGO_PATH_DATA", project_root / "data")) / "playground" / "playground-series-s6e2"
 TARGET = "Heart Disease"
@@ -402,7 +402,7 @@ def main():
         prev_auc = auc
 
     # Find optimal feature count (highest AUC)
-    best_n, best_feat, best_fwd_auc = max(forward_history, key=lambda x: x[2])
+    best_n, _best_feat, best_fwd_auc = max(forward_history, key=lambda x: x[2])
     forward_selected = features_by_importance[:best_n]
     print(f"\nOptimal: {best_n} features, AUC={best_fwd_auc:.5f}")
     print(f"Features: {forward_selected}")

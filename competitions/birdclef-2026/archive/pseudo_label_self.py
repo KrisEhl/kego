@@ -35,7 +35,7 @@ import torch.nn as nn
 
 # Import model classes from train.py (same directory)
 sys.path.insert(0, str(Path(__file__).parent))
-from train import BirdModelBaseline, BirdModelBirdSet  # noqa: E402
+from train import BirdModelBaseline, BirdModelBirdSet
 
 # ── paths ──────────────────────────────────────────────────────────────────────
 DATA = Path(os.getenv("KEGO_PATH_DATA", "data")) / "birdclef" / "birdclef-2026"

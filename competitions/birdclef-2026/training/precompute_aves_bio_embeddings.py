@@ -207,7 +207,7 @@ def main():
     perch_is = padded_cmap(Y_true, 1 / (1 + np.exp(-perch_logits)))
     print(f"Perch logits in-sample cmAP: {perch_is:.4f}")
 
-    aves_cm, aves_oof = oof_probe(all_emb, Y_true, meta, f"AVES-{AVES_MODEL}")
+    aves_cm, _aves_oof = oof_probe(all_emb, Y_true, meta, f"AVES-{AVES_MODEL}")
     perch_cm, _ = oof_probe(perch_emb, Y_true, meta, "Perch emb")
 
     # Concat probe

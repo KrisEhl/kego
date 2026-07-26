@@ -256,6 +256,27 @@ def _make_ray_job_client(dashboard_address: str):
             os.environ["RAY_ADDRESS"] = saved
 
 
+def list_active_ray_jobs(ray_address: str | None = None) -> list:
+    """Non-terminal Ray jobs on the dashboard, or ``[]`` if Ray is unreachable."""
+    dashboard_address = _resolve_dashboard_address(ray_address)
+    if not _is_port_open(dashboard_address, timeout=0.5):
+        return []
+    try:
+        client = _make_ray_job_client(dashboard_address)
+        return [j for j in client.list_jobs() if not j.status.is_terminal()]
+    except Exception:
+        return []
+
+
+def stop_ray_job(job_id: str, ray_address: str | None = None) -> bool:
+    """Stop a Ray job by id. Returns whether the stop call was issued successfully."""
+    try:
+        client = _make_ray_job_client(_resolve_dashboard_address(ray_address))
+        return bool(client.stop_job(job_id))
+    except Exception:
+        return False
+
+
 def _parse_etime(etime_str: str) -> int:
     etime_str = etime_str.strip()
     days = 0
@@ -576,10 +597,27 @@ class Pipeline:
             # independent of the caller's cwd.
             repo_root = find_repo_root()
 
+            # Resolve the remote repository path from the fleet configuration
+            remote_repo = None
+            with contextlib.suppress(Exception):
+                fleet_toml_path = repo_root / "fleet.toml"
+                if fleet_toml_path.exists():
+                    fleet = load_fleet(fleet_toml_path)
+                    target_name = os.environ.get("KEGO_MACHINE") or machine_name()
+                    for m in fleet.machines:
+                        if m.name == target_name:
+                            remote_repo = Path(m.repo)
+                            break
+                    if not remote_repo and fleet.machines:
+                        remote_repo = Path(fleet.machines[0].repo)
+
+            if not remote_repo:
+                remote_repo = Path.home() / "projects/kego"
+
             # Output is written to an absolute cluster path so it survives the
             # discarded working_dir and can be scp'd back.
-            remote_output = f"/home/kristian/projects/kego/{output_path}" if output_path else None
-            cmd = f"/home/kristian/projects/kego/.venv/bin/python -m kego.pipeline.cli train-agent --task {self.task.name}"
+            remote_output = f"{remote_repo}/{output_path}" if output_path else None
+            cmd = f"{remote_repo}/.venv/bin/python -m kego.pipeline.cli train-agent --task {self.task.name}"
             if kwargs.get("agent"):
                 cmd += f" --agent {kwargs['agent']}"
             if kwargs.get("variant"):

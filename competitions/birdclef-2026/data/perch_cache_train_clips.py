@@ -215,7 +215,7 @@ def flush_batch():
     batch_label_vecs.clear()
 
 
-for i, row in pending.iterrows():
+for _i, row in pending.iterrows():
     filename = str(row["filename"])
     primary = str(row["primary_label"])
     clip_id = f"{primary}/{Path(filename).stem}"

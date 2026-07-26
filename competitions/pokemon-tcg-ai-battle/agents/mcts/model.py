@@ -7,6 +7,8 @@ over the encoded state before its scalar action head. ``MODEL_ARGS`` contains
 ``num_heads`` must divide ``d_model``.
 """
 
+import contextlib
+
 import numpy as np
 import torch
 
@@ -53,10 +55,8 @@ def _layer_count(state_dict: dict, prefix: str, suffix: str) -> int:
     found = []
     for key in state_dict:
         if key.startswith(prefix) and key.endswith(suffix):
-            try:
+            with contextlib.suppress(ValueError):
                 found.append(int(key[len(prefix) :].split(".", 1)[0]))
-            except ValueError:
-                pass
     return max(found) + 1 if found else 0
 
 

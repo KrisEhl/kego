@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -121,7 +121,7 @@ def leaderboard(uri: str, name: str, sort_by: str = "elo", desc: bool = True) ->
             continue
         if v.tags and (v.tags.get("dropped") == "true" or v.tags.get("status") == "archived"):
             continue
-        dt = datetime.fromtimestamp(v.creation_timestamp / 1000.0, tz=timezone.utc)
+        dt = datetime.fromtimestamp(v.creation_timestamp / 1000.0, tz=UTC)
         created_str = dt.astimezone().strftime("%Y-%m-%d %H:%M")
         rows.append({"version": str(v.version), "run_id": v.run_id, "created": created_str, **dict(v.tags)})
 

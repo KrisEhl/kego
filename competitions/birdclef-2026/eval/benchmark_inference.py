@@ -194,7 +194,7 @@ def benchmark_file(path: Path, models_cfg: list, device: torch.device) -> dict:
     # Phase 2: mel spectrogram (CPU, separate from inference)
     t1 = time.perf_counter()
     all_chunks = []
-    for model, n_mels, n_fft, hop_length, norm_type, fmin, htk in models_cfg:
+    for model, n_mels, n_fft, hop_length, _norm_type, fmin, htk in models_cfg:
         chunks = []
         for pos in positions:
             chunk = y[pos : pos + CLIP_SAMPLES]

@@ -220,15 +220,15 @@ def main():
         scores_raw,
         Y_FULL,
         meta_full,
-        sc_clean,
-        Y_SC,
+        _sc_clean,
+        _Y_SC,
         idx_smooth_amphibia,
         idx_smooth_insecta,
         idx_smooth_rare,
         idx_smooth_aves,
-        label_to_idx,
-        PRIMARY_LABELS,
-        N_CLASSES,
+        _label_to_idx,
+        _PRIMARY_LABELS,
+        _N_CLASSES,
     ) = _load()
 
     print(f"scores_raw : {scores_raw.shape}")

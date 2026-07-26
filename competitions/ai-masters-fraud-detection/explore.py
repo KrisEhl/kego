@@ -205,7 +205,7 @@ for col in cat_available:
         for val, cnt in vc.items():
             pct = cnt / len(train) * 100
             fraud = train.loc[train[col] == val, TARGET].mean() * 100
-            print(f"    {str(val):>25s}  n={cnt:>7,}  ({pct:>5.2f}%)  fraud={fraud:.2f}%")
+            print(f"    {val!s:>25s}  n={cnt:>7,}  ({pct:>5.2f}%)  fraud={fraud:.2f}%")
         continue
 
     vals = train[col].dropna().unique()
@@ -227,7 +227,7 @@ for col in cat_available:
         if t_fraud > fraud_rate * 100 * 2:
             notes.append(f"HIGH FRAUD ({t_fraud / (fraud_rate * 100):.1f}x)")
 
-        print(f"    {str(v):>20s}  {t_cnt:>8,}  {t_pct:>6.2f}%  {t_fraud:>6.2f}%  {te_pct:>6.2f}%  {'  '.join(notes)}")
+        print(f"    {v!s:>20s}  {t_cnt:>8,}  {t_pct:>6.2f}%  {t_fraud:>6.2f}%  {te_pct:>6.2f}%  {'  '.join(notes)}")
 
 
 # ===========================================================================
@@ -311,7 +311,7 @@ for col in d_available:
 section("V-FEATURES SUMMARY")
 
 v_available = [c for c in V_FEATURES if c in train.columns]
-v_corr = train[v_available + [TARGET]].corr()[TARGET].drop(TARGET).abs()
+v_corr = train[[*v_available, TARGET]].corr()[TARGET].drop(TARGET).abs()
 v_missing = train[v_available].isnull().mean() * 100
 
 print(f"\n  Total V-features: {len(v_available)}")
@@ -376,7 +376,7 @@ for col in cat_available:
 section("TOP 40 FEATURES BY |CORRELATION WITH TARGET|")
 
 numeric_cols = [c for c in train.select_dtypes(include=[np.number]).columns if c not in ("TransactionID", TARGET)]
-corr_all = train[numeric_cols + [TARGET]].corr()[TARGET].drop(TARGET)
+corr_all = train[[*numeric_cols, TARGET]].corr()[TARGET].drop(TARGET)
 top_corr = corr_all.abs().sort_values(ascending=False).head(40)
 for col in top_corr.index:
     print(f"  {col:<20s}  r={corr_all[col]:+.4f}")
@@ -652,7 +652,7 @@ print("  Saved 06_top_v_features.png")
 
 # --- Plot 7: Correlation heatmap of top features ---
 top_features = corr_all.abs().sort_values(ascending=False).head(20).index.tolist()
-corr_matrix = train[top_features + [TARGET]].corr()
+corr_matrix = train[[*top_features, TARGET]].corr()
 
 fig7, ax7 = plt.subplots(figsize=(14, 12))
 im7 = ax7.imshow(corr_matrix.values, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")

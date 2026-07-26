@@ -73,7 +73,7 @@ def plot_patient_radar() -> None:
 
     n = len(raw_features)
     angles = np.linspace(0, 2 * np.pi, n, endpoint=False).tolist()
-    angles_closed = angles + [angles[0]]
+    angles_closed = [*angles, angles[0]]
     healthy_closed = np.append(healthy, healthy[0])
     sick_closed = np.append(sick, sick[0])
 

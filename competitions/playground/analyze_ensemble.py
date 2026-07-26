@@ -25,14 +25,14 @@ import pandas as pd
 project_root = Path(__file__).resolve().parents[2]
 sys.path.append(str(project_root))
 
-from kego.datasets.split import split_dataset  # noqa: E402
-from kego.ensemble.analysis import (  # noqa: E402
+from kego.datasets.split import split_dataset
+from kego.ensemble.analysis import (
     greedy_forward_selection,
     leave_one_out_analysis,
     print_forward_selection,
     print_leave_one_out,
 )
-from kego.tracking import (  # noqa: E402
+from kego.tracking import (
     load_predictions_from_ensemble,
     load_predictions_from_mlflow,
 )

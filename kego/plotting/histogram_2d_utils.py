@@ -15,7 +15,7 @@ def _resolve_defaults(
     spacing_x: float | None,
     spacing_y: float | None,
     axes_style: kego.constants.AXES_STYLE_TYPE,
-) -> tuple[bool, None | str, None | str, float, float]:
+) -> tuple[bool, str | None, str | None, float, float]:
     if axes_style == "axes_single" and (facet_column is not None or facet_row is not None):
         raise ValueError(f"Cannot specify {facet_column=} or {facet_row=} when axes is given!")
     if marginal_x == "default":

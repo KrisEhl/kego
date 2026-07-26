@@ -1,7 +1,19 @@
 import os
 from abc import ABC, abstractmethod
+from enum import IntEnum
 
-from cg.api import Card, Observation, Pokemon, to_observation_class
+from cg.api import Card, CardType, Observation, OptionType, Pokemon, all_card_data, to_observation_class
+
+
+class AreaType(IntEnum):
+    DECK = 1
+    HAND = 2
+    DISCARD = 3
+    ACTIVE = 4
+    BENCH = 5
+    PRIZE = 6
+    STADIUM = 7
+    LOOKING = 12
 
 
 def module_dir() -> str:
@@ -27,10 +39,7 @@ def get_int_value(v) -> int | None:
 
 
 def get_card(obs: Observation, area_val: int, index: int, player_index: int) -> Pokemon | Card | None:
-    """Helper function to safely extract a Card or Pokemon object from specific zones.
-
-    Maps AreaType integer values to State properties.
-    """
+    """Helper function to safely extract a Card or Pokemon object from specific zones."""
     try:
         player_index = get_int_value(player_index)
         if player_index is None or player_index < 0 or player_index >= len(obs.current.players):
@@ -41,23 +50,21 @@ def get_card(obs: Observation, area_val: int, index: int, player_index: int) -> 
         if index is None or index < 0:
             return None
 
-        # AreaType values:
-        # DECK = 1, HAND = 2, DISCARD = 3, ACTIVE = 4, BENCH = 5, PRIZE = 6, STADIUM = 7, LOOKING = 12
-        if area_val == 1:
+        if area_val == AreaType.DECK:
             return obs.select.deck[index] if obs.select and obs.select.deck and index < len(obs.select.deck) else None
-        elif area_val == 2:
+        elif area_val == AreaType.HAND:
             return ps.hand[index] if ps.hand and index < len(ps.hand) else None
-        elif area_val == 3:
+        elif area_val == AreaType.DISCARD:
             return ps.discard[index] if ps.discard and index < len(ps.discard) else None
-        elif area_val == 4:
+        elif area_val == AreaType.ACTIVE:
             return ps.active[index] if ps.active and index < len(ps.active) else None
-        elif area_val == 5:
+        elif area_val == AreaType.BENCH:
             return ps.bench[index] if ps.bench and index < len(ps.bench) else None
-        elif area_val == 6:
+        elif area_val == AreaType.PRIZE:
             return ps.prize[index] if ps.prize and index < len(ps.prize) else None
-        elif area_val == 7:
+        elif area_val == AreaType.STADIUM:
             return obs.current.stadium[index] if obs.current.stadium and index < len(obs.current.stadium) else None
-        elif area_val == 12:
+        elif area_val == AreaType.LOOKING:
             return obs.current.looking[index] if obs.current.looking and index < len(obs.current.looking) else None
     except Exception:
         pass
@@ -114,7 +121,7 @@ class BaseAgent(ABC):
                     if len(deck_list) >= 60:
                         return deck_list[:60]
                 except Exception as e:
-                    raise ValueError(f"Failed to read deck file at {path}: {e}")
+                    raise ValueError(f"Failed to read deck file at {path}: {e}") from e
 
         raise FileNotFoundError(
             f"Deck file '{deck}' not found in any of the checked paths:\n" + "\n".join(f"  - {p}" for p in checked)
@@ -181,28 +188,33 @@ class RuleScoringAgent(BaseAgent):
     def score_option(self, option, select_type: int, select_context: int, obs: Observation, option_index: int) -> float:
         opt_type_val = get_int_value(option.type)
 
-        # Map to specific scoring handlers based on OptionType
-        # NUMBER = 0, YES = 1, NO = 2, CARD = 3, TOOL_CARD = 4, ENERGY_CARD = 5, ENERGY = 6,
-        # PLAY = 7, ATTACH = 8, EVOLVE = 9, ABILITY = 10, DISCARD = 11, RETREAT = 12, ATTACK = 13, END = 14
-        if opt_type_val == 0:
+        if opt_type_val == OptionType.NUMBER:
             return self.score_number(option, select_context, obs, option_index)
-        elif opt_type_val == 1 or opt_type_val == 2:
+        elif opt_type_val == OptionType.YES or opt_type_val == OptionType.NO:
             return self.score_yes_no(option, select_context, obs, option_index)
-        elif opt_type_val == 3:
+        elif opt_type_val == OptionType.CARD:
             return self.score_card(option, select_context, obs, option_index)
-        elif opt_type_val == 7:
+        elif opt_type_val == OptionType.TOOL_CARD:
+            return self.score_tool_card(option, select_context, obs, option_index)
+        elif opt_type_val == OptionType.ENERGY_CARD:
+            return self.score_energy_card(option, select_context, obs, option_index)
+        elif opt_type_val == OptionType.ENERGY:
+            return self.score_energy(option, select_context, obs, option_index)
+        elif opt_type_val == OptionType.PLAY:
             return self.score_play(option, select_context, obs, option_index)
-        elif opt_type_val == 8:
+        elif opt_type_val == OptionType.ATTACH:
             return self.score_attach(option, select_context, obs, option_index)
-        elif opt_type_val == 9:
+        elif opt_type_val == OptionType.EVOLVE:
             return self.score_evolve(option, select_context, obs, option_index)
-        elif opt_type_val == 10:
+        elif opt_type_val == OptionType.ABILITY:
             return self.score_ability(option, select_context, obs, option_index)
-        elif opt_type_val == 12:
+        elif opt_type_val == OptionType.DISCARD:
+            return self.score_discard(option, select_context, obs, option_index)
+        elif opt_type_val == OptionType.RETREAT:
             return self.score_retreat(option, select_context, obs, option_index)
-        elif opt_type_val == 13:
+        elif opt_type_val == OptionType.ATTACK:
             return self.score_attack(option, select_context, obs, option_index)
-        elif opt_type_val == 14:
+        elif opt_type_val == OptionType.END:
             return self.score_end(option, select_context, obs, option_index)
 
         return 0.0
@@ -218,6 +230,15 @@ class RuleScoringAgent(BaseAgent):
     def score_card(self, option, context: int, obs: Observation, option_index: int) -> float:
         return 0.0
 
+    def score_tool_card(self, option, context: int, obs: Observation, option_index: int) -> float:
+        return 0.0
+
+    def score_energy_card(self, option, context: int, obs: Observation, option_index: int) -> float:
+        return 0.0
+
+    def score_energy(self, option, context: int, obs: Observation, option_index: int) -> float:
+        return 0.0
+
     def score_play(self, option, context: int, obs: Observation, option_index: int) -> float:
         return 0.0
 
@@ -230,6 +251,9 @@ class RuleScoringAgent(BaseAgent):
     def score_ability(self, option, context: int, obs: Observation, option_index: int) -> float:
         return 0.0
 
+    def score_discard(self, option, context: int, obs: Observation, option_index: int) -> float:
+        return 0.0
+
     def score_retreat(self, option, context: int, obs: Observation, option_index: int) -> float:
         return 0.0
 
@@ -238,3 +262,28 @@ class RuleScoringAgent(BaseAgent):
 
     def score_end(self, option, context: int, obs: Observation, option_index: int) -> float:
         return 0.0
+
+
+class MockCardData:
+    def __init__(self, card_id: int) -> None:
+        self.cardId = card_id
+        self.megaEx = card_id in (723, 678)
+        self.ex = card_id in (121, 140, 184, 1071, 336, 678)
+        self.name = ""
+        self.stage2 = card_id in (121, 723)
+        self.stage1 = card_id in (120, 722, 674)
+        self.cardType = CardType.POKEMON if card_id < 1000 else CardType.ITEM
+
+
+card_table: dict[int, MockCardData] = {}
+try:
+    all_card = all_card_data()
+    card_table = {c.cardId: c for c in all_card}
+except Exception:
+    pass
+
+
+def get_card_data(card_id: int) -> MockCardData:
+    if card_id in card_table:
+        return card_table[card_id]
+    return MockCardData(card_id)

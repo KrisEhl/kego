@@ -86,7 +86,7 @@ assert len(TARGET_SPECIES) == N_CLASSES
 # Load Perch model
 # ---------------------------------------------------------------------------
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
-import tensorflow as tf  # noqa: E402
+import tensorflow as tf
 
 print(f"Loading Perch from {MODEL_DIR}...", flush=True)
 birdclassifier = tf.saved_model.load(str(MODEL_DIR))

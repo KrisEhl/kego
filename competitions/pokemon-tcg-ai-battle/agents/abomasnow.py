@@ -203,10 +203,7 @@ class AbomasnowAgent(RuleScoringAgent):
                         score += 200
         elif opt_type_val == 9:  # EVOLVE
             pokemon = get_card(obs, get_int_value(option.inPlayArea), option.inPlayIndex, my_index)
-            if pokemon is None:
-                score = -100.0
-            else:
-                score = 10000.0 + len(pokemon.energies)
+            score = -100.0 if pokemon is None else 10000.0 + len(pokemon.energies)
         elif opt_type_val == 10:  # ABILITY
             card_obj = get_card(obs, get_int_value(option.area), option.index, my_index)
             score = -1.0
@@ -215,10 +212,7 @@ class AbomasnowAgent(RuleScoringAgent):
                     score = 2000.0
 
         elif opt_type_val == 12:  # RETREAT
-            if switch_index >= 0:
-                score = 1500.0
-            else:
-                score = -1.0
+            score = 1500.0 if switch_index >= 0 else -1.0
         elif opt_type_val == 13:  # ATTACK
             score = 1000.0
             if option.attackId == 1042:  # Riptide

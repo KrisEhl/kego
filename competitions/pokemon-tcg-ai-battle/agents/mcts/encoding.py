@@ -13,11 +13,18 @@ Action features start with 14 fixed slots, followed by the attack block at offse
 
 try:
     from base_agent import get_card as get_card_helper
+    from base_agent import get_int_value
 except ImportError:
     from agents.base import get_card as get_card_helper
+    from agents.base import get_int_value
 from cg.api import Card, Observation, OptionType, PlayerState, Pokemon
 
-from .model import CARD_COUNT, DECODER_ATTACK_OFFSET, DECODER_CARD_OFFSET, DECODER_MAIN_FEATURE
+from .model import (
+    CARD_COUNT,
+    DECODER_ATTACK_OFFSET,
+    DECODER_CARD_OFFSET,
+    DECODER_MAIN_FEATURE,
+)
 
 
 class SparseVector:
@@ -154,7 +161,7 @@ def encode_actions(obs: Observation, actions: list[list[int]]) -> SparseVector:
     sv = SparseVector()
     your_index = obs.current.yourIndex
     ps = obs.current.players[your_index]
-    context = int(obs.select.context) if hasattr(obs.select.context, "value") else int(obs.select.context)
+    context = get_int_value(obs.select.context)
 
     for action in actions:
         sv.word_start()
@@ -164,7 +171,7 @@ def encode_actions(obs: Observation, actions: list[list[int]]) -> SparseVector:
 
         for i in action:
             o = obs.select.option[i]
-            o_type = int(o.type) if hasattr(o.type, "value") else int(o.type)
+            o_type = get_int_value(o.type)
             if o_type == OptionType.END:
                 sv.add(1, 1)
             elif o_type == OptionType.YES:

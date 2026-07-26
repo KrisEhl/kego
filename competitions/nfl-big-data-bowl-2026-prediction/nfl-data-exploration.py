@@ -27,7 +27,7 @@ display(output.filter((pl.col("game_id") == 2023110200) & (pl.col("play_id") == 
 
 def plot_histogram_all(df):
     n_columns = len(df.columns)
-    figure, axes, axes_colorbar = kego.plotting.create_axes_grid(
+    figure, axes, _axes_colorbar = kego.plotting.create_axes_grid(
         n_columns=2,
         n_rows=int(np.ceil(n_columns / 2)),
         unravel=True,

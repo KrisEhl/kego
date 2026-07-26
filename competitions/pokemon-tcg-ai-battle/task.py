@@ -2,6 +2,7 @@ import importlib.util
 import io
 import sys
 import tarfile
+import tomllib
 from pathlib import Path
 
 import numpy as np
@@ -9,11 +10,6 @@ import pandas as pd
 
 from kego.pipeline.task import RawData, register_task
 from kego.training_resume import training_fingerprint
-
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib  # type: ignore
 
 
 @register_task("pokemon-tcg-ai-battle")
@@ -125,7 +121,7 @@ class PokemonTCGAIBattleTask:
             batched = var_cfg.get("batched", batched)
             features = var_cfg.get("features", {})
         except Exception as e:
-            raise ValueError(f"Failed to parse variant configuration: {e}")
+            raise ValueError(f"Failed to parse variant configuration: {e}") from e
 
         # 3. Runtime overrides
         iterations = epochs if epochs is not None else 3
@@ -222,7 +218,7 @@ class PokemonTCGAIBattleTask:
                     if "deck_file" in var_cfg:
                         deck_file = var_cfg["deck_file"]
         except Exception as e:
-            raise ValueError(f"Failed to read kego.toml: {e}")
+            raise ValueError(f"Failed to read kego.toml: {e}") from e
 
         if not agent_file or not deck_file:
             raise ValueError("agent_file and deck_file must be explicitly set in [competition] block of kego.toml")
@@ -340,7 +336,7 @@ class PokemonTCGAIBattleTask:
             makedirs_code = f"os.makedirs(os.path.dirname({dest_expr}), exist_ok=True)\n" if "/" in h_name else ""
             helpers_code += f"""
 # Write helper: {h_name}
-{safe_var_name}_content = {repr(h_content)}
+{safe_var_name}_content = {h_content!r}
 {makedirs_code}with open({dest_expr}, "w") as f:
     f.write({safe_var_name}_content)
 """
@@ -350,7 +346,7 @@ class PokemonTCGAIBattleTask:
         if var_content:
             write_var_toml_code = f"""
 # Write custom variant.toml
-variant_content = {repr(var_content)}
+variant_content = {var_content!r}
 with open(os.path.join(WORKING_DIR, "variant.toml"), "w") as f:
     f.write(variant_content)
 """
@@ -368,12 +364,12 @@ SAMPLE_DIR = os.path.join(INPUT_DIR, "sample_submission")
 WORKING_DIR = "/kaggle/working"
 
 # Write custom main.py
-main_py_content = {repr(main_py_content)}
+main_py_content = {main_py_content!r}
 with open(os.path.join(WORKING_DIR, "main.py"), "w") as f:
     f.write(main_py_content)
 
 # Write custom deck.csv
-deck_csv_content = {repr(deck_csv_content)}
+deck_csv_content = {deck_csv_content!r}
 with open(os.path.join(WORKING_DIR, "deck.csv"), "w") as f:
     f.write(deck_csv_content)
 
