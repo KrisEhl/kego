@@ -4,9 +4,13 @@ Reads benchmark/<dataset>/results/*.csv, embeds them with the dataset's page tex
 dashboard_template.html and writes dashboard_<dataset>.html next to this script. The page
 needs no network: open it straight from disk.
 
+`--dataset summary` builds dashboard_summary.html instead: both datasets on one condensed page
+(19th standard mode against the classical models), without the Rimay quantum comparison.
+
 Usage:
   uv run python build_dashboard.py --dataset heart
   uv run python build_dashboard.py --dataset fraud
+  uv run python build_dashboard.py --dataset summary
 """
 
 import argparse
@@ -20,6 +24,22 @@ from benchmark_services import DATASETS, HOLDOUT_SCORE, RIMAY_SCORE, DatasetConf
 
 DIRECTORY = Path(__file__).resolve().parent
 TEMPLATE_PATH = DIRECTORY / "dashboard_template.html"
+SUMMARY_TEMPLATE_PATH = DIRECTORY / "summary_template.html"
+SUMMARY_DATASETS = {
+    "heart": {
+        "label": "Heart disease",
+        "title": "Heart disease (Playground S6E2)",
+        "context": "13 raw features, 44% positive, 1,000-row holdout. An easy dataset: logistic regression already "
+        "reaches 0.954 with 100 rows.",
+    },
+    "fraud": {
+        "label": "Card fraud",
+        "title": "Card fraud (Playground S6E11)",
+        "context": "24 raw features (5 categorical), 1.7% fraud, stratified 100,000-row holdout. 19th levels off near "
+        "0.943 from 100,000 rows; the tree models keep improving.",
+    },
+}
+SUMMARY_MODELS = ["19th_standard", "lightgbm", "logistic_regression", "xgboost_tuned"]
 DATA_PLACEHOLDER = "__BENCHMARK_DATA__"
 TITLE_PLACEHOLDER = "__PAGE_TITLE__"
 MODEL_NAMES = {
@@ -153,10 +173,41 @@ def build(config: DatasetConfig) -> None:
     print(f"  Saved {output_path} ({len(payload['scores'])} scores, {len(payload['comparison'])} comparisons)")
 
 
+def build_summary() -> None:
+    """Write dashboard_summary.html: both datasets, 19th standard mode vs the classical models."""
+    datasets = []
+    leaderboard: list[dict] = []
+    for name, text in SUMMARY_DATASETS.items():
+        config = DATASETS[name]
+        scores = load_scores(config)
+        comparison = load_comparison(config)
+        datasets.append(
+            {
+                "name": name,
+                **text,
+                "scores": records(scores[scores["model"].isin(SUMMARY_MODELS)].drop(columns=[RIMAY_SCORE])),
+                "comparison": records(comparison[comparison["service"] == STANDARD_SERVICE]),
+            }
+        )
+        leaderboard += load_leaderboard(config)
+    payload = {"generated": datetime.date.today().isoformat(), "datasets": datasets, "leaderboard": leaderboard}
+    embedded = json.dumps(payload).replace("</", "<\\/")
+    template = SUMMARY_TEMPLATE_PATH.read_text()
+    if template.count(DATA_PLACEHOLDER) != 1:
+        raise ValueError(f"{SUMMARY_TEMPLATE_PATH.name} must contain {DATA_PLACEHOLDER} exactly once")
+    output_path = DIRECTORY / "dashboard_summary.html"
+    output_path.write_text(template.replace(DATA_PLACEHOLDER, embedded))
+    print(f"  Saved {output_path} ({len(datasets)} datasets, {len(leaderboard)} leaderboard entries)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dataset", choices=sorted(DATASETS), required=True)
-    build(DATASETS[parser.parse_args().dataset])
+    parser.add_argument("--dataset", choices=[*sorted(DATASETS), "summary"], required=True)
+    dataset = parser.parse_args().dataset
+    if dataset == "summary":
+        build_summary()
+    else:
+        build(DATASETS[dataset])
 
 
 if __name__ == "__main__":

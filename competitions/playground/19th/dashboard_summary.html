@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>19th Benchmark Summary</title>
+<style>
+  /* Layout: one reading column; takeaways, three figures, one block per dataset, leaderboard. */
+  :root {
+    --bg: #f7f8f6;
+    --panel: #ffffff;
+    --fg: #1b2420;
+    --muted: #5d6b64;
+    --line: #dde3df;
+    --grid: #e9edea;
+    --series-19th: #0f7b6c;
+    --series-lightgbm: #c47a12;
+    --series-logistic: #4a63a8;
+    --series-xgboost: #b8456e;
+    --good: #1d7a3e;
+    --behind: #b4532a;
+    --font-text: "Avenir Next", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-figure: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121715;
+      --panel: #19201d;
+      --fg: #e6ece9;
+      --muted: #9aa8a1;
+      --line: #2c3632;
+      --grid: #232c28;
+      --series-19th: #3cc0a8;
+      --series-lightgbm: #e3a248;
+      --series-logistic: #8ea3e6;
+      --series-xgboost: #e77fa6;
+      --good: #5fcf86;
+      --behind: #e8875c;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121715;
+    --panel: #19201d;
+    --fg: #e6ece9;
+    --muted: #9aa8a1;
+    --line: #2c3632;
+    --grid: #232c28;
+    --series-19th: #3cc0a8;
+    --series-lightgbm: #e3a248;
+    --series-logistic: #8ea3e6;
+    --series-xgboost: #e77fa6;
+    --good: #5fcf86;
+    --behind: #e8875c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-text); font-size: 15px; line-height: 1.5; }
+  .page { max-width: 980px; margin: 0 auto; padding: 32px 16px 48px; display: grid; gap: 36px; }
+  header { display: grid; gap: 10px; }
+  .eyebrow { margin: 0; color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+  h1 { margin: 0; font-family: var(--font-figure); font-weight: 400; font-size: clamp(28px, 5vw, 40px); line-height: 1.15; text-wrap: balance; }
+  h2 { margin: 0; font-size: 20px; font-weight: 600; text-wrap: balance; }
+  h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .takeaways { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; font-size: 17px; max-width: 70ch; }
+  .context { margin: 0; color: var(--muted); font-size: 13px; max-width: 72ch; }
+  .num { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .figure { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 4px; align-content: start; }
+  .figure-label { margin: 0; color: var(--muted); font-size: 13px; }
+  .figure-value { margin: 0; font-family: var(--font-figure); font-size: 34px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .figure-value.good { color: var(--good); }
+  .figure-value.behind { color: var(--behind); }
+  .figure-note { margin: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  section { display: grid; gap: 14px; min-width: 0; }
+  .datasets { display: grid; gap: 36px; min-width: 0; }
+  .dataset-head { display: grid; gap: 4px; }
+  .note { margin: 0; color: var(--muted); font-size: 13px; max-width: 72ch; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+  .block { display: grid; gap: 6px; min-width: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 50%; }
+  .chart { position: relative; min-width: 0; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart text { font-family: var(--font-text); font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .chart text.value { fill: var(--fg); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 14px; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  th:first-child, td:first-child { text-align: left; }
+  td.best { font-weight: 700; }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 0; }
+  details { max-width: 72ch; color: var(--muted); font-size: 14px; }
+  summary { cursor: pointer; color: var(--fg); font-weight: 600; }
+  summary:focus-visible { outline: 2px solid var(--series-19th); outline-offset: 2px; }
+  details ul { padding-left: 1.2em; display: grid; gap: 6px; }
+  footer { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <p class="eyebrow">Kaggle Playground · heart disease (S6E2) and card fraud (S6E11) · ROC AUC</p>
+    <h1>19th vs classical ML on two Kaggle playgrounds</h1>
+    <ul class="takeaways" id="takeaways"></ul>
+    <p class="context">Every method gets the same raw columns and is scored on a fixed holdout that no model trained, tuned or early-stopped on. 19th in standard mode, one run per training size; classical models are LightGBM, logistic regression and Optuna-tuned XGBoost, averaged over seeds.</p>
+  </header>
+
+  <div class="figures" id="figures"></div>
+
+  <div id="datasets" class="datasets"></div>
+
+  <section id="leaderboard-section" hidden>
+    <h2>Kaggle public leaderboard (card fraud)</h2>
+    <p class="note">Scored by Kaggle on its own test set. XGBoost was tuned on 599,960 rows and refit on all 699,960 for the submission; 19th trained on 599,960. Public leaders score about 0.971 with feature engineering that no model here used.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Submission</th><th>Public score</th><th>Our holdout</th><th>Training rows</th></tr></thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <details>
+    <summary>Method and caveats</summary>
+    <ul>
+      <li>Training samples are nested: each smaller sample is part of every larger one. Card-fraud samples and holdout are stratified (1.67% fraud).</li>
+      <li>Holdouts: 1,000 rows for heart disease, 100,000 rows (1,670 frauds) for card fraud.</li>
+      <li>The lead is a paired bootstrap of 19th's AUC minus the best classical model's AUC (seed-averaged predictions). A filled dot means the 95% interval excludes zero.</li>
+      <li>XGBoost is tuned per training size with Optuna (60 trials or 15 minutes) on an 80/20 split of that sample; on very small samples the tuning split is too small and it scores poorly.</li>
+      <li>19th's instant, high and ultra modes, and its faster Turbo and Warpspeed model variants, were also run on card fraud. All scored within about 0.002 AUC of standard mode; see dashboard_fraud.html.</li>
+      <li>One 19th run per size; no feature engineering for any method.</li>
+    </ul>
+  </details>
+
+  <footer id="footer">—</footer>
+</div>
+
+<script id="benchmark-data" type="application/json">{"generated": "2026-11-26", "datasets": [{"name": "heart", "label": "Heart disease", "title": "Heart disease (Playground S6E2)", "context": "13 raw features, 44% positive, 1,000-row holdout. An easy dataset: logistic regression already reaches 0.954 with 100 rows.", "scores": [{"model": "19th_standard", "model_name": "19th (standard)", "size": 100, "auc_holdout": 0.9596880067958916}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 250, "auc_holdout": 0.9628258227621722}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 500, "auc_holdout": 0.9644394405583036}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 700, "auc_holdout": 0.9639232454446798}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 2000, "auc_holdout": 0.965036926241002}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 5000, "auc_holdout": 0.9663741561022798}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 20000, "auc_holdout": 0.9665855115818738}, {"model": "lightgbm", "model_name": "LightGBM", "size": 100, "auc_holdout": 0.9443431925245193}, {"model": "lightgbm", "model_name": "LightGBM", "size": 250, "auc_holdout": 0.9514593689413122}, {"model": "lightgbm", "model_name": "LightGBM", "size": 500, "auc_holdout": 0.9520694546622174}, {"model": "lightgbm", "model_name": "LightGBM", "size": 700, "auc_holdout": 0.9564550808637936}, {"model": "lightgbm", "model_name": "LightGBM", "size": 2000, "auc_holdout": 0.9606191902646414}, {"model": "lightgbm", "model_name": "LightGBM", "size": 5000, "auc_holdout": 0.9634769602204601}, {"model": "lightgbm", "model_name": "LightGBM", "size": 20000, "auc_holdout": 0.9656287215838655}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 100, "auc_holdout": 0.9543472164076885}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 250, "auc_holdout": 0.9581434859834737}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 500, "auc_holdout": 0.9573183867073661}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 700, "auc_holdout": 0.9592449731944349}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 2000, "auc_holdout": 0.9625778865264945}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 5000, "auc_holdout": 0.9634639537294081}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 20000, "auc_holdout": 0.9636346639244648}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 100, "auc_holdout": 0.9334661079294886}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 250, "auc_holdout": 0.9455162154362663}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 500, "auc_holdout": 0.95453418471656}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 700, "auc_holdout": 0.9550235539423895}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 2000, "auc_holdout": 0.9611849726254007}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 5000, "auc_holdout": 0.9649849002767944}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 20000, "auc_holdout": 0.9660294840894034}], "comparison": [{"size": 100, "service": "19th_standard", "service_auc": 0.9596880067958916, "classical_model": "Logistic regression", "classical_auc": 0.9543472164076885, "lead": 0.005319811660354877, "lead_low": 0.0006017978537573437, "lead_high": 0.010614215090983795, "probability_service_better": 0.9885}, {"size": 250, "service": "19th_standard", "service_auc": 0.9628258227621722, "classical_model": "Logistic regression", "classical_auc": 0.9581434859834737, "lead": 0.004621687407425324, "lead_low": 0.0012840880458462323, "lead_high": 0.008307383350960082, "probability_service_better": 0.998}, {"size": 500, "service": "19th_standard", "service_auc": 0.9644394405583037, "classical_model": "XGBoost (tuned)", "classical_auc": 0.9591027146985542, "lead": 0.0052990892274839985, "lead_low": 0.0014587614297625257, "lead_high": 0.00938524976339801, "probability_service_better": 0.9955}, {"size": 700, "service": "19th_standard", "service_auc": 0.9639232454446798, "classical_model": "Logistic regression", "classical_auc": 0.9592449731944348, "lead": 0.004619521212685397, "lead_low": 0.0017627199524503311, "lead_high": 0.007704534127553142, "probability_service_better": 0.9995}, {"size": 2000, "service": "19th_standard", "service_auc": 0.9650369262410021, "classical_model": "XGBoost (tuned)", "classical_auc": 0.9651019586962619, "lead": -6.0275691764368866e-05, "lead_low": -0.0020700772840503007, "lead_high": 0.001996396483178641, "probability_service_better": 0.4785}, {"size": 5000, "service": "19th_standard", "service_auc": 0.9663741561022798, "classical_model": "XGBoost (tuned)", "classical_auc": 0.9654067983302917, "lead": 0.0009655858903457321, "lead_low": -0.000872773652099576, "lead_high": 0.0028855546073163763, "probability_service_better": 0.848}, {"size": 20000, "service": "19th_standard", "service_auc": 0.9665855115818738, "classical_model": "XGBoost (tuned)", "classical_auc": 0.9663091236470202, "lead": 0.00026924332508130195, "lead_low": -0.0013162107933942014, "lead_high": 0.001750389360324178, "probability_service_better": 0.6375}]}, {"name": "fraud", "label": "Card fraud", "title": "Card fraud (Playground S6E11)", "context": "24 raw features (5 categorical), 1.7% fraud, stratified 100,000-row holdout. 19th levels off near 0.943 from 100,000 rows; the tree models keep improving.", "scores": [{"model": "19th_standard", "model_name": "19th (standard)", "size": 1000, "auc_holdout": 0.8957711354469948}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 5000, "auc_holdout": 0.9357703620522608}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 20000, "auc_holdout": 0.9408034444687358}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 100000, "auc_holdout": 0.9428900604161351}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 200000, "auc_holdout": 0.9432198188794788}, {"model": "19th_standard", "model_name": "19th (standard)", "size": 599960, "auc_holdout": 0.9429827459897656}, {"model": "lightgbm", "model_name": "LightGBM", "size": 1000, "auc_holdout": 0.7900339146785246}, {"model": "lightgbm", "model_name": "LightGBM", "size": 5000, "auc_holdout": 0.8983790468488428}, {"model": "lightgbm", "model_name": "LightGBM", "size": 20000, "auc_holdout": 0.9268820621748469}, {"model": "lightgbm", "model_name": "LightGBM", "size": 100000, "auc_holdout": 0.940035687802672}, {"model": "lightgbm", "model_name": "LightGBM", "size": 200000, "auc_holdout": 0.9413123392186441}, {"model": "lightgbm", "model_name": "LightGBM", "size": 599960, "auc_holdout": 0.9451383919844639}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 1000, "auc_holdout": 0.8947647448923975}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 5000, "auc_holdout": 0.9263233240627461}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 20000, "auc_holdout": 0.9357002236755007}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 100000, "auc_holdout": 0.9400939826844837}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 200000, "auc_holdout": 0.9401233716843743}, {"model": "logistic_regression", "model_name": "Logistic regression", "size": 599960, "auc_holdout": 0.9405878104464315}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 1000, "auc_holdout": 0.7230101304560614}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 5000, "auc_holdout": 0.8973941306850349}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 20000, "auc_holdout": 0.9357976643073052}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 100000, "auc_holdout": 0.9427882808571811}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 200000, "auc_holdout": 0.9431722317594039}, {"model": "xgboost_tuned", "model_name": "XGBoost (tuned)", "size": 599960, "auc_holdout": 0.9467838146548356}], "comparison": [{"size": 1000, "service": "19th_standard", "service_auc": 0.8957711354469948, "classical_model": "Logistic regression", "classical_auc": 0.8947647448923975, "lead": 0.0009991964033478453, "lead_low": -0.0037520514100702175, "lead_high": 0.0060023465305730685, "probability_service_better": 0.662}, {"size": 5000, "service": "19th_standard", "service_auc": 0.9357703620522608, "classical_model": "Logistic regression", "classical_auc": 0.9263233240627461, "lead": 0.00948286816090085, "lead_low": 0.0070161744423973575, "lead_high": 0.011803415913499446, "probability_service_better": 1.0}, {"size": 20000, "service": "19th_standard", "service_auc": 0.9408034444687358, "classical_model": "XGBoost (tuned)", "classical_auc": 0.9375076684828247, "lead": 0.0032590447690370983, "lead_low": 0.0016932239636811481, "lead_high": 0.004754523890400836, "probability_service_better": 1.0}, {"size": 100000, "service": "19th_standard", "service_auc": 0.9428900604161351, "classical_model": "XGBoost (tuned)", "classical_auc": 0.9432753693264341, "lead": -0.0004009977328244598, "lead_low": -0.0015352186261362339, "lead_high": 0.0007596970099911087, "probability_service_better": 0.253}, {"size": 200000, "service": "19th_standard", "service_auc": 0.9432198188794788, "classical_model": "XGBoost (tuned)", "classical_auc": 0.9439382416901172, "lead": -0.0007206482307126057, "lead_low": -0.0017854264775499673, "lead_high": 0.00026339936539163106, "probability_service_better": 0.088}, {"size": 599960, "service": "19th_standard", "service_auc": 0.9429827459897656, "classical_model": "XGBoost (tuned)", "classical_auc": 0.9470633258044067, "lead": -0.004089469507496441, "lead_low": -0.005443617425527253, "lead_high": -0.002832042729127579, "probability_service_better": 0.0}]}], "leaderboard": [{"submission": "XGBoost (tuned), refit on all rows", "public_score": 0.94785, "holdout_auc": 0.9471, "training_rows": 699960, "submitted": "2026-11-26"}, {"submission": "19th standard, Fast model", "public_score": 0.94503, "holdout_auc": 0.943, "training_rows": 599960, "submitted": "2026-11-26"}]}</script>
+<script>
+(() => {
+  const data = JSON.parse(document.getElementById('benchmark-data').textContent);
+  const svgNamespace = 'http://www.w3.org/2000/svg';
+  const formatAuc = (value) => value.toFixed(4);
+  const formatLead = (value) => {
+    const rounded = Math.round(value * 1e4) / 1e4;
+    return (rounded < 0 ? '−' : '+') + Math.abs(rounded).toFixed(4);
+  };
+  const formatCount = (value) => value.toLocaleString('en-US');
+  const series = [
+    {key: '19th_standard', name: '19th (standard)', color: 'var(--series-19th)'},
+    {key: 'lightgbm', name: 'LightGBM', color: 'var(--series-lightgbm)'},
+    {key: 'logistic_regression', name: 'Logistic regression', color: 'var(--series-logistic)'},
+    {key: 'xgboost_tuned', name: 'XGBoost (tuned)', color: 'var(--series-xgboost)'},
+  ];
+
+  function element(name, attributes = {}, parent = null) {
+    const node = document.createElementNS(svgNamespace, name);
+    for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
+    if (parent) parent.appendChild(node);
+    return node;
+  }
+  function text(parent, x, y, content, attributes = {}) {
+    const node = element('text', {x, y, ...attributes}, parent);
+    node.textContent = content;
+    return node;
+  }
+  function html(tag, attributes = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attributes)) {
+      if (key === 'text') node.textContent = value;
+      else node.setAttribute(key, value);
+    }
+    node.append(...children);
+    return node;
+  }
+  const linearScale = ([d0, d1], [r0, r1]) => (value) => r0 + ((value - d0) / (d1 - d0)) * (r1 - r0);
+  const logScale = ([d0, d1], [r0, r1]) => (value) =>
+    r0 + ((Math.log(value) - Math.log(d0)) / (Math.log(d1) - Math.log(d0))) * (r1 - r0);
+  function niceTicks(min, max, count) {
+    const raw = (max - min) / count;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * magnitude).find((s) => s >= raw);
+    const start = Math.floor(min / step + 1e-9) * step;
+    const end = Math.ceil(max / step - 1e-9) * step;
+    const ticks = [];
+    for (let value = start; value <= end + step * 1e-9; value += step) ticks.push(Number(value.toFixed(10)));
+    return ticks;
+  }
+  function makeSvg(container, width, height, label) {
+    const svg = element('svg', {viewBox: `0 0 ${width} ${height}`, height, role: 'img', 'aria-label': label});
+    container.replaceChildren(svg);
+    return svg;
+  }
+  function joinSizes(sizes) {
+    const labels = sizes.map(formatCount);
+    if (labels.length <= 1) return labels.join('');
+    return labels.slice(0, -1).join(', ') + ' and ' + labels[labels.length - 1];
+  }
+  function rangeText(sizes) {
+    if (!sizes.length) return '';
+    return sizes.length === 1 ? formatCount(sizes[0]) : `${formatCount(sizes[0])} to ${formatCount(sizes[sizes.length - 1])}`;
+  }
+
+  function sorted(dataset) {
+    return [...dataset.comparison].sort((a, b) => a.size - b.size);
+  }
+
+  function drawTakeaways() {
+    const items = data.datasets.map((dataset) => {
+      const rows = sorted(dataset);
+      const clear = rows.filter((row) => row.lead_low > 0).map((row) => row.size);
+      const behind = rows.filter((row) => row.lead_high < 0).map((row) => row.size);
+      const maxLead = Math.max(...rows.map((row) => row.lead));
+      const parts = [
+        html('strong', {text: dataset.label + ': '}),
+        `19th is clearly ahead at ${rangeText(clear) || 'no'} training rows (lead up to ${formatLead(maxLead)} AUC)`,
+      ];
+      parts.push(behind.length
+        ? `; the best classical model is clearly ahead at ${joinSizes(behind)} rows.`
+        : '; at larger sizes the gap is within noise.');
+      return html('li', {}, parts);
+    });
+    const leaderboard = data.leaderboard || [];
+    if (leaderboard.length) {
+      const [first, second] = [...leaderboard].sort((a, b) => b.public_score - a.public_score);
+      items.push(html('li', {}, [
+        html('strong', {text: 'On Kaggle: '}),
+        `public score ${first.public_score.toFixed(5)} for ${first.submission}` + (second ? `, ${second.public_score.toFixed(5)} for ${second.submission}.` : '.'),
+      ]));
+    }
+    items.push(html('li', {}, [
+      html('strong', {text: 'Pattern: '}),
+      "19th's advantage is a small-to-medium data effect. With enough rows a tuned gradient-boosted model catches up and, on card fraud, passes it.",
+    ]));
+    document.getElementById('takeaways').replaceChildren(...items);
+  }
+
+  function figure(label, value, note, className = '') {
+    return html('div', {class: 'figure'}, [
+      html('p', {class: 'figure-label', text: label}),
+      html('p', {class: ('figure-value ' + className).trim(), text: value}),
+      html('p', {class: 'figure-note', text: note}),
+    ]);
+  }
+
+  function drawFigures() {
+    const figures = [];
+    for (const dataset of data.datasets) {
+      const rows = sorted(dataset);
+      const best = rows.reduce((a, b) => (b.lead > a.lead ? b : a));
+      figures.push(figure(
+        `Largest 19th lead, ${dataset.label.toLowerCase()}`,
+        formatLead(best.lead),
+        `At ${formatCount(best.size)} rows over ${best.classical_model}; 95% interval ${formatLead(best.lead_low)} to ${formatLead(best.lead_high)}`,
+        best.lead_low > 0 ? 'good' : '',
+      ));
+    }
+    const fraud = data.datasets.find((dataset) => dataset.name === 'fraud');
+    if (fraud) {
+      const rows = sorted(fraud);
+      const last = rows[rows.length - 1];
+      figures.push(figure(
+        `19th lead on all ${formatCount(last.size)} card-fraud rows`,
+        formatLead(last.lead),
+        `Over ${last.classical_model}; 95% interval ${formatLead(last.lead_low)} to ${formatLead(last.lead_high)}`,
+        last.lead_high < 0 ? 'behind' : (last.lead_low > 0 ? 'good' : ''),
+      ));
+    }
+    document.getElementById('figures').replaceChildren(...figures);
+  }
+
+  function drawCurves(container, dataset) {
+    const lines = series.map((s) => ({
+      ...s,
+      points: dataset.scores.filter((r) => r.model === s.key && r.auc_holdout != null)
+        .map((r) => ({size: r.size, auc: r.auc_holdout})).sort((a, b) => a.size - b.size),
+    })).filter((line) => line.points.length);
+    const sizes = [...new Set(lines.flatMap((l) => l.points.map((p) => p.size)))].sort((a, b) => a - b);
+    const values = lines.flatMap((l) => l.points.map((p) => p.auc));
+    const width = container.clientWidth || 460;
+    const height = 240;
+    const margin = {top: 10, right: 14, bottom: 28, left: 46};
+    const ticks = niceTicks(Math.min(...values) - 0.001, Math.max(...values) + 0.001, 5);
+    const x = logScale([sizes[0], sizes[sizes.length - 1]], [margin.left, width - margin.right]);
+    const y = linearScale([ticks[0], ticks[ticks.length - 1]], [height - margin.bottom, margin.top]);
+    const svg = makeSvg(container, width, height, `Holdout AUC by training size, ${dataset.label}`);
+    for (const tick of ticks) {
+      element('line', {x1: margin.left, x2: width - margin.right, y1: y(tick), y2: y(tick), stroke: 'var(--grid)'}, svg);
+      text(svg, margin.left - 6, y(tick), tick.toFixed(3), {'text-anchor': 'end', 'dominant-baseline': 'middle'});
+    }
+    const shown = width < 420 ? [sizes[0], ...sizes.slice(1, -1).filter((s, i) => i % 2 === 1), sizes[sizes.length - 1]] : sizes;
+    for (const size of shown) text(svg, x(size), height - margin.bottom + 16, formatCount(size), {'text-anchor': 'middle'});
+    for (const line of lines) {
+      element('polyline', {points: line.points.map((p) => `${x(p.size)},${y(p.auc)}`).join(' '), fill: 'none', stroke: line.color, 'stroke-width': 2}, svg);
+      for (const point of line.points) element('circle', {cx: x(point.size), cy: y(point.auc), r: 3, fill: line.color}, svg);
+    }
+  }
+
+  function drawLead(container, dataset) {
+    const rows = sorted(dataset);
+    const width = container.clientWidth || 460;
+    const rowHeight = 26;
+    const margin = {top: 4, right: 58, bottom: 26, left: 76};
+    const height = margin.top + margin.bottom + rowHeight * rows.length;
+    const low = Math.min(0, ...rows.map((r) => r.lead_low));
+    const high = Math.max(0, ...rows.map((r) => r.lead_high));
+    const ticks = niceTicks(low, high, width < 420 ? 3 : 5);
+    const x = linearScale([Math.min(ticks[0], low), Math.max(ticks[ticks.length - 1], high)], [margin.left, width - margin.right]);
+    const svg = makeSvg(container, width, height, `19th lead over the best classical model with 95% intervals, ${dataset.label}`);
+    for (const tick of ticks) {
+      element('line', {x1: x(tick), x2: x(tick), y1: margin.top, y2: height - margin.bottom, stroke: tick === 0 ? 'var(--muted)' : 'var(--grid)', 'stroke-width': tick === 0 ? 1.5 : 1}, svg);
+      text(svg, x(tick), height - margin.bottom + 16, tick === 0 ? '0' : formatLead(tick).replace(/0+$/, '').replace(/\.$/, ''), {'text-anchor': 'middle'});
+    }
+    rows.forEach((row, index) => {
+      const cy = margin.top + rowHeight * index + rowHeight / 2;
+      text(svg, margin.left - 8, cy, formatCount(row.size) + ' rows', {'text-anchor': 'end', 'dominant-baseline': 'middle'});
+      const color = row.lead_high < 0 ? 'var(--behind)' : 'var(--series-19th)';
+      const filled = row.lead_low > 0 || row.lead_high < 0;
+      element('line', {x1: x(row.lead_low), x2: x(row.lead_high), y1: cy, y2: cy, stroke: color, 'stroke-width': 2}, svg);
+      element('circle', {cx: x(row.lead), cy, r: 4.5, fill: filled ? color : 'var(--bg)', stroke: color, 'stroke-width': 2}, svg);
+      text(svg, x(row.lead_high) + 6, cy, formatLead(row.lead), {'dominant-baseline': 'middle', class: 'value'});
+    });
+  }
+
+  function buildDatasets() {
+    const root = document.getElementById('datasets');
+    const sections = data.datasets.map((dataset) => {
+      const curves = html('div', {class: 'chart'});
+      const lead = html('div', {class: 'chart'});
+      const legend = html('ul', {class: 'legend'}, series
+        .filter((s) => dataset.scores.some((r) => r.model === s.key))
+        .map((s) => html('li', {}, [html('span', {class: 'swatch', style: `background: ${s.color}`}), s.name])));
+      const section = html('section', {}, [
+        html('hr', {class: 'divider'}),
+        html('div', {class: 'dataset-head'}, [
+          html('h2', {text: dataset.title}),
+          html('p', {class: 'note', text: dataset.context}),
+        ]),
+        html('div', {class: 'pair'}, [
+          html('div', {class: 'block'}, [html('h3', {text: 'AUC by training size'}), legend, curves]),
+          html('div', {class: 'block'}, [html('h3', {text: "19th's lead over the best classical model"}), html('p', {class: 'note', text: 'Filled: 95% interval excludes zero; orange: classical model clearly ahead.'}), lead]),
+        ]),
+      ]);
+      return {section, curves, lead, dataset};
+    });
+    root.replaceChildren(...sections.map((s) => s.section));
+    return sections;
+  }
+
+  function drawLeaderboard() {
+    const rows = [...(data.leaderboard || [])].sort((a, b) => b.public_score - a.public_score);
+    document.getElementById('leaderboard-section').hidden = rows.length === 0;
+    document.getElementById('leaderboard-body').replaceChildren(...rows.map((row, index) => html('tr', {}, [
+      html('td', {text: row.submission}),
+      html('td', {text: row.public_score.toFixed(5), class: index === 0 ? 'best' : ''}),
+      html('td', {text: formatAuc(row.holdout_auc)}),
+      html('td', {text: formatCount(row.training_rows)}),
+    ])));
+  }
+
+  drawTakeaways();
+  drawFigures();
+  const blocks = buildDatasets();
+  drawLeaderboard();
+  document.getElementById('footer').textContent =
+    `Generated ${data.generated} by build_dashboard.py --dataset summary. Full detail: dashboard_heart.html, dashboard_fraud.html, RESULTS.md`;
+  function drawCharts() {
+    for (const block of blocks) { drawCurves(block.curves, block.dataset); drawLead(block.lead, block.dataset); }
+  }
+  drawCharts();
+  let lastWidth = document.querySelector('.page').clientWidth;
+  new ResizeObserver(() => {
+    const width = document.querySelector('.page').clientWidth;
+    if (width !== lastWidth) { lastWidth = width; drawCharts(); }
+  }).observe(document.querySelector('.page'));
+})();
+</script>
+</body>
+</html>

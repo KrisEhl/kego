@@ -1,7 +1,8 @@
 # 19th vs Classical ML - Results
 
 Benchmarks run on 2026-11-26. Metric: ROC AUC on a fixed holdout never used for training or
-early stopping. Two datasets:
+early stopping. One-page overview of both datasets (no quantum comparison):
+[dashboard_summary.html](dashboard_summary.html). Two datasets:
 
 - **Card fraud** (Playground S6E11): harder, imbalanced, up to 600,000 rows. Charts:
   [dashboard_fraud.html](dashboard_fraud.html).

@@ -21,7 +21,7 @@ that touches files. Every command takes `--dataset heart` or `--dataset fraud`.
 |--------|--------------|
 | `benchmark_services.py` | Dataset configs; builds samples and holdout, runs classical baselines, scores predictions, bootstraps 19th vs classical |
 | `nineteenth_workflow.py` | Prepares upload CSVs and the `prep_run` declaration, uploads, verifies a model bundle, predicts the holdout or the competition test set |
-| `build_dashboard.py` | Builds `dashboard_<dataset>.html` (self-contained, opens offline) from `dashboard_template.html` |
+| `build_dashboard.py` | Builds `dashboard_<dataset>.html` (self-contained, opens offline) from `dashboard_template.html`; `--dataset summary` builds `dashboard_summary.html`, both datasets on one page, from `summary_template.html` |
 
 ## Setup
 
