@@ -15,7 +15,8 @@ XGBoost matches it from 100,000 rows and beats it on the full card-fraud data, o
 
 - **Small-data accuracy.** 19th beat LightGBM, logistic regression and an Optuna-tuned XGBoost
   by +0.005 AUC at 100-700 rows (heart disease) and +0.003 to +0.010 at 5,000-20,000 rows (card
-  fraud, 1.7% positives). Classical models needed about 5x the rows to match it.
+  fraud, 1.7% positives). Classical models needed 5x (card fraud) to 20x (heart disease) the
+  rows to match its smallest-sample score.
 - **Workflow.** prep_run / submit_run / get_results with idempotency keys, signed uploads, SHA-256
   checks and model bundles that run locally on numpy alone were reliable across about 30 runs.
   The bundle's prediction code was byte-identical across all runs, which made it easy to review once.
