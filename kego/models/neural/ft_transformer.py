@@ -1,15 +1,17 @@
+from typing import Any, cast
+
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from rtdl_num_embeddings import (  # ty: ignore[unresolved-import]
+from rtdl_num_embeddings import (
     PeriodicEmbeddings,
     PiecewiseLinearEmbeddings,
     compute_bins,
 )
-from rtdl_revisiting_models import FTTransformer  # ty: ignore[unresolved-import]
+from rtdl_revisiting_models import FTTransformer
 from sklearn.preprocessing import QuantileTransformer
-from skorch.callbacks import EarlyStopping  # ty: ignore[unresolved-import]
+from skorch.callbacks import EarlyStopping
 
 from .amp import AMPNeuralNetBinaryClassifier
 from .noise import GaussianNoise
@@ -54,23 +56,30 @@ class FTTransformerModule(nn.Module):
             ffn_dropout=ffn_dropout,
             residual_dropout=residual_dropout,
         )
-        # Replace the default LinearEmbeddings with PLE or PeriodicEmbeddings
+        # Replace the default LinearEmbeddings with PLE or PeriodicEmbeddings. The library types the
+        # attribute as LinearEmbeddings | None, so the intentional swap is cast to Any.
         if n_cont_features > 0:
             if bins is not None:
-                self.net.cont_embeddings = PiecewiseLinearEmbeddings(
-                    bins=bins,
-                    d_embedding=d_block,
-                    activation=True,
-                    version="B",
+                self.net.cont_embeddings = cast(
+                    Any,
+                    PiecewiseLinearEmbeddings(
+                        bins=bins,
+                        d_embedding=d_block,
+                        activation=True,
+                        version="B",
+                    ),
                 )
             else:
-                self.net.cont_embeddings = PeriodicEmbeddings(
-                    n_features=n_cont_features,
-                    d_embedding=d_block,
-                    n_frequencies=n_frequencies,
-                    frequency_init_scale=frequency_init_scale,
-                    activation=True,
-                    lite=False,
+                self.net.cont_embeddings = cast(
+                    Any,
+                    PeriodicEmbeddings(
+                        n_features=n_cont_features,
+                        d_embedding=d_block,
+                        n_frequencies=n_frequencies,
+                        frequency_init_scale=frequency_init_scale,
+                        activation=True,
+                        lite=False,
+                    ),
                 )
 
     def forward(self, X):

@@ -1,10 +1,10 @@
 import torch
-from skorch import NeuralNetBinaryClassifier  # ty: ignore[unresolved-import]
+from skorch import NeuralNetBinaryClassifier
 
 try:
-    from skorch.dataset import unpack_data  # ty: ignore[unresolved-import]
+    from skorch.dataset import unpack_data
 except ImportError:  # older/newer skorch moved the helper between submodules
-    from skorch.utils import unpack_data  # ty: ignore[unresolved-import]
+    from skorch.utils import unpack_data
 
 
 class AMPNeuralNetBinaryClassifier(NeuralNetBinaryClassifier):

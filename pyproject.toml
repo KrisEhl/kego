@@ -52,6 +52,22 @@ dev = [
 [tool.ty.src]
 include = ["kego", "tests"]
 
+[tool.ty.analysis]
+# Optional heavy dependencies (GPU models, Ray, tuning) that only some environments install.
+# Listing them here keeps `ty` results the same with or without them, instead of
+# per-line `ty: ignore[unresolved-import]` comments that turn into "unused" warnings.
+allowed-unresolved-imports = [
+    "torch", "torch.**",
+    "ray", "ray.**",
+    "xgboost", "xgboost.**",
+    "optuna", "optuna.**",
+    "skorch", "skorch.**",
+    "rtdl_num_embeddings", "rtdl_num_embeddings.**",
+    "rtdl_revisiting_models", "rtdl_revisiting_models.**",
+    "tabpfn", "tabpfn.**",
+    "pytabkit", "pytabkit.**",
+]
+
 # Legacy plotting code (serves archived competition notebooks) — matplotlib's
 # Axes/ndarray unions make strict arg checking noisy; keep other rules active.
 [[tool.ty.overrides]]
