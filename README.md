@@ -28,7 +28,7 @@ kego run --config v1 --task <competition-slug>        # train grid + ensemble
 kego run --model catboost --params learning_rate:0.01 # ad-hoc single model
 kego run --config v1 --hp-tune --hp-params max_depth::3:9:int
 kego ensemble --config v1                             # re-ensemble stored predictions
-kego tune --config v1                                 # Optuna HP tuning
+kego tune --config v1                                 # Optuna HP tuning (needs the CV trainer, not implemented yet)
 kego submit --config v1                               # submit to Kaggle
 kego status                                           # check current training runs
 kego submissions                                      # list Kaggle submissions
@@ -38,6 +38,28 @@ kego cache [status|prune]                             # manage the prediction ca
 Configs are YAML resolved from `competitions/<task>/configs/<name>.yaml`
 (defaults < YAML < `--params` dotlist overrides, via OmegaConf). See
 `kego/pipeline/config.py` for the schema (`PipelineConfig`).
+
+### Hyper-parameter tuning from a script
+
+`kego.pipeline.run_study` tunes any `objective(params) -> score` over a list of `HPSpace`
+search spaces with Optuna's TPE sampler (install the `kego[tune]` extra). Spaces can be built
+directly, parsed from the CLI shorthand, or read from a `ModelConfig.hp_space`:
+
+```python
+from kego.pipeline import HPSpace, run_study
+
+spaces = [
+    HPSpace.parse("max_depth::2:10:int"),
+    HPSpace.parse("learning_rate::0.01:0.3:float:log"),
+    HPSpace(name="max_bin", type="categorical", choices=[128, 256, 512]),
+]
+result = run_study(lambda params: validation_auc(params), spaces, n_trials=60, timeout_seconds=900)
+result.best_params, result.best_score, result.n_trials
+```
+
+`Tuner.tune(model_config, spaces, ctx, score=...)` runs the same engine over a `ModelConfig`
+with a scoring function. `competitions/playground/19th/benchmark_services.py` uses `run_study`
+to tune XGBoost per training size.
 
 Simulation-style competitions (e.g. `pokemon-tcg-ai-battle`) add:
 

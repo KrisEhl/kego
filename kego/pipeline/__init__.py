@@ -58,6 +58,9 @@ _SUBMODULES = {
     "Trainer": "train",
     "Tuner": "tune",
     "HPSpace": "tune",
+    "TuneResult": "tune",
+    "run_study": "tune",
+    "spaces_from_model": "tune",
 }
 
 __all__ = [
@@ -90,12 +93,15 @@ __all__ = [
     "Task",
     "TrainContext",
     "Trainer",
+    "TuneResult",
     "Tuner",
     "expand_grid",
     "get_executor",
     "get_task",
     "load_config",
     "register_task",
+    "run_study",
+    "spaces_from_model",
 ]
 
 
