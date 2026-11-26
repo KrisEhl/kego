@@ -1,0 +1,3 @@
+submission,public_score,holdout_auc,training_rows,submitted
+"XGBoost (tuned), refit on all rows",0.94785,0.9471,699960,2026-11-26
+"19th standard, Fast model",0.94503,0.9430,599960,2026-11-26

@@ -76,6 +76,9 @@ PAGE_TEXT = {
         "ties 19th at 200,000 rows and passes it on the full data.",
         "lead_note": "Paired bootstrap, 1,000 resamples of the holdout. A filled dot means the interval excludes "
         "zero (orange: classical ahead); a hollow dot means it crosses zero.",
+        "leaderboard_note": "Scored by Kaggle on its own test set. The holdout scores are from the benchmark: 19th "
+        "trained on 599,960 rows; XGBoost was tuned and scored on 599,960 rows, then refit on all 699,960 for the "
+        "submission. Public leaders score about 0.971 with feature engineering that no model here used.",
         "method": [
             "Samples and the holdout are stratified, so every sample keeps the 1.67% fraud rate.",
             *SHARED_METHOD,
@@ -119,6 +122,12 @@ def load_comparison(config: DatasetConfig) -> pd.DataFrame:
     return comparison
 
 
+def load_leaderboard(config: DatasetConfig) -> list[dict]:
+    """Kaggle public leaderboard scores of submitted models, if any were recorded."""
+    path = config.results_directory / "leaderboard.csv"
+    return records(pd.read_csv(path)) if path.exists() else []
+
+
 def build(config: DatasetConfig) -> None:
     text = PAGE_TEXT[config.name]
     comparison = load_comparison(config)
@@ -130,6 +139,7 @@ def build(config: DatasetConfig) -> None:
         # The headline, lead chart and table follow standard mode; other modes get their own table.
         "comparison": records(comparison[comparison["service"] == STANDARD_SERVICE]),
         "service_comparison": records(comparison),
+        "leaderboard": load_leaderboard(config),
     }
     # "</" inside the JSON would close the <script> element early.
     embedded = json.dumps(payload).replace("</", "<\\/")

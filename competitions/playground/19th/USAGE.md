@@ -142,7 +142,8 @@ benchmark/<dataset>/
 └── results/
     ├── classical_scores.csv     # LightGBM + logistic regression by size
     ├── service_scores.csv       # 19th by mode/variant (and Rimay for heart) by size
-    └── comparison_vs_classical.csv  # bootstrap lead of each 19th mode over best classical
+    ├── comparison_vs_classical.csv  # bootstrap lead of each 19th mode over best classical
+    └── leaderboard.csv          # Kaggle public scores of submitted models (fraud; shown on the dashboard)
 dashboard_<dataset>.html         # results dashboard, built by build_dashboard.py
 ```
 

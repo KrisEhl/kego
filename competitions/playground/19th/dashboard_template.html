@@ -81,6 +81,8 @@
   table.modes td:last-child, table.modes th:last-child { text-align: left; }
   table.variants th:nth-child(2), table.variants td:nth-child(2) { text-align: left; }
   table.variants th:nth-child(3), table.variants td:nth-child(3) { text-align: right; }
+  table.leaderboard th:first-child, table.leaderboard td:first-child { text-align: left; }
+  table.leaderboard th:nth-child(3), table.leaderboard td:nth-child(3) { text-align: right; }
   td.good { color: var(--good); }
   td.behind { color: var(--behind); }
   td.best { font-weight: 700; }
@@ -120,6 +122,17 @@
       <p class="figure-note" id="lead-large-note">—</p>
     </div>
   </div>
+
+  <section id="leaderboard-section" hidden>
+    <h2>Kaggle public leaderboard</h2>
+    <p class="note" id="leaderboard-note">—</p>
+    <div class="table-wrap">
+      <table class="leaderboard">
+        <thead><tr><th>Submission</th><th>Public score</th><th>Our holdout</th><th>Training rows</th><th>Submitted</th></tr></thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
+    </div>
+  </section>
 
   <section>
     <h2>AUC by training size</h2>
@@ -564,6 +577,26 @@
   if (modes.length >= 2) drawModes();
 
   document.getElementById('legend-xgboost').hidden = !data.scores.some((r) => r.model === 'xgboost_tuned');
+  function drawLeaderboard() {
+    const rows = data.leaderboard || [];
+    document.getElementById('leaderboard-section').hidden = rows.length === 0;
+    if (!rows.length) return;
+    document.getElementById('leaderboard-note').textContent = data.text.leaderboard_note || '';
+    const best = Math.max(...rows.map((row) => row.public_score));
+    document.getElementById('leaderboard-body').replaceChildren(...rows.map((row) => {
+      const tr = document.createElement('tr');
+      const cells = [row.submission, row.public_score.toFixed(5), formatAuc(row.holdout_auc), formatCount(row.training_rows), row.submitted];
+      cells.forEach((value, index) => {
+        const td = document.createElement('td');
+        td.textContent = value;
+        if (index === 1 && row.public_score === best) td.classList.add('best');
+        tr.appendChild(td);
+      });
+      return tr;
+    }));
+  }
+  drawLeaderboard();
+
   const hasRimay = data.scores.some((r) => r.auc_rimay_300 != null);
   document.getElementById('rimay-section').hidden = !hasRimay;
   function drawCharts() { drawCurves(); drawLead(); if (hasRimay) drawRimay(); }
