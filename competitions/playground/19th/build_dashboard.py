@@ -190,7 +190,14 @@ def build_summary() -> None:
             }
         )
         leaderboard += load_leaderboard(config)
-    payload = {"generated": datetime.date.today().isoformat(), "datasets": datasets, "leaderboard": leaderboard}
+    fraud_comparison = load_comparison(DATASETS["fraud"])
+    payload = {
+        "generated": datetime.date.today().isoformat(),
+        "datasets": datasets,
+        "leaderboard": leaderboard,
+        # Every 19th training level and model variant on card fraud, for the "which level" section.
+        "levels": records(fraud_comparison),
+    }
     embedded = json.dumps(payload).replace("</", "<\\/")
     template = SUMMARY_TEMPLATE_PATH.read_text()
     if template.count(DATA_PLACEHOLDER) != 1:

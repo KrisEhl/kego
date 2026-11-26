@@ -79,7 +79,7 @@
   .dataset-head { display: grid; gap: 4px; }
   .note { margin: 0; color: var(--muted); font-size: 13px; max-width: 72ch; }
   .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-  .block { display: grid; gap: 6px; min-width: 0; }
+  .block { display: grid; gap: 6px; min-width: 0; align-content: start; }
   .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
   .legend li { display: flex; align-items: center; gap: 6px; }
   .swatch { width: 10px; height: 10px; border-radius: 50%; }
@@ -93,6 +93,8 @@
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
   th:first-child, td:first-child { text-align: left; }
   td.best { font-weight: 700; }
+  td.good { color: var(--good); }
+  td.behind { color: var(--behind); }
   .divider { border: 0; border-top: 1px solid var(--line); margin: 0; }
   details { max-width: 72ch; color: var(--muted); font-size: 14px; }
   summary { cursor: pointer; color: var(--fg); font-weight: 600; }
@@ -113,6 +115,42 @@
   <div class="figures" id="figures"></div>
 
   <div id="datasets" class="datasets"></div>
+
+  <section id="levels-section" hidden>
+    <hr class="divider">
+    <div class="dataset-head">
+      <h2>Which 19th level to use (card fraud)</h2>
+      <p class="note">19th trains at four effort levels and returns three model variants per run. All were run on card fraud up to 200,000 rows; holdout AUC of each level's default (Fast) model. Green: clearly ahead of the best classical model; orange: clearly behind; bold: best level at that size.</p>
+    </div>
+    <ul class="takeaways" id="levels-takeaways">
+      <li><strong>The level barely matters.</strong> All four land within about 0.002 AUC of each other at every size; none changes how 19th ranks against the classical models, except instant falling clearly behind tuned XGBoost at 200,000 rows.</li>
+      <li><strong>Use standard by default, instant when speed matters.</strong> High and ultra add at most 0.0003 and 0.0006 AUC for 2x and up to 10x the training time.</li>
+      <li><strong>Use the Warpspeed variant when size or latency matters.</strong> It scores within 0.0004 AUC of Fast at 5-26x smaller files and 6-27x faster predictions.</li>
+    </ul>
+    <div class="pair">
+      <div class="block">
+        <h3>Holdout AUC by level</h3>
+        <div class="table-wrap"><table class="levels"><thead><tr id="levels-head"></tr></thead><tbody id="levels-body"></tbody></table></div>
+      </div>
+      <div class="block">
+        <h3>Cost per level</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Level</th><th>Train, 200k rows</th><th>Model file</th><th>1,000 predictions</th></tr></thead>
+            <tbody>
+              <tr><td>Instant</td><td>2 min</td><td>0.4 MB</td><td>0.5 ms</td></tr>
+              <tr><td>Standard</td><td>3.5 min</td><td>1.7 MB</td><td>2.0 ms</td></tr>
+              <tr><td>High</td><td>7 min</td><td>1.7 MB</td><td>2.0 ms</td></tr>
+              <tr><td>Ultra</td><td>32 min</td><td>8.6 MB</td><td>8.8 ms</td></tr>
+              <tr><td>Warpspeed variant</td><td>(same run)</td><td>0.33 MB</td><td>0.3 ms</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Model sizes and prediction times are 19th's reference CPU estimates for the Fast model (Warpspeed: its own); training times are submission to completion with all runs queued together.</p>
+      </div>
+    </div>
+    <p class="note">Caveats: one run per level and size, so level-to-level gaps of 0.001-0.002 are about the size of the holdout noise; levels were not bootstrapped against each other; heart disease was run in standard mode only. High and ultra runs carried an unexplained "additional training limitation" warning.</p>
+  </section>
 
   <section id="leaderboard-section" hidden>
     <h2>Kaggle public leaderboard (card fraud)</h2>
@@ -363,8 +401,33 @@
     ])));
   }
 
+  function drawLevels() {
+    const levelOrder = ['instant', 'standard', 'high', 'ultra'];
+    const rows = (data.levels || []).map((row) => {
+      const [, mode, variant = 'fast'] = row.service.split('_');
+      return {...row, mode, variant};
+    }).filter((row) => row.variant === 'fast');
+    const sizes = [...new Set(rows.filter((r) => r.mode !== 'standard').map((r) => r.size))].sort((a, b) => a - b);
+    document.getElementById('levels-section').hidden = sizes.length === 0;
+    if (!sizes.length) return;
+    const head = ['Rows', ...levelOrder.map((m) => m[0].toUpperCase() + m.slice(1))];
+    document.getElementById('levels-head').replaceChildren(...head.map((label) => html('th', {text: label})));
+    document.getElementById('levels-body').replaceChildren(...sizes.map((size) => {
+      const atSize = rows.filter((r) => r.size === size);
+      const best = Math.max(...atSize.map((r) => r.service_auc));
+      return html('tr', {}, [html('td', {text: formatCount(size)}), ...levelOrder.map((mode) => {
+        const row = atSize.find((r) => r.mode === mode);
+        if (!row) return html('td', {text: '—'});
+        const classes = [row.lead_low > 0 ? 'good' : '', row.lead_high < 0 ? 'behind' : '', row.service_auc === best ? 'best' : '']
+          .filter(Boolean).join(' ');
+        return html('td', {text: formatAuc(row.service_auc), class: classes});
+      })]);
+    }));
+  }
+
   drawTakeaways();
   drawFigures();
+  drawLevels();
   const blocks = buildDatasets();
   drawLeaderboard();
   document.getElementById('footer').textContent =

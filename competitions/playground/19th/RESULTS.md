@@ -85,6 +85,18 @@ at 1,000 rows, 15 minutes at 599,960). At 1,000 rows its 200-row tuning split ho
 frauds, so the search is close to random and the score is poor. Sources: `benchmark/fraud/results/classical_scores.csv`,
 `benchmark/fraud/results/service_scores.csv`.
 
+## Which 19th level to use
+
+- **The level barely matters.** Instant, standard, high and ultra land within about 0.002 AUC of
+  each other at every size, and none changes how 19th ranks against the classical models (except
+  instant falling clearly behind tuned XGBoost at 200,000 rows).
+- **Use standard by default and instant when training speed matters.** High and ultra add at
+  most 0.0003 and 0.0006 AUC for 2x and up to 10x the training time (32 minutes at 200,000 rows).
+- **Use the Warpspeed variant when model size or latency matters.** It stays within 0.0004 AUC
+  of Fast with 5-26x smaller files and 6-27x faster predictions.
+- **Caveats:** one run per level and size, so gaps of 0.001-0.002 are about the size of the
+  holdout noise; levels were not bootstrapped against each other; heart disease ran standard only.
+
 ## 19th training modes (Fast model, 100,000-row holdout)
 
 | Training rows | Instant | Standard | High | Ultra | Best classical |
