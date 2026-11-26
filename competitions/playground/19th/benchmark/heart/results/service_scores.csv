@@ -1,0 +1,10 @@
+service,size,auc_holdout,auc_rimay_300,note
+19th_standard,100,0.9596880067958916,0.9536700336700336,"standard mode, Fast model, local npz"
+19th_standard,250,0.9628258227621722,0.9566329966329966,"standard mode, Fast model, local npz"
+19th_standard,500,0.9644394405583036,0.9582491582491582,"standard mode, Fast model, local npz"
+19th_standard,700,0.9639232454446798,0.9575308641975308,"standard mode, Fast model, local npz"
+19th_standard,2000,0.965036926241002,0.9561840628507297,"standard mode, Fast model, local npz"
+19th_standard,5000,0.9663741561022798,0.9591919191919192,"standard mode, Fast model, local npz"
+19th_standard,20000,0.9665855115818738,0.9608080808080808,"standard mode, Fast model, local npz"
+rimay_quantum_only,700,,0.9206913580246914,"LightGBM on Rimay features, 5 seeds, 500 shots"
+rimay_raw_plus_quantum,700,,0.9402289562289562,"LightGBM on Rimay features, 5 seeds, 500 shots"

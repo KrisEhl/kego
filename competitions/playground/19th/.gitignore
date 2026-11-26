@@ -1,0 +1,14 @@
+# Training samples are derived from Kaggle competition data: rebuild with `benchmark_services.py prepare`.
+benchmark/*/samples/
+# Downloaded 19th model bundles: fetch again from the run's results.
+benchmark/*/models/
+# Kaggle submission files (300k rows): regenerate with `nineteenth_workflow.py predict-test`.
+benchmark/*/submissions/
+# Keep the small result tables that back RESULTS.md (root ignores *.csv).
+!benchmark/*/results/*.csv
+# Holdout predictions: heart is small enough to keep; fraud (100k rows per size) is not.
+!benchmark/heart/predictions/*.csv
+# Cached seed-averaged classical holdout predictions: rebuilt by `compare`.
+benchmark/*/cache/
+# Tuned XGBoost parameters per training size (small, back RESULTS.md).
+!benchmark/*/results/*.json

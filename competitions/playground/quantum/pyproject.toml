@@ -2,7 +2,7 @@
 name = "quantum-features"
 version = "0.1.0"
 description = "Quantum feature extraction experiment using Kipu Quantum Rimay"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "kego",
     "lightgbm>=4.0.0",
